@@ -327,6 +327,7 @@ dependencies = [
  "fmt2io",
  "glob",
  "jetscii",
+ "memchr",
  "ntest",
  "percent-encoding-rfc3986",
  "phf",

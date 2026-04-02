@@ -49,6 +49,8 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub scanned_for_backticks: bool,
     no_link_openers: bool,
     special_char_bytes: [bool; 256],
+    smart_pair_bytes: [bool; 256],
+    smart_follower_bytes: [bool; 256],
     skip_char_bytes: [bool; 256],
     emph_delim_bytes: [bool; 256],
 }
@@ -92,6 +94,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             scanned_for_backticks: false,
             no_link_openers: true,
             special_char_bytes: [false; 256],
+            smart_pair_bytes: [false; 256],
+            smart_follower_bytes: [false; 256],
             skip_char_bytes: [false; 256],
             emph_delim_bytes: [false; 256],
         };
@@ -99,8 +103,16 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             s.special_char_bytes[b as usize] = true;
         }
         if options.parse.smart {
-            for &b in b"\"'.->+(?," {
+            for &b in b"\"'" {
                 s.special_char_bytes[b as usize] = true;
+            }
+            // Pair triggers: only stop when the next byte is a valid follower.
+            // This avoids breaking text runs for lone `.`, `,`, `-`, etc.
+            for &b in b"-.>+(?," {
+                s.smart_pair_bytes[b as usize] = true;
+            }
+            for &b in b"-.>cCrRtT?," {
+                s.smart_follower_bytes[b as usize] = true;
             }
         }
         if options.extension.autolink {
@@ -2113,24 +2125,26 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
     fn find_special_char(&self) -> usize {
         let input = &self.input.as_bytes()[self.scanner.pos..];
-        let index = input
-            .iter()
-            .position(|&value| self.is_special_char(value))
-            .unwrap_or(input.len());
-
-        self.scanner.pos + index
-    }
-
-    fn is_special_char(&self, value: u8) -> bool {
-        if value == b'^' && self.within_brackets {
-            return false;
+        let len = input.len();
+        let mut i = 0;
+        while i < len {
+            let b = input[i];
+            if self.special_char_bytes[b as usize] {
+                if b == b'^' && self.within_brackets {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            if self.smart_pair_bytes[b as usize]
+                && i + 1 < len
+                && self.smart_follower_bytes[input[i + 1] as usize]
+            {
+                break;
+            }
+            i += 1;
         }
-
-        if self.special_char_bytes[value as usize] {
-            return true;
-        }
-
-        false
+        self.scanner.pos + i
     }
 
     fn scan_to_closing_backtick(&mut self, openticklength: usize) -> Option<usize> {
