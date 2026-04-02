@@ -9,6 +9,164 @@ use crate::nodes::{Node, NodeLink, NodeValue, Sourcepos};
 use crate::parser::Spx;
 use crate::parser::inlines::{Subject, make_inline};
 
+fn is_name_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+fn is_domain_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-' | b':')
+}
+
+fn lemmy_mention_match<'a>(
+    arena: &'a Arena<'a>,
+    contents: &str,
+    i: usize,
+) -> Option<(Node<'a>, usize)> {
+    let bytes = contents.as_bytes();
+    let size = contents.len();
+
+    let trigger = bytes[i];
+    assert!(trigger == b'@' || trigger == b'!');
+
+    // must not be preceded by alphanumeric or [ (already in a markdown link)
+    if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'[') {
+        return None;
+    }
+
+    // for '!', must not be followed by '[' (image syntax)
+    if trigger == b'!' && bytes.get(i + 1) == Some(&b'[') {
+        return None;
+    }
+
+    // scan name: 3-20 alphanumeric/underscore chars after trigger
+    let mut name_end = i + 1;
+    while name_end < size && is_name_char(bytes[name_end]) {
+        name_end += 1;
+    }
+    let name_len = name_end - (i + 1);
+    if name_len < 3 || name_len > 20 || bytes.get(name_end) != Some(&b'@') {
+        return None;
+    }
+
+    // scan domain: must contain a dot or colon (port), must not start/end with dot
+    let domain_start = name_end + 1;
+    let mut has_separator = false;
+    let mut domain_end = domain_start;
+    while domain_end < size && is_domain_char(bytes[domain_end]) {
+        if matches!(bytes[domain_end], b'.' | b':') {
+            has_separator = true;
+        }
+        domain_end += 1;
+    }
+    if domain_end == domain_start
+        || !has_separator
+        || bytes[domain_start] == b'.'
+        || bytes[domain_end - 1] == b'.'
+    {
+        return None;
+    }
+
+    let mention = &contents[i..domain_end];
+    let name = &contents[i + 1..name_end];
+    let domain = &contents[domain_start..domain_end];
+    let path_prefix = if trigger == b'@' { "u" } else { "c" };
+    let url = format!("https://{domain}/{path_prefix}/{name}");
+
+    let inl = make_inline(
+        arena,
+        NodeValue::Link(Box::new(NodeLink {
+            url,
+            title: String::new(),
+        })),
+        (0, 1, 0, 1).into(),
+    );
+
+    inl.append(make_inline(
+        arena,
+        NodeValue::Text(mention.to_string().into()),
+        (0, 1, 0, 1).into(),
+    ));
+
+    Some((inl, domain_end - i))
+}
+
+pub(crate) fn process_lemmy_mentions<'a>(
+    arena: &'a Arena<'a>,
+    node: Node<'a>,
+    contents: &mut Cow<'static, str>,
+    sourcepos: &mut Sourcepos,
+    spx: &mut Spx,
+) {
+    let bytes = contents.as_bytes();
+    let len = contents.len();
+    let mut i = 0;
+
+    while i < len {
+        let mut post_org = None;
+
+        while i < len {
+            if bytes[i] == b'@' || bytes[i] == b'!' {
+                post_org = lemmy_mention_match(arena, contents, i);
+                if post_org.is_some() {
+                    break;
+                }
+            }
+            i += 1;
+        }
+
+        if let Some((post, skip)) = post_org {
+            node.insert_after(post);
+
+            let remain = if i + skip < len {
+                let remain = &contents[i + skip..];
+                assert!(!remain.is_empty());
+                Some(remain.to_string())
+            } else {
+                None
+            };
+            let initial_end_col = sourcepos.end.column;
+
+            sourcepos.end.column = spx.consume(i);
+
+            let nsp_end_col = spx.consume(skip);
+
+            contents.to_mut().truncate(i);
+
+            let nsp: Sourcepos = (
+                sourcepos.end.line,
+                sourcepos.end.column + 1,
+                sourcepos.end.line,
+                nsp_end_col,
+            )
+                .into();
+            post.data_mut().sourcepos = nsp;
+            post.first_child().unwrap().data_mut().sourcepos = nsp;
+
+            if let Some(remain) = remain {
+                let asp: Sourcepos = (
+                    sourcepos.end.line,
+                    nsp.end.column + 1,
+                    sourcepos.end.line,
+                    initial_end_col,
+                )
+                    .into();
+                let after = make_inline(arena, NodeValue::Text(remain.into()), asp);
+                post.insert_after(after);
+
+                let after_ast = &mut after.data_mut();
+                let NodeValue::Text(ref mut text) = after_ast.value else {
+                    unreachable!();
+                };
+                let mut after_sp = asp;
+                process_lemmy_mentions(arena, after, text, &mut after_sp, spx);
+                after_ast.sourcepos = after_sp;
+            }
+
+            return;
+        }
+    }
+}
+
 pub(crate) fn process_email_autolinks<'a>(
     arena: &'a Arena<'a>,
     node: Node<'a>,

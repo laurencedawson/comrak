@@ -627,6 +627,49 @@ pub struct Extension<'c> {
     /// ```
     #[cfg_attr(feature = "bon", builder(default))]
     pub block_directive: bool,
+
+    /// Enables Lemmy-style user and community mentions.
+    ///
+    /// User mentions (`@user@instance.com`) become links to `https://instance.com/u/user`.
+    /// Community mentions (`!community@instance.com`) become links to `https://instance.com/c/community`.
+    ///
+    /// ```md
+    /// @user@example.com
+    /// !community@example.com
+    /// ```
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.extension.lemmy_mention = true;
+    ///
+    /// assert_eq!(markdown_to_html("@user@example.com\n", &options),
+    ///            "<p><a href=\"https://example.com/u/user\">@user@example.com</a></p>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub lemmy_mention: bool,
+
+    /// Enables Lemmy-style spoiler blocks.
+    ///
+    /// Blocks starting with `:::spoiler Title` and ending with `:::` are parsed
+    /// as container blocks. The content inside is parsed as normal markdown.
+    ///
+    /// ```md
+    /// :::spoiler Click
+    /// Hidden content
+    /// :::
+    /// ```
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.extension.lemmy_spoiler = true;
+    ///
+    /// assert_eq!(markdown_to_html(":::spoiler Click\nHidden\n:::\n", &options),
+    ///            "<details>\n<summary>Click</summary>\n<p>Hidden</p>\n</details>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub lemmy_spoiler: bool,
 }
 
 impl Extension<'_> {
@@ -917,6 +960,24 @@ pub struct Parse<'c> {
     /// ```
     #[cfg_attr(feature = "bon", builder(default))]
     pub sourcepos_chars: bool,
+
+    /// Strip invisible Unicode characters before parsing.
+    ///
+    /// Removes zero-width spaces, bidi controls, variation selectors, and other
+    /// invisible characters that have no rendering use in markdown. Preserves
+    /// ZWJ (`\u{200d}`) for emoji sequences and VS16 (`\u{fe0f}`) for emoji
+    /// presentation.
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.parse.strip_invisible = true;
+    ///
+    /// assert_eq!(markdown_to_html("he\u{200b}llo\n", &options),
+    ///            "<p>hello</p>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub strip_invisible: bool,
 }
 
 /// The type of the callback used when a reference link is encountered with no

@@ -7,8 +7,8 @@ use crate::Arena;
 use crate::ctype::{isalpha, isdigit, ispunct, ispunct_char, isspace, isspace_char};
 use crate::nodes::{
     ListDelimType, ListType, Node, NodeAlert, NodeBlockDirective, NodeCodeBlock, NodeHeading,
-    NodeHtmlBlock, NodeLink, NodeList, NodeMath, NodeTaskItem, NodeValue, NodeWikiLink,
-    TableAlignment,
+    NodeHtmlBlock, NodeLemmySpoiler, NodeLink, NodeList, NodeMath, NodeTaskItem, NodeValue,
+    NodeWikiLink, TableAlignment,
 };
 use crate::parser::options::{Options, Plugins, WikiLinksMode};
 #[cfg(feature = "phoenix_heex")]
@@ -508,6 +508,7 @@ impl<'a, 'o, 'c, 'w> CommonMarkFormatter<'a, 'o, 'c, 'w> {
             NodeValue::Alert(ref alert) => self.format_alert(alert, entering)?,
             NodeValue::Subtext => self.format_subtext(entering)?,
             NodeValue::BlockDirective(ref nbd) => self.format_block_directive(nbd, entering)?,
+            NodeValue::LemmySpoiler(ref nls) => self.format_lemmy_spoiler(nls, entering)?,
         };
         Ok(true)
     }
@@ -1133,6 +1134,23 @@ impl<'a, 'o, 'c, 'w> CommonMarkFormatter<'a, 'o, 'c, 'w> {
             self.begin_content = true;
         } else {
             let fence = ":".repeat(nbd.fence_length.max(3));
+            write!(self, "{fence}")?;
+            self.blankline();
+        }
+        Ok(())
+    }
+
+    fn format_lemmy_spoiler(&mut self, nls: &NodeLemmySpoiler, entering: bool) -> fmt::Result {
+        if entering {
+            let fence = ":".repeat(nls.fence_length.max(3));
+            if nls.title.is_empty() {
+                writeln!(self, "{fence}spoiler")?;
+            } else {
+                writeln!(self, "{fence}spoiler {}", nls.title)?;
+            }
+            self.begin_content = true;
+        } else {
+            let fence = ":".repeat(nls.fence_length.max(3));
             write!(self, "{fence}")?;
             self.blankline();
         }

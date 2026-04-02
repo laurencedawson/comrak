@@ -536,6 +536,47 @@ pub fn phoenix_inline_expression(s: &str) -> Option<usize> {
     find_matching_brace(s, 1)
 }
 
+fn is_invisible(c: char) -> bool {
+    matches!(c,
+        // no rendering use in markdown
+        '\u{200b}'                // Zero Width Space
+        | '\u{feff}'              // BOM / Zero Width No-Break Space
+        | '\u{2060}'              // Word Joiner
+        | '\u{2061}'              // Function Application (math)
+        | '\u{2062}'              // Invisible Times (math)
+        | '\u{2063}'              // Invisible Separator (math)
+        | '\u{2064}'              // Invisible Plus (math)
+        | '\u{00ad}'              // Soft Hyphen
+        | '\u{034f}'              // Combining Grapheme Joiner
+        | '\u{180e}'              // Mongolian Vowel Separator
+        | '\u{202a}'..='\u{202e}' // Bidi embedding controls
+        | '\u{2066}'..='\u{2069}' // Bidi isolate controls
+        // legitimate in some scripts but commonly abused in comments
+        | '\u{200c}'              // Zero Width Non-Joiner (Persian/Arabic ligatures)
+        | '\u{061c}'              // Arabic Letter Mark (letter joining)
+        | '\u{200e}'              // Left-to-Right Mark (mixed direction text)
+        | '\u{200f}'              // Right-to-Left Mark (mixed direction text)
+        | '\u{fe00}'..='\u{fe0e}' // Variation Selectors 1-15 (CJK glyph variants)
+    )
+}
+
+/// Strip invisible Unicode characters. Zero-copy when input is clean.
+/// Preserves ZWJ (\u{200d}) for emoji sequences and VS16 (\u{fe0f}) for emoji presentation.
+pub fn strip_invisible(s: &str) -> Cow<'_, str> {
+    if let Some(pos) = s.find(is_invisible) {
+        let mut out = String::with_capacity(s.len());
+        out.push_str(&s[..pos]);
+        for c in s[pos..].chars() {
+            if !is_invisible(c) {
+                out.push(c);
+            }
+        }
+        Cow::Owned(out)
+    } else {
+        Cow::Borrowed(s)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::{

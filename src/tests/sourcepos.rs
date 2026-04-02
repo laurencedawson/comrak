@@ -468,6 +468,15 @@ hello world
 after"#,
 );
 
+const LEMMY_SPOILER: TestCase = (
+    &[sourcepos!((2:1-4:3))],
+    r#"before
+:::spoiler Title
+hello world
+:::
+after"#,
+);
+
 fn node_values() -> HashMap<NodeValueDiscriminants, TestCase> {
     use NodeValueDiscriminants::*;
 
@@ -522,6 +531,7 @@ fn node_values() -> HashMap<NodeValueDiscriminants, TestCase> {
                 Alert => ALERT,
                 Subtext => SUBTEXT,
                 BlockDirective => BLOCK_DIRECTIVE,
+                LemmySpoiler => LEMMY_SPOILER,
                 Raw => unreachable!(),
                 #[cfg(feature = "phoenix_heex")]
                 HeexBlock => HEEX_BLOCK,
@@ -563,6 +573,8 @@ fn sourcepos() {
     options.extension.alerts = true;
     options.extension.subtext = true;
     options.extension.block_directive = true;
+    options.extension.lemmy_spoiler = true;
+    options.extension.lemmy_mention = true;
     #[cfg(feature = "phoenix_heex")]
     {
         options.extension.phoenix_heex = true;

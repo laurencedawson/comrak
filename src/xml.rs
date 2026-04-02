@@ -331,6 +331,11 @@ impl<'o, 'c> XmlFormatter<'o, 'c> {
                     self.escape(&nbd.info)?;
                     self.output.write_str("\"")?;
                 }
+                NodeValue::LemmySpoiler(ref nls) => {
+                    self.output.write_str(" title=\"")?;
+                    self.escape(&nls.title)?;
+                    self.output.write_str("\"")?;
+                }
             }
 
             if node.first_child().is_some() {

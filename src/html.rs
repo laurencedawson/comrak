@@ -20,8 +20,8 @@ use crate::ctype::isspace;
 use crate::nodes::NodeShortCode;
 use crate::nodes::{
     ListType, Node, NodeAlert, NodeBlockDirective, NodeCode, NodeCodeBlock, NodeFootnoteDefinition,
-    NodeFootnoteReference, NodeHeading, NodeHtmlBlock, NodeLink, NodeList, NodeMath, NodeTaskItem,
-    NodeValue, NodeWikiLink, TableAlignment,
+    NodeFootnoteReference, NodeHeading, NodeHtmlBlock, NodeLemmySpoiler, NodeLink, NodeList,
+    NodeMath, NodeTaskItem, NodeValue, NodeWikiLink, TableAlignment,
 };
 use crate::parser::options::{Options, Plugins};
 use crate::{node_matches, scanners};
@@ -399,6 +399,7 @@ pub fn format_node_default<T>(
         NodeValue::WikiLink(ref nwl) => render_wiki_link(context, node, entering, nwl),
         NodeValue::Subtext => render_subtext(context, node, entering),
         NodeValue::BlockDirective(ref nbd) => render_block_directive(context, node, entering, nbd),
+        NodeValue::LemmySpoiler(ref nls) => render_lemmy_spoiler(context, node, entering, nls),
     }
 }
 
@@ -435,6 +436,33 @@ fn render_block_directive<T>(
     } else {
         context.cr()?;
         context.write_str("</div>")?;
+        context.lf()?;
+    }
+
+    Ok(ChildRendering::HTML)
+}
+
+fn render_lemmy_spoiler<T>(
+    context: &mut Context<T>,
+    node: Node<'_>,
+    entering: bool,
+    nls: &NodeLemmySpoiler,
+) -> Result<ChildRendering, fmt::Error> {
+    if entering {
+        context.cr()?;
+        context.write_str("<details")?;
+        render_sourcepos(context, node)?;
+        context.write_str(">")?;
+        context.lf()?;
+        if !nls.title.is_empty() {
+            context.write_str("<summary>")?;
+            context.escape(&nls.title)?;
+            context.write_str("</summary>")?;
+            context.lf()?;
+        }
+    } else {
+        context.cr()?;
+        context.write_str("</details>")?;
         context.lf()?;
     }
 

@@ -99,7 +99,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             s.special_char_bytes[b as usize] = true;
         }
         if options.parse.smart {
-            for &b in b"\"'.->" {
+            for &b in b"\"'.->+(?," {
                 s.special_char_bytes[b as usize] = true;
             }
         }
@@ -278,6 +278,27 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             b'*' | b'_' | b'\'' | b'"' => Some(self.handle_delim(b)),
             b'-' => Some(self.handle_hyphen()),
             b'.' => Some(self.handle_period()),
+            b'(' if self.options.parse.smart => Some(self.handle_open_paren()),
+            b'+' if self.options.parse.smart => {
+                if self.peek_byte_n(1) == Some(b'-') {
+                    self.scanner.pos += 2;
+                    Some(self.make_inline(
+                        NodeValue::Text("\u{b1}".into()),
+                        self.scanner.pos - 2,
+                        self.scanner.pos - 1,
+                    ))
+                } else if self.options.extension.insert {
+                    Some(self.handle_delim(b'+'))
+                } else {
+                    self.scanner.pos += 1;
+                    Some(self.make_inline(
+                        NodeValue::Text("+".into()),
+                        self.scanner.pos - 1,
+                        self.scanner.pos - 1,
+                    ))
+                }
+            }
+            b'?' if self.options.parse.smart => Some(self.handle_punctuation_cap(b'?', 3)),
             b'[' => {
                 self.scanner.pos += 1;
 
@@ -320,6 +341,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     self.push_bracket(true, inl);
                     self.within_brackets = true;
                     Some(inl)
+                } else if self.options.parse.smart && self.peek_byte() == Some(b'!') {
+                    Some(self.handle_punctuation_cap_from(b'!', 3, self.scanner.pos - 1))
                 } else {
                     Some(self.make_inline(
                         NodeValue::Text("!".into()),
@@ -353,6 +376,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             }
             b'$' => Some(self.handle_dollars(&ast.line_offsets)),
             b'>' if self.options.parse.smart => Some(self.handle_guillemet_close()),
+            b',' if self.options.parse.smart => Some(self.handle_punctuation_cap(b',', 1)),
             b'|' if self.options.extension.spoiler => Some(self.handle_delim(b'|')),
             _ => {
                 let mut endpos = self.find_special_char();
@@ -860,6 +884,76 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 self.scanner.pos - 1,
             )
         }
+    }
+
+    fn handle_open_paren(&mut self) -> Node<'a> {
+        let start = self.scanner.pos;
+        self.scanner.pos += 1;
+
+        let replacement = match self.peek_byte() {
+            Some(b'c' | b'C')
+                if self.peek_byte_n(1) == Some(b')') =>
+            {
+                self.scanner.pos += 2;
+                Some("\u{a9}")
+            }
+            Some(b'r' | b'R')
+                if self.peek_byte_n(1) == Some(b')') =>
+            {
+                self.scanner.pos += 2;
+                Some("\u{ae}")
+            }
+            Some(b't')
+                if self.peek_byte_n(1) == Some(b'm')
+                    && self.peek_byte_n(2) == Some(b')') =>
+            {
+                self.scanner.pos += 3;
+                Some("\u{2122}")
+            }
+            Some(b'T')
+                if self.peek_byte_n(1) == Some(b'M')
+                    && self.peek_byte_n(2) == Some(b')') =>
+            {
+                self.scanner.pos += 3;
+                Some("\u{2122}")
+            }
+            _ => None,
+        };
+
+        if let Some(r) = replacement {
+            self.make_inline(
+                NodeValue::Text(r.into()),
+                start,
+                self.scanner.pos - 1,
+            )
+        } else {
+            self.make_inline(
+                NodeValue::Text("(".into()),
+                start,
+                start,
+            )
+        }
+    }
+
+    fn handle_punctuation_cap(&mut self, ch: u8, max: usize) -> Node<'a> {
+        let start = self.scanner.pos;
+        self.scanner.pos += 1;
+        self.handle_punctuation_cap_from(ch, max, start)
+    }
+
+    fn handle_punctuation_cap_from(&mut self, ch: u8, max: usize, start: usize) -> Node<'a> {
+        let mut count = self.scanner.pos - start;
+        while self.peek_byte() == Some(ch) {
+            self.scanner.pos += 1;
+            count += 1;
+        }
+        let capped = count.min(max);
+        let text: String = std::iter::repeat(ch as char).take(capped).collect();
+        self.make_inline(
+            NodeValue::Text(text.into()),
+            start,
+            self.scanner.pos - 1,
+        )
     }
 
     fn handle_guillemet_close(&mut self) -> Node<'a> {

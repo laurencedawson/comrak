@@ -265,6 +265,15 @@ pub enum NodeValue {
     /// :::
     /// ```
     BlockDirective(Box<NodeBlockDirective>),
+
+    /// A Lemmy spoiler block.
+    ///
+    /// ```md
+    /// :::spoiler Click to reveal
+    /// Hidden content
+    /// :::
+    /// ```
+    LemmySpoiler(Box<NodeLemmySpoiler>),
 }
 
 /// Alignment of a single table cell.
@@ -345,6 +354,14 @@ pub struct NodeLink {
     /// Note this field is used for the `title` attribute by the HTML formatter even for images;
     /// `alt` text is supplied in the image inline text.
     pub title: String,
+}
+
+impl NodeLink {
+    /// Returns the URL after cleaning (unwrapping redirects, expanding short URLs, etc.).
+    /// Zero-copy when no cleaning is needed.
+    pub fn cleaned_url(&self) -> Cow<'_, str> {
+        crate::parser::clean_urls::clean_url(&self.url)
+    }
 }
 
 /// The details of a wikilink's destination.
@@ -611,6 +628,19 @@ pub struct NodeBlockDirective {
     pub info: String,
 }
 
+/// The metadata of a Lemmy spoiler block.
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct NodeLemmySpoiler {
+    /// The length of the opening fence (number of colons).
+    pub fence_length: usize,
+
+    /// The indentation level of the fence marker.
+    pub fence_offset: usize,
+
+    /// The spoiler title (text after `:::spoiler `).
+    pub title: String,
+}
+
 impl NodeValue {
     /// Indicates whether this node is a block node or inline node.
     pub fn block(&self) -> bool {
@@ -636,7 +666,7 @@ impl NodeValue {
             | NodeValue::MultilineBlockQuote(_)
             | NodeValue::Alert(_)
             | NodeValue::Subtext => true,
-            NodeValue::BlockDirective(_) => true,
+            NodeValue::BlockDirective(_) | NodeValue::LemmySpoiler(_) => true,
             #[cfg(feature = "phoenix_heex")]
             NodeValue::HeexBlock(..) => true,
             _ => false,
@@ -730,6 +760,7 @@ impl NodeValue {
             NodeValue::Alert(_) => "alert",
             NodeValue::Subtext => "subtext",
             NodeValue::BlockDirective(_) => "block_directive",
+            NodeValue::LemmySpoiler(_) => "lemmy_spoiler",
         }
     }
 
@@ -1066,7 +1097,7 @@ impl<'a> arena_tree::Node<'a, RefCell<Ast>> {
             NodeValue::Alert(_) => {
                 child.block() && !matches!(*child, NodeValue::Item(..) | NodeValue::TaskItem(..))
             }
-            NodeValue::BlockDirective(_) => {
+            NodeValue::BlockDirective(_) | NodeValue::LemmySpoiler(_) => {
                 child.block() && !matches!(*child, NodeValue::Item(..) | NodeValue::TaskItem(..))
             }
 

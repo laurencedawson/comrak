@@ -52,6 +52,7 @@ phf = "0.13"
 rustc-hash = "2"
 smallvec = "1.13"
 finl_unicode = { version = "1.4.0", features = ["categories"] }
+url = "2"
 
 [dev-dependencies]
 ntest = "0.9"

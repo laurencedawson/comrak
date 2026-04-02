@@ -1,4 +1,8 @@
-# [Comrak](https://comrak.ee/)
+# Comrak (Fork)
+
+Fork of [comrak](https://github.com/kivikakk/comrak) with additional extensions. See [CHANGES.md](CHANGES.md) for details.
+
+---
 
 [![Build status](https://github.com/kivikakk/comrak/actions/workflows/rust.yml/badge.svg)](https://github.com/kivikakk/comrak/actions/workflows/rust.yml)
 [![CommonMark: 652/652](https://img.shields.io/badge/commonmark-652%2F652-brightgreen.svg)](https://github.com/commonmark/commonmark-spec/blob/9103e341a973013013bb1a80e13567007c5cef6f/spec.txt)
