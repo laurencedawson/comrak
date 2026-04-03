@@ -249,7 +249,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         } else {
             unescaped.into_owned().into()
         };
-        inl.append(self.make_inline(
+        inl.append_new(self.make_inline(
             NodeValue::Text(text),
             start_column + 1,
             end_column - 1,
@@ -475,7 +475,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         };
 
         if let Some(inl) = new_inl {
-            node.append(inl);
+            node.append_new(inl);
         }
 
         true

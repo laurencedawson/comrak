@@ -196,6 +196,17 @@ impl<'a, T> Node<'a, T> {
     /// Append a new child to this node, after existing children.
     pub fn append(&'a self, new_child: &'a Node<'a, T>) {
         new_child.detach();
+        self.append_inner(new_child);
+    }
+
+    /// Append a freshly created child that is not part of any tree.
+    /// Skips the detach() call for a minor speedup on hot paths.
+    pub fn append_new(&'a self, new_child: &'a Node<'a, T>) {
+        debug_assert!(new_child.parent.get().is_none());
+        self.append_inner(new_child);
+    }
+
+    fn append_inner(&'a self, new_child: &'a Node<'a, T>) {
         new_child.parent.set(Some(self));
         if let Some(last_child) = self.last_child.take() {
             new_child.previous_sibling.set(Some(last_child));

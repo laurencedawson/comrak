@@ -1916,7 +1916,7 @@ where
 
         let child = Ast::new(value, (self.line_number, start_column).into());
         let node = self.arena.alloc(child.into());
-        parent.append(node);
+        parent.append_new(node);
         node
     }
 
