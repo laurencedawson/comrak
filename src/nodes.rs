@@ -789,11 +789,49 @@ pub struct Ast {
     /// The positions in the source document this node comes from.
     pub sourcepos: Sourcepos,
 
-    pub(crate) content: String,
+    pub(crate) block: Option<Box<BlockContent>>,
     pub(crate) open: bool,
     pub(crate) last_line_blank: bool,
     pub(crate) table_visited: bool,
-    pub(crate) line_offsets: Vec<usize>,
+}
+
+/// Content accumulated during block parsing. Only block-level nodes that
+/// accept lines (Paragraph, Heading, CodeBlock, etc.) allocate this.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub(crate) struct BlockContent {
+    pub content: String,
+    pub line_offsets: Vec<usize>,
+}
+
+impl Ast {
+    pub(crate) fn content(&self) -> &str {
+        match &self.block {
+            Some(b) => &b.content,
+            None => "",
+        }
+    }
+
+    pub(crate) fn content_mut(&mut self) -> &mut String {
+        &mut self.block.get_or_insert_with(Default::default).content
+    }
+
+    pub(crate) fn line_offsets(&self) -> &[usize] {
+        match &self.block {
+            Some(b) => &b.line_offsets,
+            None => &[],
+        }
+    }
+
+    pub(crate) fn line_offsets_mut(&mut self) -> &mut Vec<usize> {
+        &mut self.block.get_or_insert_with(Default::default).line_offsets
+    }
+
+    pub(crate) fn take_content(&mut self) -> String {
+        match &mut self.block {
+            Some(b) => std::mem::take(&mut b.content),
+            None => String::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for Ast {
@@ -804,9 +842,9 @@ impl std::fmt::Debug for Ast {
 
 #[allow(dead_code)]
 #[cfg(target_pointer_width = "64")]
-/// Assert the size of Ast is 128 bytes. It's pretty big; let's stop it getting
-/// bigger.
-const AST_SIZE_ASSERTION: [u8; 128] = [0; std::mem::size_of::<Ast>()];
+/// Assert the size of Ast. Reduced from 128 to 80 by moving content/line_offsets
+/// into Option<Box<BlockContent>>.
+const AST_SIZE_ASSERTION: [u8; 88] = [0; std::mem::size_of::<Ast>()];
 
 #[allow(dead_code)]
 #[cfg(target_pointer_width = "64")]
@@ -815,7 +853,7 @@ const AST_SIZE_ASSERTION: [u8; 128] = [0; std::mem::size_of::<Ast>()];
 /// Note that the size adds to Ast:
 /// * 8 bytes for RefCell.
 /// * 40 bytes for arena_tree::Node's 5 pointers.
-const AST_NODE_SIZE_ASSERTION: [u8; 176] = [0; std::mem::size_of::<AstNode<'_>>()];
+const AST_NODE_SIZE_ASSERTION: [u8; 136] = [0; std::mem::size_of::<AstNode<'_>>()];
 
 /// Represents the position in the source Markdown this node was rendered from.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -912,12 +950,11 @@ impl Ast {
     pub fn new(value: NodeValue, start: LineColumn) -> Self {
         Ast {
             value,
-            content: String::new(),
+            block: None,
             sourcepos: (start.line, start.column, start.line, 0).into(),
             open: true,
             last_line_blank: false,
             table_visited: false,
-            line_offsets: Vec::new(),
         }
     }
 
@@ -925,12 +962,11 @@ impl Ast {
     pub fn new_with_sourcepos(value: NodeValue, sourcepos: Sourcepos) -> Self {
         Ast {
             value,
-            content: String::new(),
+            block: None,
             sourcepos,
             open: true,
             last_line_blank: false,
             table_visited: false,
-            line_offsets: Vec::new(),
         }
     }
 }

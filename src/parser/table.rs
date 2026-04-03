@@ -48,17 +48,17 @@ fn try_opening_header<'a>(
         None => return Some((container, false, true)),
     };
 
-    let mut container_content = mem::take(&mut container.data_mut().content);
+    let mut container_content = container.data_mut().take_content();
     let mut header_row = match row(&container_content, spoiler) {
         Some(header_row) => header_row,
         None => {
-            mem::swap(&mut container.data_mut().content, &mut container_content);
+            mem::swap(container.data_mut().content_mut(), &mut container_content);
             return Some((container, false, true));
         }
     };
 
     if header_row.cells.len() != delimiter_row.cells.len() {
-        mem::swap(&mut container.data_mut().content, &mut container_content);
+        mem::swap(container.data_mut().content_mut(), &mut container_content);
         return Some((container, false, true));
     }
 
@@ -125,8 +125,8 @@ fn try_opening_header<'a>(
         ast.sourcepos.start.line = start.line;
         ast.sourcepos.end =
             start.column_add((cell.end_offset - header_row.paragraph_offset) as isize);
-        mem::swap(&mut ast.content, cell.content.to_mut());
-        ast.line_offsets.push(
+        mem::swap(ast.content_mut(), cell.content.to_mut());
+        ast.line_offsets_mut().push(
             start.column + cell.start_offset - 1 + cell.internal_offset
                 - header_row.paragraph_offset,
         );
@@ -134,7 +134,7 @@ fn try_opening_header<'a>(
         i += 1;
     }
 
-    mem::swap(&mut container.data_mut().content, &mut container_content);
+    mem::swap(container.data_mut().content_mut(), &mut container_content);
 
     let offset = line.len() - newlines_of(line) - parser.offset;
     parser.advance_offset(line, offset, false);
@@ -181,9 +181,9 @@ fn try_opening_row<'a>(
         );
         let cell_ast = &mut cell_node.data_mut();
         cell_ast.sourcepos.end.column = sourcepos.start.column + cell.end_offset;
-        mem::swap(&mut cell_ast.content, cell.content.to_mut());
+        mem::swap(cell_ast.content_mut(), cell.content.to_mut());
         cell_ast
-            .line_offsets
+            .line_offsets_mut()
             .push(sourcepos.start.column + cell.start_offset - 1 + cell.internal_offset);
 
         last_column = cell_ast.sourcepos.end.column;
@@ -308,10 +308,10 @@ fn try_inserting_table_header_paragraph<'a>(
     paragraph.sourcepos.end.line = start.line + newlines - 1;
 
     for n in 0..newlines {
-        paragraph.line_offsets.push(container_ast.line_offsets[n]);
+        paragraph.line_offsets_mut().push(container_ast.line_offsets()[n]);
     }
 
-    let last_line_offset = *paragraph.line_offsets.last().unwrap_or(&0);
+    let last_line_offset = *paragraph.line_offsets().last().unwrap_or(&0);
     paragraph.sourcepos.end.column = last_line_offset
         + preface
             .as_bytes()
@@ -322,9 +322,9 @@ fn try_inserting_table_header_paragraph<'a>(
             .count();
 
     container_ast.sourcepos.start.line += newlines;
-    container_ast.sourcepos.start.column = container_ast.line_offsets[newlines] + 1;
+    container_ast.sourcepos.start.column = container_ast.line_offsets()[newlines] + 1;
 
-    paragraph.content = paragraph_content;
+    *paragraph.content_mut() = paragraph_content;
     let node = parser.arena.alloc(paragraph.into());
     container.insert_before(node);
 }

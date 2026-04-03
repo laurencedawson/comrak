@@ -79,12 +79,11 @@ fn parse_document_inner<'a>(
     let root = arena.alloc(
         Ast {
             value: NodeValue::Document,
-            content: String::new(),
+            block: None,
             sourcepos: (1, 1, 1, 1).into(),
             open: true,
             last_line_blank: false,
             table_visited: false,
-            line_offsets: Vec::new(),
         }
         .into(),
     );
@@ -1379,7 +1378,8 @@ where
 
     #[cfg(feature = "phoenix_heex")]
     fn has_unclosed_heex_directive(&self, node: Node<'a>) -> bool {
-        let content = &node.data().content;
+        let data = node.data();
+        let content = data.content();
 
         if !content.as_bytes().contains(&b'<') {
             return false;
@@ -1462,7 +1462,7 @@ where
 
         let has_content = {
             let mut ast = container.data_mut();
-            self.resolve_reference_link_definitions(&mut ast.content)
+            self.resolve_reference_link_definitions(ast.content_mut())
         };
         if has_content {
             container.data_mut().value = NodeValue::Heading(NodeHeading {
@@ -2094,18 +2094,18 @@ where
         if self.partially_consumed_tab {
             self.offset += 1;
             let chars_to_tab = TAB_STOP - (self.column % TAB_STOP);
-            ast.content.reserve(chars_to_tab);
+            ast.content_mut().reserve(chars_to_tab);
             for _ in 0..chars_to_tab {
-                ast.content.push(' ');
+                ast.content_mut().push(' ');
             }
         }
         if self.offset < line.len() {
             // Since whitespace is stripped off the beginning of lines, we need
             // to keep track of how much was stripped off. This allows us to
             // properly calculate inline sourcepos during inline processing.
-            ast.line_offsets.push(self.offset);
+            ast.line_offsets_mut().push(self.offset);
 
-            ast.content.push_str(&line[self.offset..]);
+            ast.content_mut().push_str(&line[self.offset..]);
         }
     }
 
@@ -2206,7 +2206,6 @@ where
         assert!(ast.open);
         ast.open = false;
 
-        let content = &mut ast.content;
         let parent = node.parent();
 
         if self.curline_len == 0 {
@@ -2236,12 +2235,13 @@ where
                 self.fix_zero_end_columns(node);
             }
             NodeValue::Paragraph => {
-                let has_content = self.resolve_reference_link_definitions(content);
+                let has_content = self.resolve_reference_link_definitions(ast.content_mut());
                 if !has_content {
                     node.detach();
                 }
             }
             NodeValue::CodeBlock(ref mut ncb) => {
+                let content = &mut ast.block.get_or_insert_with(Default::default).content;
                 if !ncb.fenced {
                     strings::remove_trailing_blank_lines(content);
                     content.push('\n');
@@ -2281,23 +2281,29 @@ where
                 mem::swap(&mut ncb.literal, content);
             }
             NodeValue::HtmlBlock(ref mut nhb) => {
-                let trimmed = strings::remove_trailing_blank_lines_slice(content);
-                let (num_lines, last_line_len) = strings::count_newlines(trimmed);
+                let (num_lines, end_col) = {
+                    let block = ast.block.get_or_insert_with(Default::default);
+                    let trimmed = strings::remove_trailing_blank_lines_slice(&block.content);
+                    let (nl, ll) = strings::count_newlines(trimmed);
+                    (nl, block.line_offsets.get(nl).copied().unwrap_or(0) + ll)
+                };
                 let end_line = ast.sourcepos.start.line + num_lines;
-                let end_col = ast.line_offsets.get(num_lines).copied().unwrap_or(0) + last_line_len;
                 ast.sourcepos.end = (end_line, end_col).into();
 
-                mem::swap(&mut nhb.literal, content);
+                mem::swap(&mut nhb.literal, &mut ast.block.get_or_insert_with(Default::default).content);
             }
             #[cfg(feature = "phoenix_heex")]
             NodeValue::HeexBlock(ref mut nhb) => {
-                let trimmed = strings::remove_trailing_blank_lines_slice(content);
-                let (num_lines, last_line_len) = strings::count_newlines(trimmed);
+                let (num_lines, end_col) = {
+                    let block = ast.block.get_or_insert_with(Default::default);
+                    let trimmed = strings::remove_trailing_blank_lines_slice(&block.content);
+                    let (nl, ll) = strings::count_newlines(trimmed);
+                    (nl, block.line_offsets.get(nl).copied().unwrap_or(0) + ll)
+                };
                 let end_line = ast.sourcepos.start.line + num_lines;
-                let end_col = ast.line_offsets.get(num_lines).copied().unwrap_or(0) + last_line_len;
                 ast.sourcepos.end = (end_line, end_col).into();
 
-                mem::swap(&mut nhb.literal, content);
+                mem::swap(&mut nhb.literal, &mut ast.block.get_or_insert_with(Default::default).content);
             }
             NodeValue::List(ref mut nl) => {
                 if let Some(candidate_end) = self.fix_zero_end_columns(node) {
@@ -2358,7 +2364,7 @@ where
     ) {
         let mut node_data = node.data_mut();
 
-        let mut content = mem::take(&mut node_data.content);
+        let mut content = node_data.take_content();
         strings::rtrim(&mut content);
 
         let input: Cow<'a, str> = if let Some(sa) = self.string_arena {

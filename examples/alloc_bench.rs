@@ -29,11 +29,16 @@ fn size_to_bucket(size: usize) -> usize {
     (bits as usize).min(15)
 }
 
+static VERBOSE: AtomicUsize = AtomicUsize::new(0);
+
 unsafe impl GlobalAlloc for TrackingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if TRACKING.load(Ordering::Relaxed) != 0 {
             ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
             ALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+            if VERBOSE.load(Ordering::Relaxed) != 0 && layout.size() >= 256 {
+                eprintln!("  ALLOC {:>6} bytes (align {})", layout.size(), layout.align());
+            }
             match layout.size() {
                 1..=32 => { BUCKET_TINY.fetch_add(1, Ordering::Relaxed); }
                 33..=128 => { BUCKET_SMALL.fetch_add(1, Ordering::Relaxed); }
@@ -130,6 +135,7 @@ fn main() {
         let trimmed = input.trim();
 
         // Combined: parse + blob
+        if name == &"complex" { VERBOSE.store(1, Ordering::Relaxed); }
         start_tracking();
         let (nc, sc) = comrak::arena_capacities(trimmed.len());
         let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));
@@ -140,6 +146,7 @@ fn main() {
         );
         let _ = comrak::blob::render_blob(root, trimmed, false);
         let (total_raw_count, total_raw_bytes) = stop_tracking();
+        VERBOSE.store(0, Ordering::Relaxed);
         let blob_count = total_raw_count - parse_count;
         let blob_bytes = total_raw_bytes - parse_bytes;
 
