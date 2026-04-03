@@ -145,9 +145,10 @@ fn main() {
 
         let total_count = parse_count + blob_count;
         let total_bytes = parse_bytes + blob_bytes;
+        let node_count = root.descendants().count();
         let ratio = total_bytes as f64 / trimmed.len() as f64;
-        println!("{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input) | parse {:>5} blob {:>4}",
-            name, trimmed.len(), total_count, total_bytes / 1024, ratio, parse_count, blob_count);
+        println!("{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input) | parse {:>5} blob {:>4} | {:>4} nodes",
+            name, trimmed.len(), total_count, total_bytes / 1024, ratio, parse_count, blob_count, node_count);
 
         if name == &"long-doc" || name == &"heavy-inline" {
             let tiny = BUCKET_TINY.load(Ordering::Relaxed);

@@ -2342,14 +2342,20 @@ where
 
     fn process_inlines(&mut self) {
         let char_tables = inlines::CharTables::from_options(self.options);
+        let delimiter_arena = typed_arena::Arena::with_capacity(16);
         for node in self.root.descendants() {
             if node.data().value.contains_inlines() {
-                self.parse_inlines(node, &char_tables);
+                self.parse_inlines(node, &char_tables, &delimiter_arena);
             }
         }
     }
 
-    fn parse_inlines(&mut self, node: Node<'a>, char_tables: &inlines::CharTables) {
+    fn parse_inlines<'d>(
+        &mut self,
+        node: Node<'a>,
+        char_tables: &inlines::CharTables,
+        delimiter_arena: &'d typed_arena::Arena<inlines::Delimiter<'a, 'd>>,
+    ) {
         let mut node_data = node.data_mut();
 
         let mut content = mem::take(&mut node_data.content);
@@ -2363,7 +2369,6 @@ where
 
         let line = node_data.sourcepos.start.line;
 
-        let delimiter_arena = typed_arena::Arena::with_capacity(8);
         let mut subj = inlines::Subject::new(
             self.arena,
             self.options,
@@ -2371,7 +2376,7 @@ where
             line,
             &mut self.refmap,
             &mut self.footnote_defs,
-            &delimiter_arena,
+            delimiter_arena,
             0,
             char_tables,
             self.string_arena,
