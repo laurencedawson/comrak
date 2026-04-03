@@ -32,7 +32,7 @@ const MAX_INLINE_FOOTNOTE_DEPTH: usize = 5;
 pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub arena: &'a Arena<'a>,
     pub options: &'o Options<'c>,
-    pub input: String,
+    pub input: Cow<'a, str>,
     line: usize,
     pub scanner: Scanner,
     column_offset: isize,
@@ -49,6 +49,16 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub scanned_for_backticks: bool,
     no_link_openers: bool,
     char_tables: &'o CharTables,
+    string_arena: Option<&'a typed_arena::Arena<String>>,
+}
+
+/// Extend a borrowed `&'a str` from a string_arena to `'static` for NodeValue::Text.
+///
+/// SAFETY: the string_arena that backs `s` has lifetime `'a` — the same lifetime as the
+/// node arena. The caller (parse_document_zerocopy / parse_document_raw) owns both arenas
+/// on the stack, so pooled strings live at least as long as every node that references them.
+unsafe fn extend_lifetime(s: &str) -> &'static str {
+    unsafe { std::mem::transmute::<&str, &'static str>(s) }
 }
 
 /// Pre-computed character lookup tables derived from Options.
@@ -144,13 +154,14 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     pub fn new(
         arena: &'a Arena<'a>,
         options: &'o Options<'c>,
-        input: String,
+        input: Cow<'a, str>,
         line: usize,
         refmap: &'r mut RefMap,
         footnote_defs: &'p mut FootnoteDefs<'a>,
         delimiter_arena: &'d typed_arena::Arena<Delimiter<'a, 'd>>,
         inline_footnote_depth: usize,
         char_tables: &'o CharTables,
+        string_arena: Option<&'a typed_arena::Arena<String>>,
     ) -> Self {
         Subject {
             arena,
@@ -172,7 +183,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             scanned_for_backticks: false,
             no_link_openers: true,
             char_tables,
+            string_arena,
         }
+    }
+
+    fn is_zerocopy(&self) -> bool {
+        matches!(self.input, Cow::Borrowed(_))
     }
 
     //////////////////
@@ -408,8 +424,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 let startpos = self.scanner.pos;
                 self.scanner.pos = endpos;
 
-                let mut contents: Cow<str> = if endpos == self.input.len() {
-                    let mut contents = mem::take(&mut self.input);
+                let mut contents: Cow<str> = if !self.is_zerocopy() && endpos == self.input.len() {
+                    let mut contents = mem::take(&mut self.input).into_owned();
                     strings::remove_from_start(&mut contents, startpos);
                     contents.into()
                 } else {
@@ -422,11 +438,17 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     endpos -= size_before - contents.len();
                 }
 
-                // Don't create empty text nodes - this can happen after trimming trailing
-                // whitespace, is useless, and would cause sourcepos underflow in endpos - 1.
                 if !contents.is_empty() {
+                    let text: Cow<'static, str> = if self.is_zerocopy() {
+                        match contents {
+                            Cow::Borrowed(s) => Cow::Borrowed(unsafe { extend_lifetime(s) }),
+                            Cow::Owned(s) => s.into(),
+                        }
+                    } else {
+                        contents.into_owned().into()
+                    };
                     Some(self.make_inline(
-                        NodeValue::Text(contents.into_owned().into()),
+                        NodeValue::Text(text),
                         startpos,
                         endpos - 1,
                     ))
@@ -784,6 +806,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             } else {
                 "“".into()
             }
+        } else if self.is_zerocopy() {
+            let s = &self.input[self.scanner.pos - numdelims..self.scanner.pos];
+            Cow::Borrowed(unsafe { extend_lifetime(s) })
         } else {
             self.input[self.scanner.pos - numdelims..self.scanner.pos]
                 .to_string()
@@ -1272,16 +1297,22 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
         // Parse the content recursively as inlines
         let delimiter_arena = typed_arena::Arena::new();
+        let input: Cow<'a, str> = if let Some(sa) = self.string_arena {
+            Cow::Borrowed(&*sa.alloc(String::from(content)))
+        } else {
+            Cow::Owned(String::from(content))
+        };
         let mut subj = Subject::new(
             self.arena,
             self.options,
-            content.into(),
+            input,
             1, // Use line 1 to match the paragraph's sourcepos
             self.refmap,
             self.footnote_defs,
             &delimiter_arena,
             self.inline_footnote_depth + 1,
             self.char_tables,
+            self.string_arena,
         );
 
         while subj.parse_inline(para_node, &mut para_node.data_mut()) {}

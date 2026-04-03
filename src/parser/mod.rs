@@ -43,17 +43,39 @@ const MAX_LIST_DEPTH: usize = 100;
 /// See the documentation of the crate root for an example.
 /// Parse markdown into an AST with full postprocessing (text coalescing, autolinks).
 pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> Node<'a> {
-    parse_document_inner(arena, md, options, true)
+    parse_document_inner(arena, md, options, true, None)
+}
+
+/// Parse markdown into an AST with full postprocessing and zero-copy text nodes.
+/// The `string_arena` must outlive the returned `Node<'a>`.
+pub fn parse_document_zerocopy<'a>(
+    arena: &'a Arena<'a>,
+    string_arena: &'a typed_arena::Arena<String>,
+    md: &str,
+    options: &Options,
+) -> Node<'a> {
+    parse_document_inner(arena, md, options, true, Some(string_arena))
 }
 
 /// Parse markdown into an AST without text node postprocessing.
 /// Adjacent Text nodes may not be merged, but all block/inline structure is correct.
 /// Suitable for consumers that handle adjacent Text nodes themselves (e.g. blob rendering).
-pub fn parse_document_raw<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> Node<'a> {
-    parse_document_inner(arena, md, options, false)
+pub fn parse_document_raw<'a>(
+    arena: &'a Arena<'a>,
+    string_arena: &'a typed_arena::Arena<String>,
+    md: &str,
+    options: &Options,
+) -> Node<'a> {
+    parse_document_inner(arena, md, options, false, Some(string_arena))
 }
 
-fn parse_document_inner<'a>(arena: &'a Arena<'a>, md: &str, options: &Options, postprocess: bool) -> Node<'a> {
+fn parse_document_inner<'a>(
+    arena: &'a Arena<'a>,
+    md: &str,
+    options: &Options,
+    postprocess: bool,
+    string_arena: Option<&'a typed_arena::Arena<String>>,
+) -> Node<'a> {
     let root = arena.alloc(
         Ast {
             value: NodeValue::Document,
@@ -66,7 +88,7 @@ fn parse_document_inner<'a>(arena: &'a Arena<'a>, md: &str, options: &Options, p
         }
         .into(),
     );
-    let document = Parser::new(arena, root, options).parse(md, postprocess);
+    let document = Parser::new(arena, root, options, string_arena).parse(md, postprocess);
     if options.parse.sourcepos_chars {
         convert_sourcepos_columns_to_chars(document, md);
     }
@@ -141,6 +163,7 @@ pub struct Parser<'a, 'o, 'c> {
     curline_end_col: usize,
     last_line_length: usize,
     total_size: usize,
+    string_arena: Option<&'a typed_arena::Arena<String>>,
     #[cfg(feature = "phoenix_heex")]
     heex_block_depth: usize,
 }
@@ -166,7 +189,12 @@ impl<'a, 'o, 'c> Parser<'a, 'o, 'c>
 where
     'c: 'o,
 {
-    fn new(arena: &'a Arena<'a>, root: Node<'a>, options: &'o Options<'c>) -> Self {
+    fn new(
+        arena: &'a Arena<'a>,
+        root: Node<'a>,
+        options: &'o Options<'c>,
+        string_arena: Option<&'a typed_arena::Arena<String>>,
+    ) -> Self {
         Parser {
             arena,
             options,
@@ -187,6 +215,7 @@ where
             curline_end_col: 0,
             last_line_length: 0,
             total_size: 0,
+            string_arena,
             #[cfg(feature = "phoenix_heex")]
             heex_block_depth: 0,
         }
@@ -2326,19 +2355,26 @@ where
         let mut content = mem::take(&mut node_data.content);
         strings::rtrim(&mut content);
 
+        let input: Cow<'a, str> = if let Some(sa) = self.string_arena {
+            Cow::Borrowed(&*sa.alloc(content))
+        } else {
+            Cow::Owned(content)
+        };
+
         let line = node_data.sourcepos.start.line;
 
         let delimiter_arena = typed_arena::Arena::new();
         let mut subj = inlines::Subject::new(
             self.arena,
             self.options,
-            content,
+            input,
             line,
             &mut self.refmap,
             &mut self.footnote_defs,
             &delimiter_arena,
             0,
             char_tables,
+            self.string_arena,
         );
 
         while subj.parse_inline(node, &mut node_data) {}
