@@ -2313,14 +2313,15 @@ where
     }
 
     fn process_inlines(&mut self) {
+        let char_tables = inlines::CharTables::from_options(self.options);
         for node in self.root.descendants() {
             if node.data().value.contains_inlines() {
-                self.parse_inlines(node);
+                self.parse_inlines(node, &char_tables);
             }
         }
     }
 
-    fn parse_inlines(&mut self, node: Node<'a>) {
+    fn parse_inlines(&mut self, node: Node<'a>, char_tables: &inlines::CharTables) {
         let mut node_data = node.data_mut();
 
         let mut content = mem::take(&mut node_data.content);
@@ -2338,6 +2339,7 @@ where
             &mut self.footnote_defs,
             &delimiter_arena,
             0,
+            char_tables,
         );
 
         while subj.parse_inline(node, &mut node_data) {}

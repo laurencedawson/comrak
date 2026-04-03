@@ -48,11 +48,88 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub backticks: [usize; MAXBACKTICKS + 1],
     pub scanned_for_backticks: bool,
     no_link_openers: bool,
-    special_char_bytes: [bool; 256],
-    smart_pair_bytes: [bool; 256],
-    smart_follower_bytes: [bool; 256],
-    skip_char_bytes: [bool; 256],
-    emph_delim_bytes: [bool; 256],
+    char_tables: &'o CharTables,
+}
+
+/// Pre-computed character lookup tables derived from Options.
+/// Computed once, shared across all Subject instances for the same parse.
+pub(crate) struct CharTables {
+    pub special_char_bytes: [bool; 256],
+    pub smart_pair_bytes: [bool; 256],
+    pub smart_follower_bytes: [bool; 256],
+    pub skip_char_bytes: [bool; 256],
+    pub emph_delim_bytes: [bool; 256],
+}
+
+impl CharTables {
+    pub fn from_options(options: &Options) -> Self {
+        let mut t = CharTables {
+            special_char_bytes: [false; 256],
+            smart_pair_bytes: [false; 256],
+            smart_follower_bytes: [false; 256],
+            skip_char_bytes: [false; 256],
+            emph_delim_bytes: [false; 256],
+        };
+        for &b in b"\n\r_*\"`\\&<[]!$" {
+            t.special_char_bytes[b as usize] = true;
+        }
+        if options.parse.smart {
+            for &b in b"\"'" {
+                t.special_char_bytes[b as usize] = true;
+            }
+            for &b in b"-.>+(?," {
+                t.smart_pair_bytes[b as usize] = true;
+            }
+            for &b in b"-.>cCrRtT?," {
+                t.smart_follower_bytes[b as usize] = true;
+            }
+        }
+        if options.extension.autolink {
+            t.special_char_bytes[b':' as usize] = true;
+            t.special_char_bytes[b'w' as usize] = true;
+        }
+        if options.extension.strikethrough || options.extension.subscript {
+            t.special_char_bytes[b'~' as usize] = true;
+            t.skip_char_bytes[b'~' as usize] = true;
+            t.emph_delim_bytes[b'~' as usize] = true;
+        }
+        if options.extension.highlight {
+            t.special_char_bytes[b'=' as usize] = true;
+            t.skip_char_bytes[b'=' as usize] = true;
+            t.emph_delim_bytes[b'=' as usize] = true;
+        }
+        if options.extension.insert {
+            t.special_char_bytes[b'+' as usize] = true;
+            t.skip_char_bytes[b'+' as usize] = true;
+            t.emph_delim_bytes[b'+' as usize] = true;
+        }
+        if options.extension.superscript || options.extension.inline_footnotes {
+            t.special_char_bytes[b'^' as usize] = true;
+        }
+        if options.extension.superscript {
+            t.emph_delim_bytes[b'^' as usize] = true;
+        }
+        #[cfg(feature = "shortcodes")]
+        if options.extension.shortcodes {
+            t.special_char_bytes[b':' as usize] = true;
+        }
+        if options.extension.underline {
+            t.special_char_bytes[b'_' as usize] = true;
+        }
+        if options.extension.spoiler {
+            t.special_char_bytes[b'|' as usize] = true;
+            t.emph_delim_bytes[b'|' as usize] = true;
+        }
+        #[cfg(feature = "phoenix_heex")]
+        if options.extension.phoenix_heex {
+            t.special_char_bytes[b'{' as usize] = true;
+            t.special_char_bytes[b'<' as usize] = true;
+        }
+        for &b in b"*_" {
+            t.emph_delim_bytes[b as usize] = true;
+        }
+        t
+    }
 }
 
 #[derive(Default)]
@@ -73,8 +150,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         footnote_defs: &'p mut FootnoteDefs<'a>,
         delimiter_arena: &'d typed_arena::Arena<Delimiter<'a, 'd>>,
         inline_footnote_depth: usize,
+        char_tables: &'o CharTables,
     ) -> Self {
-        let mut s = Subject {
+        Subject {
             arena,
             options,
             input,
@@ -93,73 +171,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             backticks: [0; MAXBACKTICKS + 1],
             scanned_for_backticks: false,
             no_link_openers: true,
-            special_char_bytes: [false; 256],
-            smart_pair_bytes: [false; 256],
-            smart_follower_bytes: [false; 256],
-            skip_char_bytes: [false; 256],
-            emph_delim_bytes: [false; 256],
-        };
-        for &b in b"\n\r_*\"`\\&<[]!$" {
-            s.special_char_bytes[b as usize] = true;
+            char_tables,
         }
-        if options.parse.smart {
-            for &b in b"\"'" {
-                s.special_char_bytes[b as usize] = true;
-            }
-            // Pair triggers: only stop when the next byte is a valid follower.
-            // This avoids breaking text runs for lone `.`, `,`, `-`, etc.
-            for &b in b"-.>+(?," {
-                s.smart_pair_bytes[b as usize] = true;
-            }
-            for &b in b"-.>cCrRtT?," {
-                s.smart_follower_bytes[b as usize] = true;
-            }
-        }
-        if options.extension.autolink {
-            s.special_char_bytes[b':' as usize] = true;
-            s.special_char_bytes[b'w' as usize] = true;
-        }
-        if options.extension.strikethrough || options.extension.subscript {
-            s.special_char_bytes[b'~' as usize] = true;
-            s.skip_char_bytes[b'~' as usize] = true;
-            s.emph_delim_bytes[b'~' as usize] = true;
-        }
-        if options.extension.highlight {
-            s.special_char_bytes[b'=' as usize] = true;
-            s.skip_char_bytes[b'=' as usize] = true;
-            s.emph_delim_bytes[b'=' as usize] = true;
-        }
-        if options.extension.insert {
-            s.special_char_bytes[b'+' as usize] = true;
-            s.skip_char_bytes[b'+' as usize] = true;
-            s.emph_delim_bytes[b'+' as usize] = true;
-        }
-        if options.extension.superscript || options.extension.inline_footnotes {
-            s.special_char_bytes[b'^' as usize] = true;
-        }
-        if options.extension.superscript {
-            s.emph_delim_bytes[b'^' as usize] = true;
-        }
-        #[cfg(feature = "shortcodes")]
-        if options.extension.shortcodes {
-            s.special_char_bytes[b':' as usize] = true;
-        }
-        if options.extension.underline {
-            s.special_char_bytes[b'_' as usize] = true;
-        }
-        if options.extension.spoiler {
-            s.special_char_bytes[b'|' as usize] = true;
-            s.emph_delim_bytes[b'|' as usize] = true;
-        }
-        #[cfg(feature = "phoenix_heex")]
-        if options.extension.phoenix_heex {
-            s.special_char_bytes[b'{' as usize] = true;
-            s.special_char_bytes[b'<' as usize] = true;
-        }
-        for &b in b"*_" {
-            s.emph_delim_bytes[b as usize] = true;
-        }
-        s
     }
 
     //////////////////
@@ -1268,6 +1281,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             self.footnote_defs,
             &delimiter_arena,
             self.inline_footnote_depth + 1,
+            self.char_tables,
         );
 
         while subj.parse_inline(para_node, &mut para_node.data_mut()) {}
@@ -1500,7 +1514,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 // There's a case here for every possible delimiter. If we found
                 // a matching opening delimiter for our closing delimiter, they
                 // both get passed.
-                if self.emph_delim_bytes[c.delim_byte as usize] {
+                if self.char_tables.emph_delim_bytes[c.delim_byte as usize] {
                     if opener_found {
                         // Finally, here's the happy case where the delimiters
                         // match and they are inserted. We get a new closer
@@ -2129,16 +2143,16 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         let mut i = 0;
         while i < len {
             let b = input[i];
-            if self.special_char_bytes[b as usize] {
+            if self.char_tables.special_char_bytes[b as usize] {
                 if b == b'^' && self.within_brackets {
                     i += 1;
                     continue;
                 }
                 break;
             }
-            if self.smart_pair_bytes[b as usize]
+            if self.char_tables.smart_pair_bytes[b as usize]
                 && i + 1 < len
-                && self.smart_follower_bytes[input[i + 1] as usize]
+                && self.char_tables.smart_follower_bytes[input[i + 1] as usize]
             {
                 break;
             }
@@ -2246,13 +2260,13 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         let mut before_char_pos = pos - 1;
         while before_char_pos > 0
             && (self.input.as_bytes()[before_char_pos] >> 6 == 2
-                || self.skip_char_bytes[self.input.as_bytes()[before_char_pos] as usize])
+                || self.char_tables.skip_char_bytes[self.input.as_bytes()[before_char_pos] as usize])
         {
             before_char_pos -= 1;
         }
         match self.input[before_char_pos..pos].chars().next() {
             Some(x) => {
-                if (x as usize) < 256 && self.skip_char_bytes[x as usize] {
+                if (x as usize) < 256 && self.char_tables.skip_char_bytes[x as usize] {
                     ('\n', None)
                 } else {
                     (x, Some(before_char_pos))
@@ -2281,13 +2295,13 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         } else {
             let mut after_char_pos = self.scanner.pos;
             while after_char_pos < self.input.len() - 1
-                && self.skip_char_bytes[self.input.as_bytes()[after_char_pos] as usize]
+                && self.char_tables.skip_char_bytes[self.input.as_bytes()[after_char_pos] as usize]
             {
                 after_char_pos += 1;
             }
             match self.input[after_char_pos..].chars().next() {
                 Some(x) => {
-                    if (x as usize) < 256 && self.skip_char_bytes[x as usize] {
+                    if (x as usize) < 256 && self.char_tables.skip_char_bytes[x as usize] {
                         '\n'
                     } else {
                         x
