@@ -88,7 +88,10 @@ fn stop_tracking() -> (usize, usize) {
 fn main() {
     use comrak::{parse_document_raw, Arena, StringArena, Options};
     use comrak::nodes::AstNode;
-    println!("AstNode size: {} bytes", std::mem::size_of::<AstNode>());
+    println!("AstNode: {} bytes, NodeValue: {} bytes, Ast: {} bytes",
+        std::mem::size_of::<AstNode>(),
+        std::mem::size_of::<comrak::nodes::NodeValue>(),
+        std::mem::size_of::<comrak::nodes::Ast>());
 
     let mut opts = Options::default();
     opts.extension.strikethrough = true;
@@ -142,8 +145,9 @@ fn main() {
 
         let total_count = parse_count + blob_count;
         let total_bytes = parse_bytes + blob_bytes;
-        println!("{:<20} {:>6} chars | {:>5} allocs {:>6} KB | parse {:>5} blob {:>4}",
-            name, trimmed.len(), total_count, total_bytes / 1024, parse_count, blob_count);
+        let ratio = total_bytes as f64 / trimmed.len() as f64;
+        println!("{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input) | parse {:>5} blob {:>4}",
+            name, trimmed.len(), total_count, total_bytes / 1024, ratio, parse_count, blob_count);
 
         if name == &"long-doc" || name == &"heavy-inline" {
             let tiny = BUCKET_TINY.load(Ordering::Relaxed);

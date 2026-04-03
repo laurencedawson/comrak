@@ -1309,7 +1309,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         def_node.append(para_node);
 
         // Parse the content recursively as inlines
-        let delimiter_arena = typed_arena::Arena::new();
+        let delimiter_arena = typed_arena::Arena::with_capacity(8);
         let input: Cow<'a, str> = if let Some(sa) = self.string_arena {
             Cow::Borrowed(&*sa.alloc(String::from(content)))
         } else {

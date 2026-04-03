@@ -2363,7 +2363,7 @@ where
 
         let line = node_data.sourcepos.start.line;
 
-        let delimiter_arena = typed_arena::Arena::new();
+        let delimiter_arena = typed_arena::Arena::with_capacity(8);
         let mut subj = inlines::Subject::new(
             self.arena,
             self.options,
