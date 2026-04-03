@@ -41,7 +41,19 @@ const MAX_LIST_DEPTH: usize = 100;
 /// Parse a Markdown document to an AST.
 ///
 /// See the documentation of the crate root for an example.
+/// Parse markdown into an AST with full postprocessing (text coalescing, autolinks).
 pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> Node<'a> {
+    parse_document_inner(arena, md, options, true)
+}
+
+/// Parse markdown into an AST without text node postprocessing.
+/// Adjacent Text nodes may not be merged, but all block/inline structure is correct.
+/// Suitable for consumers that handle adjacent Text nodes themselves (e.g. blob rendering).
+pub fn parse_document_raw<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> Node<'a> {
+    parse_document_inner(arena, md, options, false)
+}
+
+fn parse_document_inner<'a>(arena: &'a Arena<'a>, md: &str, options: &Options, postprocess: bool) -> Node<'a> {
     let root = arena.alloc(
         Ast {
             value: NodeValue::Document,
@@ -54,7 +66,7 @@ pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> 
         }
         .into(),
     );
-    let document = Parser::new(arena, root, options).parse(md);
+    let document = Parser::new(arena, root, options).parse(md, postprocess);
     if options.parse.sourcepos_chars {
         convert_sourcepos_columns_to_chars(document, md);
     }
@@ -180,7 +192,7 @@ where
         }
     }
 
-    fn parse(mut self, s: &str) -> Node<'a> {
+    fn parse(mut self, s: &str, postprocess: bool) -> Node<'a> {
         let stripped = if self.options.parse.strip_invisible {
             strings::strip_invisible(s)
         } else {
@@ -225,8 +237,10 @@ where
             ix = eol;
         }
 
-        self.finalize_document();
-        self.postprocess_text_nodes(self.root);
+        self.finalize_document(postprocess);
+        if postprocess {
+            self.postprocess_text_nodes(self.root);
+        }
         self.root
     }
 
@@ -2067,7 +2081,7 @@ where
         }
     }
 
-    fn finalize_document(&mut self) {
+    fn finalize_document(&mut self, full: bool) {
         while !self.current.same_node(self.root) {
             self.current = self.finalize(self.current).unwrap();
         }
@@ -2079,7 +2093,6 @@ where
         self.process_inlines();
 
         if self.options.extension.footnotes {
-            // Append auto-generated inline footnote definitions
             if self.options.extension.inline_footnotes {
                 self.root.extend(self.footnote_defs.take());
             }
@@ -2087,7 +2100,9 @@ where
             self.process_footnotes();
         }
 
-        self.propagate_list_sourcepos(self.root);
+        if full {
+            self.propagate_list_sourcepos(self.root);
+        }
     }
 
     // Walk the tree and fix lists using their
