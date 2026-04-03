@@ -15,6 +15,20 @@ static BUCKET_SMALL: AtomicUsize = AtomicUsize::new(0);
 static BUCKET_MEDIUM: AtomicUsize = AtomicUsize::new(0);
 static BUCKET_LARGE: AtomicUsize = AtomicUsize::new(0);
 
+// Fine-grained histogram: 16 buckets (powers of 2: 1-2, 3-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129-256, 257-512, 513-1024, 1025-2048, 2049-4096, 4097-8192, 8193-16384, 16385-32768, 32769+)
+static HISTOGRAM: [AtomicUsize; 16] = [
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+];
+
+fn size_to_bucket(size: usize) -> usize {
+    if size == 0 { return 0; }
+    let bits = usize::BITS - (size - 1).leading_zeros();
+    (bits as usize).min(15)
+}
+
 unsafe impl GlobalAlloc for TrackingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if TRACKING.load(Ordering::Relaxed) != 0 {
@@ -26,6 +40,7 @@ unsafe impl GlobalAlloc for TrackingAlloc {
                 129..=1024 => { BUCKET_MEDIUM.fetch_add(1, Ordering::Relaxed); }
                 _ => { BUCKET_LARGE.fetch_add(1, Ordering::Relaxed); }
             }
+            HISTOGRAM[size_to_bucket(layout.size())].fetch_add(1, Ordering::Relaxed);
         }
         unsafe { System.alloc(layout) }
     }
@@ -44,6 +59,20 @@ fn reset() {
     BUCKET_SMALL.store(0, Ordering::Relaxed);
     BUCKET_MEDIUM.store(0, Ordering::Relaxed);
     BUCKET_LARGE.store(0, Ordering::Relaxed);
+    for h in &HISTOGRAM { h.store(0, Ordering::Relaxed); }
+}
+
+fn print_histogram() {
+    let labels = ["1-2", "3-4", "5-8", "9-16", "17-32", "33-64", "65-128",
+                   "129-256", "257-512", "513-1K", "1K-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K+"];
+    print!("  histogram:");
+    for (i, label) in labels.iter().enumerate() {
+        let v = HISTOGRAM[i].load(Ordering::Relaxed);
+        if v > 0 {
+            print!(" {}={}", label, v);
+        }
+    }
+    println!();
 }
 
 fn start_tracking() {
@@ -121,6 +150,7 @@ fn main() {
             let large = BUCKET_LARGE.load(Ordering::Relaxed);
             println!("  buckets: tiny(1-32)={} small(33-128)={} medium(129-1K)={} large(1K+)={}",
                 tiny, small, medium, large);
+            print_histogram();
         }
     }
 }

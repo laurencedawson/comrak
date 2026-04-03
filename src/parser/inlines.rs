@@ -191,6 +191,14 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         matches!(self.input, Cow::Borrowed(_))
     }
 
+    fn text_cow(&self, s: &str) -> Cow<'static, str> {
+        if self.is_zerocopy() {
+            Cow::Borrowed(unsafe { extend_lifetime(s) })
+        } else {
+            s.to_string().into()
+        }
+    }
+
     //////////////////
     // Constructors //
     //////////////////
@@ -233,8 +241,17 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             start_column,
             end_column,
         );
+        let unescaped = entity::unescape_html(url);
+        let text: Cow<'static, str> = if self.is_zerocopy() {
+            match unescaped {
+                Cow::Borrowed(s) => Cow::Borrowed(unsafe { extend_lifetime(s) }),
+                Cow::Owned(s) => s.into(),
+            }
+        } else {
+            unescaped.into_owned().into()
+        };
         inl.append(self.make_inline(
-            NodeValue::Text(entity::unescape_html(url).into_owned().into()),
+            NodeValue::Text(text),
             start_column + 1,
             end_column - 1,
         ));
@@ -530,11 +547,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             self.scanner.pos += 1;
 
             let inline_text = self.make_inline(
-                NodeValue::Text(
-                    self.input[self.scanner.pos - 1..self.scanner.pos]
-                        .to_string()
-                        .into(),
-                ),
+                NodeValue::Text(self.text_cow(&self.input[self.scanner.pos - 1..self.scanner.pos])),
                 self.scanner.pos - 1,
                 self.scanner.pos - 1,
             );
