@@ -214,10 +214,9 @@ where
         self.total_size = end;
 
         let mut ix = 0;
-        let matcher = jetscii::bytes!(b'\r', b'\n');
 
         while ix < end {
-            let mut eol = match matcher.find(&sb[ix..]) {
+            let mut eol = match memchr::memchr2(b'\r', b'\n', &sb[ix..]) {
                 Some(offset) => ix + offset,
                 None => end,
             };

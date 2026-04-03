@@ -2171,12 +2171,14 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         }
 
         loop {
-            while self.peek_byte().is_some_and(|b| b != b'`') {
-                self.scanner.pos += 1;
-            }
-            if self.scanner.pos >= self.input.len() {
-                self.scanned_for_backticks = true;
-                return None;
+            let remaining = &self.input.as_bytes()[self.scanner.pos..];
+            match memchr::memchr(b'`', remaining) {
+                Some(offset) => self.scanner.pos += offset,
+                None => {
+                    self.scanner.pos = self.input.len();
+                    self.scanned_for_backticks = true;
+                    return None;
+                }
             }
             let numticks = self.take_while(b'`');
             if numticks <= MAXBACKTICKS {
