@@ -107,6 +107,12 @@ pub use xml::format_document_with_plugins as format_xml_with_plugins;
 /// Convenience type alias for arena used to hold nodes.
 pub type Arena<'a> = typed_arena::Arena<nodes::AstNode<'a>>;
 
+/// Estimate arena capacities from input length.
+/// Returns (node_capacity, string_capacity) for use with `Arena::with_capacity`.
+pub fn arena_capacities(input_len: usize) -> (usize, usize) {
+    (input_len / 20 + 8, input_len / 40 + 4)
+}
+
 #[deprecated(
     since = "0.45.0",
     note = "use `comrak::options::Extension` instead of `comrak::ExtensionOptions`"

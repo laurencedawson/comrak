@@ -87,6 +87,8 @@ fn stop_tracking() -> (usize, usize) {
 
 fn main() {
     use comrak::{parse_document_raw, Arena, StringArena, Options};
+    use comrak::nodes::AstNode;
+    println!("AstNode size: {} bytes", std::mem::size_of::<AstNode>());
 
     let mut opts = Options::default();
     opts.extension.strikethrough = true;
@@ -112,8 +114,8 @@ fn main() {
 
     // Warmup
     for (_, input) in &inputs {
-        let arena = Arena::new();
-        let string_arena = StringArena::new();
+        let (nc, sc) = comrak::arena_capacities(input.trim().len());
+        let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));
         let root = parse_document_raw(&arena, &string_arena, input.trim(), &opts);
         let _ = comrak::blob::render_blob(root, input.trim(), false);
     }
@@ -126,8 +128,8 @@ fn main() {
 
         // Combined: parse + blob
         start_tracking();
-        let arena = Arena::new();
-        let string_arena = StringArena::new();
+        let (nc, sc) = comrak::arena_capacities(trimmed.len());
+        let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));
         let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
         let (parse_count, parse_bytes) = (
             ALLOC_COUNT.load(Ordering::Relaxed),

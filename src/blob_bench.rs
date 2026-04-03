@@ -122,8 +122,8 @@ mod tests {
     }
 
     fn parse_and_render(input: &str) -> Option<Vec<u8>> {
-        let arena = Arena::new();
-        let string_arena = crate::StringArena::new();
+        let (nc, sc) = crate::arena_capacities(input.len());
+        let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
         let opts = default_opts();
         let root = parse_document_raw(&arena, &string_arena, input, &opts);
         blob::render_blob(root, input, false)
@@ -191,8 +191,8 @@ mod tests {
 
             // Warmup
             for _ in 0..100 {
-                let arena = Arena::new();
-                let string_arena = crate::StringArena::new();
+                let (nc, sc) = crate::arena_capacities(trimmed.len());
+                let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
                 let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
                 let _ = blob::render_blob(root, trimmed, false);
             }
@@ -200,8 +200,8 @@ mod tests {
             let iterations = 500;
             let start = std::time::Instant::now();
             for _ in 0..iterations {
-                let arena = Arena::new();
-                let string_arena = crate::StringArena::new();
+                let (nc, sc) = crate::arena_capacities(trimmed.len());
+                let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
                 let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
                 let _ = blob::render_blob(root, trimmed, false);
             }
