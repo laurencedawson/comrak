@@ -135,7 +135,6 @@ fn main() {
         let trimmed = input.trim();
 
         // Combined: parse + blob
-        if name == &"complex" { VERBOSE.store(1, Ordering::Relaxed); }
         start_tracking();
         let (nc, sc) = comrak::arena_capacities(trimmed.len());
         let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));

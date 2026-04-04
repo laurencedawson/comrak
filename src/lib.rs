@@ -74,6 +74,7 @@ pub mod html;
 pub mod nodes;
 pub mod plugins;
 
+pub mod arena;
 mod character_set;
 mod cm;
 mod ctype;
@@ -105,7 +106,9 @@ pub use xml::format_document as format_xml;
 pub use xml::format_document_with_plugins as format_xml_with_plugins;
 
 /// Convenience type alias for arena used to hold nodes.
-pub type Arena<'a> = typed_arena::Arena<nodes::AstNode<'a>>;
+/// Uses a custom arena with 1.25x growth factor to reduce memory waste
+/// compared to typed_arena's 2x doubling.
+pub type Arena<'a> = arena::Arena<nodes::AstNode<'a>>;
 
 /// Estimate arena capacities from input length.
 /// Returns (node_capacity, string_capacity) for use with `Arena::with_capacity`.
