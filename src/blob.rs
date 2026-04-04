@@ -47,6 +47,26 @@ fn utf16_len(s: &str) -> usize {
     len
 }
 
+/// Collapse runs of whitespace into a single space.
+#[inline]
+fn collapse_whitespace(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.as_bytes().windows(2).any(|w| w[0] == b' ' && w[1] == b' ') {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for c in s.chars() {
+        if c == ' ' {
+            if !prev_space { out.push(' '); }
+            prev_space = true;
+        } else {
+            out.push(c);
+            prev_space = false;
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Extract the domain from a URL for display suffix deduplication.
 fn extract_domain(url: &str) -> Option<String> {
     let start = url.find("://")? + 3;
@@ -310,7 +330,7 @@ fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quo
             out.footnotes.push(tmp.text().trim().to_string());
         }
 
-        Text(t) => out.write_text(t),
+        Text(t) => out.write_text(&collapse_whitespace(t)),
         ShortCode(sc) => out.write_text(&sc.emoji),
         Code(c) => {
             out.write_text(&c.literal);
