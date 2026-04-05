@@ -802,7 +802,16 @@ where
             self.find_first_nonspace(line);
             let indented = self.indent >= CODE_INDENT;
 
-            if !((!indented
+            // Fast path: check if first non-space char can start a block.
+            // Letters, digits, and most punctuation cannot start block structures,
+            // so skip all 15 handlers for continuation lines.
+            let first_byte = line.as_bytes().get(self.first_nonspace).copied();
+            let could_be_block = !indented && matches!(first_byte,
+                Some(b'>' | b'#' | b'`' | b'~' | b'<' | b'-' | b'_' | b'*' | b'+' |
+                     b'=' | b'[' | b':' | b'|' | b'{' | b'0'..=b'9')
+            );
+
+            if !((could_be_block
                 && (self.handle_lemmy_spoiler(container, line)
                     || self.handle_block_directive(container, line)
                     || self.handle_alert(container, line)
@@ -2178,6 +2187,10 @@ where
     }
 
     fn resolve_reference_link_definitions(&mut self, content: &mut String) -> bool {
+        if content.is_empty() || content.as_bytes()[0] != b'[' {
+            return !strings::is_blank(content);
+        }
+
         let mut pos = 0;
         let mut rrs = vec![];
 
