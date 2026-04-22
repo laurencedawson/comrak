@@ -166,6 +166,9 @@ pub struct Parser<'a, 'o, 'c> {
     /// True if any FootnoteDefinition or footnote reference has been added.
     /// When false we can skip the entire post-parse footnote walk + HashMap alloc.
     saw_footnote: bool,
+    /// False when the caller uses the raw path (no HTML/commonmark rendering,
+    /// no sourcepos consumption). Lets us skip sourcepos fix-up tree walks.
+    needs_sourcepos: bool,
     #[cfg(feature = "phoenix_heex")]
     heex_block_depth: usize,
 }
@@ -219,12 +222,16 @@ where
             total_size: 0,
             string_arena,
             saw_footnote: false,
+            needs_sourcepos: true,
             #[cfg(feature = "phoenix_heex")]
             heex_block_depth: 0,
         }
     }
 
     fn parse(mut self, s: &str, postprocess: bool) -> Node<'a> {
+        // In the raw (JNI blob) path, the caller never inspects sourcepos, so
+        // we can skip all the sourcepos fix-up tree walks.
+        self.needs_sourcepos = postprocess;
         let stripped = if self.options.parse.strip_invisible {
             strings::strip_invisible(s)
         } else {
@@ -733,6 +740,10 @@ where
     // fall back to the node's start position.
     // Returns a candidate end position for `container` if found.
     fn fix_zero_end_columns(&mut self, container: Node<'a>) -> Option<nodes::LineColumn> {
+        // Entirely sourcepos work — skip in the raw path.
+        if !self.needs_sourcepos {
+            return None;
+        }
         // explicit stack for post-order traversal: (node, visited)
         let mut stack: Vec<(Node<'a>, bool)> = Vec::new();
 
