@@ -1311,7 +1311,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             (1, 1).into(), // Use line 1 as base
         );
         // Build line_offsets by scanning for newlines in the content
-        *para_ast.line_offsets_mut() = vec![0];
+        let los = para_ast.line_offsets_mut();
+        los.clear();
+        los.push(0);
 
         let mut i = 0;
         let bytes = content.as_bytes();

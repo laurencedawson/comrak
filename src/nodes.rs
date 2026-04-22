@@ -800,7 +800,9 @@ pub struct Ast {
 #[derive(Clone, PartialEq, Eq, Default)]
 pub(crate) struct BlockContent {
     pub content: String,
-    pub line_offsets: Vec<usize>,
+    /// Inline storage for up to 4 line offsets — covers the vast majority of
+    /// paragraphs without a separate heap allocation.
+    pub line_offsets: smallvec::SmallVec<[usize; 4]>,
 }
 
 impl Ast {
@@ -822,7 +824,7 @@ impl Ast {
         }
     }
 
-    pub(crate) fn line_offsets_mut(&mut self) -> &mut Vec<usize> {
+    pub(crate) fn line_offsets_mut(&mut self) -> &mut smallvec::SmallVec<[usize; 4]> {
         &mut self.block.get_or_insert_with(Default::default).line_offsets
     }
 
