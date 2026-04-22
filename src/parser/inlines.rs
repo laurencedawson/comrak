@@ -1721,22 +1721,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             return None;
         }
 
-        opener
-            .inl
-            .data_mut()
-            .value
-            .text_mut()
-            .unwrap()
-            .to_mut()
-            .truncate(opener_num_bytes);
-        closer
-            .inl
-            .data_mut()
-            .value
-            .text_mut()
-            .unwrap()
-            .to_mut()
-            .truncate(closer_num_bytes);
+        // For zero-copy text (Cow::Borrowed), `.to_mut().truncate()` would
+        // force a full String clone every time we pair emphasis. Since almost
+        // all truncations land on 0 bytes (`*x*`, `**x**`) or 1 byte (`***x**`),
+        // we can replace the text with a cheap static &str instead.
+        set_emph_delim_text(opener.inl, opener_byte, opener_num_bytes);
+        set_emph_delim_text(closer.inl, opener_byte, closer_num_bytes);
 
         // Remove all the candidate delimiters from between the opener and the
         // closer. None of them are matched pairs. They've been scanned already.
@@ -2675,6 +2665,31 @@ pub(crate) fn manual_scan_link_url_2(input: &str) -> Option<(&str, usize)> {
     } else {
         Some((&input[..i], i))
     }
+}
+
+/// Replace an emphasis delimiter text node's content with a static &str of the
+/// requested length, avoiding the String allocation that Cow::to_mut() forces.
+/// Falls back to to_mut().truncate() for unusual byte lengths.
+fn set_emph_delim_text<'a>(inl: Node<'a>, delim_byte: u8, len: usize) {
+    let mut data = inl.data_mut();
+    let text = data.value.text_mut().unwrap();
+    let s: &'static str = match (delim_byte, len) {
+        (_, 0) => "",
+        (b'*', 1) => "*",
+        (b'_', 1) => "_",
+        (b'~', 1) => "~",
+        (b'^', 1) => "^",
+        (b'=', 1) => "=",
+        (b'+', 1) => "+",
+        (b'|', 1) => "|",
+        (b'"', 1) => "\"",
+        (b'\'', 1) => "'",
+        _ => {
+            text.to_mut().truncate(len);
+            return;
+        }
+    };
+    *text = s.into();
 }
 
 pub(crate) fn make_inline<'a>(
