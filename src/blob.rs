@@ -223,7 +223,18 @@ impl BlobWriter {
             let ptr = self.spans.as_mut_ptr() as *mut [i32; 4];
             std::slice::from_raw_parts_mut(ptr, span_count)
         };
-        spans_view.sort_unstable_by_key(|s| (s[0], -s[1], s[2]));
+        // Pack the sort key (start asc, end desc, type asc) into a single u64
+        // so the comparator is a plain u64 compare instead of a 3-field tuple
+        // walk. Layout: bits 63..32 = start, bits 31..8 = inverted 24-bit end
+        // (for descending order), bits 7..0 = span type. Safe because start/end
+        // are non-negative text offsets (well under 2^24 for all realistic
+        // documents) and span types fit in u8.
+        spans_view.sort_unstable_by_key(|s| {
+            let start = s[0] as u32 as u64;
+            let end_inv = (0xFF_FFFF - (s[1] as u32 & 0xFF_FFFF)) as u64;
+            let ty = (s[2] as u32 & 0xFF) as u64;
+            (start << 32) | (end_inv << 8) | ty
+        });
 
         self.blob[0..4].copy_from_slice(&(txt_len as i32).to_le_bytes());
         self.blob[4..8].copy_from_slice(&(span_count as i32).to_le_bytes());
