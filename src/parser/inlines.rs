@@ -915,9 +915,20 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         let ens = if ens > 0 { ens as usize } else { 0 };
         let ems = if ems > 0 { ems as usize } else { 0 };
 
+        // Fast path for common single-em/single-en cases — avoid allocation
+        // entirely by returning &'static str. "—" is the em dash (U+2014, 3
+        // bytes UTF-8), "–" is the en dash (U+2013, 3 bytes UTF-8).
+        if (ems, ens) == (1, 0) {
+            return self.make_inline(NodeValue::Text("—".into()), start, self.scanner.pos - 1);
+        }
+        if (ems, ens) == (0, 1) {
+            return self.make_inline(NodeValue::Text("–".into()), start, self.scanner.pos - 1);
+        }
+
+        // Longer runs: build once without intermediate String::repeat allocations.
         let mut buf = String::with_capacity(3 * (ems + ens));
-        buf.push_str(&"—".repeat(ems));
-        buf.push_str(&"–".repeat(ens));
+        for _ in 0..ems { buf.push_str("—"); }
+        for _ in 0..ens { buf.push_str("–"); }
         self.make_inline(NodeValue::Text(buf.into()), start, self.scanner.pos - 1)
     }
 
@@ -1010,7 +1021,22 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             count += 1;
         }
         let capped = count.min(max);
-        let text: String = std::iter::repeat(ch as char).take(capped).collect();
+        // Static table lookup avoids allocating a String for every run of smart
+        // punctuation (?, !, ,). Callers only pass max in {1,3}, so capped is in 0..=3.
+        let text: &'static str = match (ch, capped) {
+            (b'?', 1) => "?", (b'?', 2) => "??", (b'?', 3) => "???",
+            (b'!', 1) => "!", (b'!', 2) => "!!", (b'!', 3) => "!!!",
+            (b',', 1) => ",",
+            _ => {
+                // Fallback for unexpected ch/capped combos; extremely rare.
+                let s: String = std::iter::repeat(ch as char).take(capped).collect();
+                return self.make_inline(
+                    NodeValue::Text(s.into()),
+                    start,
+                    self.scanner.pos - 1,
+                );
+            }
+        };
         self.make_inline(
             NodeValue::Text(text.into()),
             start,
