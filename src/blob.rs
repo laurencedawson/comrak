@@ -68,12 +68,19 @@ fn collapse_whitespace(s: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Extract the domain from a URL for display suffix deduplication.
-fn extract_domain(url: &str) -> Option<String> {
+/// Returns a borrowed slice when the host is already lowercase ASCII — most
+/// links in practice — avoiding an allocation per link render.
+fn extract_domain(url: &str) -> Option<std::borrow::Cow<'_, str>> {
     let start = url.find("://")? + 3;
     let end = url[start..].find('/').or_else(|| url[start..].find('?')).map_or(url.len(), |i| start + i);
     let mut host = &url[start..end];
     if host.starts_with("www.") { host = &host[4..]; }
-    if host.is_empty() { None } else { Some(host.to_ascii_lowercase()) }
+    if host.is_empty() { return None; }
+    if host.bytes().all(|b| !b.is_ascii_uppercase()) {
+        Some(std::borrow::Cow::Borrowed(host))
+    } else {
+        Some(std::borrow::Cow::Owned(host.to_ascii_lowercase()))
+    }
 }
 
 /// Render a comrak AST into a binary blob for Android's FastSpannable.
