@@ -1280,6 +1280,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
         // Generate unique name
         let name = self.footnote_defs.next_name();
+        self.footnote_defs.saw_reference = true;
 
         // Create the footnote reference node
         let ref_node = self.make_inline(
@@ -2062,6 +2063,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             }
 
             if !sussy && text.len() > 1 {
+                self.footnote_defs.saw_reference = true;
                 let inl = self.make_inline(
                     NodeValue::FootnoteReference(Box::new(NodeFootnoteReference {
                         name: text[1..].to_string(),
@@ -2525,6 +2527,9 @@ impl RefMap {
 pub struct FootnoteDefs<'a> {
     defs: Vec<Node<'a>>,
     next: usize,
+    /// Tracks whether any footnote reference was created during inline parse,
+    /// so the post-parse footnote walk can be skipped when unused.
+    pub saw_reference: bool,
 }
 
 impl<'a> FootnoteDefs<'a> {
@@ -2532,6 +2537,7 @@ impl<'a> FootnoteDefs<'a> {
         Self {
             defs: Vec::new(),
             next: 1,
+            saw_reference: false,
         }
     }
 

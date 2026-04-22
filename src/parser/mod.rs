@@ -163,6 +163,9 @@ pub struct Parser<'a, 'o, 'c> {
     last_line_length: usize,
     total_size: usize,
     string_arena: Option<&'a typed_arena::Arena<String>>,
+    /// True if any FootnoteDefinition or footnote reference has been added.
+    /// When false we can skip the entire post-parse footnote walk + HashMap alloc.
+    saw_footnote: bool,
     #[cfg(feature = "phoenix_heex")]
     heex_block_depth: usize,
 }
@@ -215,6 +218,7 @@ where
             last_line_length: 0,
             total_size: 0,
             string_arena,
+            saw_footnote: false,
             #[cfg(feature = "phoenix_heex")]
             heex_block_depth: 0,
         }
@@ -1600,6 +1604,7 @@ where
             }),
             self.first_nonspace + 1,
         );
+        self.saw_footnote = true;
 
         true
     }
@@ -2410,6 +2415,12 @@ where
     }
 
     fn process_footnotes(&mut self) {
+        // Skip the entire footnote walk when no definitions or references were
+        // created during parse — avoids a HashMap allocation plus two tree
+        // walks on docs that enable the extension but don't use it.
+        if !self.saw_footnote && !self.footnote_defs.saw_reference {
+            return;
+        }
         // TODO: combine find_footnote_definitions and find_footnote_references into one pass!
         let mut fd_map = HashMap::new();
         Self::find_footnote_definitions(self.root, &mut fd_map);
