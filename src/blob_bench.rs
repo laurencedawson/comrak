@@ -126,7 +126,7 @@ mod tests {
         let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
         let opts = default_opts();
         let root = parse_document_raw(&arena, &string_arena, input, &opts);
-        blob::render_blob(root, input, false)
+        blob::render_blob(root, input)
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
                 let (nc, sc) = crate::arena_capacities(trimmed.len());
                 let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
                 let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-                let _ = blob::render_blob(root, trimmed, false);
+                let _ = blob::render_blob(root, trimmed);
             }
 
             let iterations = 500;
@@ -203,7 +203,7 @@ mod tests {
                 let (nc, sc) = crate::arena_capacities(trimmed.len());
                 let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
                 let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-                let _ = blob::render_blob(root, trimmed, false);
+                let _ = blob::render_blob(root, trimmed);
             }
             let elapsed = start.elapsed() / iterations;
             eprintln!("{} ({} chars): {:.1} us",

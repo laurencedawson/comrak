@@ -125,7 +125,7 @@ fn main() {
         let (nc, sc) = comrak::arena_capacities(input.trim().len());
         let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));
         let root = parse_document_raw(&arena, &string_arena, input.trim(), &opts);
-        let _ = comrak::blob::render_blob(root, input.trim(), false);
+        let _ = comrak::blob::render_blob(root, input.trim());
     }
 
     println!("{:<20} {:>8} {:>10} {:>12}", "test", "chars", "allocs", "bytes");
@@ -143,7 +143,7 @@ fn main() {
             ALLOC_COUNT.load(Ordering::Relaxed),
             ALLOC_BYTES.load(Ordering::Relaxed),
         );
-        let _ = comrak::blob::render_blob(root, trimmed, false);
+        let _ = comrak::blob::render_blob(root, trimmed);
         let (total_raw_count, total_raw_bytes) = stop_tracking();
         VERBOSE.store(0, Ordering::Relaxed);
         let blob_count = total_raw_count - parse_count;

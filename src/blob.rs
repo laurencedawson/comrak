@@ -83,19 +83,92 @@ fn extract_domain(url: &str) -> Option<std::borrow::Cow<'_, str>> {
     }
 }
 
+/// Strip `http://` / `https://`, returning the rest of the URL.
+fn strip_scheme(url: &str) -> Option<&str> {
+    url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
+}
+
+/// Returns `true` if the URL points to an image (by known host, path pattern,
+/// or file extension). Conservative: may return false for actual images with
+/// unusual hosting, never true for non-image URLs. Used by the blob renderer
+/// to convert bare autolinks into inline image embeds, and exposed to callers
+/// so they can make the same heuristic decision at their own layer.
+pub fn is_image_url(url: &str) -> bool {
+    let rest = match strip_scheme(url) {
+        Some(r) => r,
+        None => return false,
+    };
+
+    if IMAGE_HOSTS.iter().any(|h| rest.starts_with(h)) {
+        return !IMAGE_HOST_EXCLUDED.iter().any(|p| rest.starts_with(p));
+    }
+
+    if IMAGE_PATHS.iter().any(|p| rest.contains(p)) {
+        return true;
+    }
+
+    let path = rest.split(['?', '#']).next().unwrap_or(rest);
+    for segment in path.split('/') {
+        if let Some((_, ext)) = segment.rsplit_once('.') {
+            if IMAGE_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e)) {
+                return true;
+            }
+        }
+    }
+
+    if let Some(qs) = rest.split_once('?').map(|(_, q)| q) {
+        for pair in qs.split('&') {
+            let value = pair.split_once('=').map(|(_, v)| v).unwrap_or(pair);
+            let v = value.split(['?', '#']).next().unwrap_or(value);
+            if let Some((_, ext)) = v.rsplit_once('.') {
+                if IMAGE_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+const IMAGE_HOSTS: &[&str] = &[
+    "i.redd.it/",
+    "preview.redd.it/",
+    "i.imgur.com/",
+    "upload.wikimedia.org/",
+    "s.yimg.com/",
+    "encrypted-tbn0.gstatic.com/",
+    "pbs.twimg.com/",
+    "cdn.bsky.app/img/",
+];
+
+const IMAGE_HOST_EXCLUDED: &[&str] = &[
+    "i.imgur.com/a/",
+    "i.imgur.com/gallery/",
+];
+
+const IMAGE_PATHS: &[&str] = &[
+    "/pictrs/image/",
+    "/api/v3/image_proxy",
+    "/api/v4/image/proxy",
+];
+
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
+    "svg", "ico", "tif", "tiff", "heic", "heif", "jfif",
+];
+
 /// Render a comrak AST into a binary blob for Android's FastSpannable.
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-/// Render a comrak AST into a binary blob for Android's FastSpannable.
 ///
 /// For best performance, use `parse_document_raw()` to skip text node postprocessing,
 /// since the blob visitor handles adjacent Text nodes natively.
-pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, show_previews: bool) -> Option<Vec<u8>> {
+pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
     let mut b = BlobWriter::new(input.len());
     visit(root, &mut b, 0, 0, 0);
     b.append_footnotes();
-    if show_previews { b.append_previews(); }
 
     if b.spans.is_empty() && b.text() == input {
         return None;
@@ -108,7 +181,6 @@ struct BlobWriter {
     spans: Vec<i32>,
     url_data: Vec<u8>,
     footnotes: Vec<String>,
-    previews: Vec<String>,
     len: usize,
     p: usize,
 }
@@ -117,7 +189,7 @@ impl BlobWriter {
     fn new(cap: usize) -> Self {
         let mut blob = Vec::with_capacity(HEADER_SIZE + cap);
         blob.extend_from_slice(&[0u8; HEADER_SIZE]);
-        Self { blob, spans: vec![], url_data: vec![], footnotes: vec![], previews: vec![], len: 0, p: 0 }
+        Self { blob, spans: vec![], url_data: vec![], footnotes: vec![], len: 0, p: 0 }
     }
 
     #[inline]
@@ -201,20 +273,6 @@ impl BlobWriter {
             self.write_text(" ");
             self.write_text(note);
             self.nl(1);
-        }
-    }
-
-    fn append_previews(&mut self) {
-        let mut urls = std::mem::take(&mut self.previews);
-        if urls.is_empty() { return; }
-        let mut seen = Vec::new();
-        urls.retain(|u| if seen.contains(u) { false } else { seen.push(u.clone()); true });
-        if urls.len() > 3 { return; }
-        for url in &urls {
-            let start = self.pos();
-            self.write_text("\u{FFFC}");
-            self.span_url(LINK, start, url);
-            self.nl(2);
         }
     }
 
@@ -376,10 +434,16 @@ fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quo
         }
 
         Link(l) => {
-            let url = &l.url;
+            let url: &str = &l.cleaned_url();
             let only_child = node.first_child().filter(|c| c.next_sibling().is_none());
+            let is_autolink = only_child.is_some_and(|c| {
+                let v = &c.data.borrow().value;
+                matches!(v, Text(t) if t.starts_with("http://") || t.starts_with("https://"))
+            });
             if only_child.is_some_and(|c| matches!(&c.data.borrow().value, Image(_))) {
                 visit_children(node, out, list_depth, quote_depth);
+            } else if is_autolink && is_image_url(url) {
+                out.emit_image(url);
             } else {
                 let text_start = out.blob_len();
                 visit_children(node, out, list_depth, quote_depth);
@@ -407,4 +471,43 @@ fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quo
 
 fn visit_children<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, ld: usize, qd: usize) {
     for c in node.children() { visit(c, out, ld, qd, 0); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_image_url_extensions() {
+        assert!(is_image_url("https://example.com/photo.jpg"));
+        assert!(is_image_url("https://example.com/photo.PNG"));
+        assert!(is_image_url("https://example.com/photo.webp"));
+        assert!(!is_image_url("https://example.com/page.html"));
+        assert!(!is_image_url("https://example.com/"));
+    }
+
+    #[test]
+    fn is_image_url_known_hosts() {
+        assert!(is_image_url("https://i.redd.it/abc123.jpg"));
+        assert!(is_image_url("https://i.imgur.com/abc123"));
+        assert!(is_image_url("https://pbs.twimg.com/media/abc123"));
+        assert!(!is_image_url("https://i.imgur.com/a/abc123"));
+        assert!(!is_image_url("https://i.imgur.com/gallery/abc123"));
+    }
+
+    #[test]
+    fn is_image_url_paths() {
+        assert!(is_image_url("https://lemmy.ml/pictrs/image/abc123"));
+        assert!(is_image_url("https://lemmy.ml/api/v3/image_proxy?url=test"));
+    }
+
+    #[test]
+    fn is_image_url_query_param() {
+        assert!(is_image_url("https://proxy.example.com/?url=https://example.com/img.png"));
+    }
+
+    #[test]
+    fn is_image_url_no_scheme() {
+        assert!(!is_image_url("example.com/photo.jpg"));
+    }
 }

@@ -47,7 +47,7 @@ fn main() {
         let arena = Arena::with_capacity(nc);
         let string_arena = StringArena::with_capacity(sc);
         let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-        let _ = comrak::blob::render_blob(root, trimmed, false);
+        let _ = comrak::blob::render_blob(root, trimmed);
     }
     let total_with_blob = start.elapsed() / iterations;
     let blob_time = total_with_blob - total;
@@ -86,7 +86,7 @@ fn main() {
             let arena = Arena::with_capacity(nc);
             let string_arena = StringArena::with_capacity(sc);
             let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-            let _ = comrak::blob::render_blob(root, trimmed, false);
+            let _ = comrak::blob::render_blob(root, trimmed);
         }
         let total = start.elapsed() / iterations;
         let blob = total - parse;
