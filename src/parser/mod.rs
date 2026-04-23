@@ -46,15 +46,22 @@ pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> 
     parse_document_inner(arena, md, options, true, None)
 }
 
-/// Parse markdown into an AST with full postprocessing and zero-copy text nodes.
-/// The `string_arena` must outlive the returned `Node<'a>`.
-pub fn parse_document_zerocopy<'a>(
-    arena: &'a Arena<'a>,
-    string_arena: &'a typed_arena::Arena<String>,
-    md: &str,
-    options: &Options,
-) -> Node<'a> {
-    parse_document_inner(arena, md, options, true, Some(string_arena))
+/// Parse markdown into an AST with zero-copy text nodes, own the arenas
+/// internally, and hand the root to a caller closure. The arenas (and the
+/// AST nodes they back) are dropped once the closure returns, so the closure
+/// may only return values that don't borrow from the tree.
+///
+/// Arena capacities are sized from `md.len()` via [`arena_capacities`]; the
+/// caller doesn't need to plumb those through.
+pub fn parse_document_zerocopy<F, R>(md: &str, options: &Options, f: F) -> R
+where
+    F: for<'a> FnOnce(Node<'a>) -> R,
+{
+    let (nc, sc) = crate::arena_capacities(md.len());
+    let arena = crate::Arena::with_capacity(nc);
+    let string_arena: typed_arena::Arena<String> = typed_arena::Arena::with_capacity(sc);
+    let root = parse_document_inner(&arena, md, options, true, Some(&string_arena));
+    f(root)
 }
 
 /// Parse markdown into an AST without text node postprocessing.
