@@ -164,6 +164,10 @@ pub struct Parser<'a, 'o, 'c> {
     /// False when the caller uses the raw path (no HTML/commonmark rendering,
     /// no sourcepos consumption). Lets us skip sourcepos fix-up tree walks.
     needs_sourcepos: bool,
+    /// Reusable post-order traversal stack for `fix_zero_end_columns`. Hoisted
+    /// from the function so we don't allocate (and grow) a fresh Vec per
+    /// finalize.
+    fix_zero_stack: Vec<(Node<'a>, bool)>,
     #[cfg(feature = "phoenix_heex")]
     heex_block_depth: usize,
 }
@@ -218,6 +222,7 @@ where
             string_arena,
             saw_footnote: false,
             needs_sourcepos: true,
+            fix_zero_stack: Vec::new(),
             #[cfg(feature = "phoenix_heex")]
             heex_block_depth: 0,
         }
@@ -739,8 +744,10 @@ where
         if !self.needs_sourcepos {
             return None;
         }
-        // explicit stack for post-order traversal: (node, visited)
-        let mut stack: Vec<(Node<'a>, bool)> = Vec::new();
+        // Reusable post-order traversal stack. Held on `self` so the backing
+        // allocation (and any growth) survives across all calls in one parse.
+        let mut stack = std::mem::take(&mut self.fix_zero_stack);
+        stack.clear();
 
         for ch in container.children() {
             stack.push((ch, false));
@@ -781,6 +788,9 @@ where
         // should use instead. If looking just at the last child isn't
         // enough in some circumstances, we should consider using the widest
         // of the last descendants.
+        // Return the stack to `self` so the next call inherits its capacity.
+        self.fix_zero_stack = stack;
+
         if let Some(last_desc) = container.last_child() {
             let last_end = last_desc.data().sourcepos.end;
             if last_end.column != 0 {
