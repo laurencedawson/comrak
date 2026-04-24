@@ -91,7 +91,7 @@ fn stop_tracking() -> (usize, usize) {
 }
 
 fn main() {
-    use comrak::{parse_document_raw, Arena, StringArena, Options};
+    use comrak::{blob, parse_document_zerocopy, Options};
     use comrak::nodes::AstNode;
     println!("AstNode: {} bytes, NodeValue: {} bytes, Ast: {} bytes",
         std::mem::size_of::<AstNode>(),
@@ -111,21 +111,20 @@ fn main() {
     opts.parse.smart = true;
 
     let inputs: Vec<(&str, String)> = vec![
-        ("plain", comrak::blob_bench::PLAIN.to_string()),
-        ("simple", comrak::blob_bench::SIMPLE.to_string()),
-        ("medium", comrak::blob_bench::MEDIUM.to_string()),
-        ("deep-nesting", comrak::blob_bench::deep_nesting()),
-        ("heavy-inline", comrak::blob_bench::heavy_inline()),
-        ("complex", comrak::blob_bench::complex()),
-        ("long-doc", comrak::blob_bench::long_doc()),
+        ("plain", comrak::benchmarks::PLAIN.to_string()),
+        ("simple", comrak::benchmarks::SIMPLE.to_string()),
+        ("medium", comrak::benchmarks::MEDIUM.to_string()),
+        ("deep-nesting", comrak::benchmarks::deep_nesting()),
+        ("heavy-inline", comrak::benchmarks::heavy_inline()),
+        ("complex", comrak::benchmarks::complex()),
+        ("long-doc", comrak::benchmarks::long_doc()),
     ];
 
     // Warmup
     for (_, input) in &inputs {
-        let (nc, sc) = comrak::arena_capacities(input.trim().len());
-        let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));
-        let root = parse_document_raw(&arena, &string_arena, input.trim(), &opts);
-        let _ = comrak::blob::render_blob(root, input.trim());
+        parse_document_zerocopy(input.trim(), &opts, |root| {
+            let _ = blob::render_blob(root, input.trim());
+        });
     }
 
     println!("{:<20} {:>8} {:>10} {:>12}", "test", "chars", "allocs", "bytes");
@@ -134,16 +133,14 @@ fn main() {
     for (name, input) in &inputs {
         let trimmed = input.trim();
 
-        // Combined: parse + blob
         start_tracking();
-        let (nc, sc) = comrak::arena_capacities(trimmed.len());
-        let (arena, string_arena) = (Arena::with_capacity(nc), StringArena::with_capacity(sc));
-        let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-        let (parse_count, parse_bytes) = (
-            ALLOC_COUNT.load(Ordering::Relaxed),
-            ALLOC_BYTES.load(Ordering::Relaxed),
-        );
-        let _ = comrak::blob::render_blob(root, trimmed);
+        let (parse_count, parse_bytes, node_count) = parse_document_zerocopy(trimmed, &opts, |root| {
+            let pc = ALLOC_COUNT.load(Ordering::Relaxed);
+            let pb = ALLOC_BYTES.load(Ordering::Relaxed);
+            let nc = root.descendants().count();
+            let _ = blob::render_blob(root, trimmed);
+            (pc, pb, nc)
+        });
         let (total_raw_count, total_raw_bytes) = stop_tracking();
         VERBOSE.store(0, Ordering::Relaxed);
         let blob_count = total_raw_count - parse_count;
@@ -151,7 +148,6 @@ fn main() {
 
         let total_count = parse_count + blob_count;
         let total_bytes = parse_bytes + blob_bytes;
-        let node_count = root.descendants().count();
         let ratio = total_bytes as f64 / trimmed.len() as f64;
         println!("{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input) | parse {:>5} blob {:>4} | {:>4} nodes",
             name, trimmed.len(), total_count, total_bytes / 1024, ratio, parse_count, blob_count, node_count);

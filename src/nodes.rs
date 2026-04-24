@@ -360,7 +360,7 @@ impl NodeLink {
     /// Returns the URL after cleaning (unwrapping redirects, expanding short URLs, etc.).
     /// Zero-copy when no cleaning is needed.
     pub fn cleaned_url(&self) -> Cow<'_, str> {
-        crate::parser::clean_urls::clean_url(&self.url)
+        crate::parser::url::clean_url(&self.url)
     }
 }
 
@@ -806,6 +806,7 @@ pub(crate) struct BlockContent {
 }
 
 impl Ast {
+    #[cfg(feature = "phoenix_heex")]
     pub(crate) fn content(&self) -> &str {
         match &self.block {
             Some(b) => &b.content,

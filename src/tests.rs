@@ -8,9 +8,9 @@ use crate::*;
 
 mod alerts;
 mod autolink;
+mod blob;
 mod block_directive;
 mod cjk_friendly_emphasis;
-mod clean_urls;
 mod code;
 mod commonmark;
 mod compact_html;
@@ -27,6 +27,7 @@ mod header_id_prefix;
 mod highlight;
 #[path = "tests/html.rs"]
 mod html_;
+mod image_url;
 mod inline_footnotes;
 mod insert;
 mod lemmy;
@@ -55,6 +56,7 @@ mod tagfilter;
 mod tasklist;
 mod typographic;
 mod underline;
+mod url;
 mod wikilinks;
 mod xml;
 

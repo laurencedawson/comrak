@@ -55,8 +55,8 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
 /// Extend a borrowed `&'a str` from a string_arena to `'static` for NodeValue::Text.
 ///
 /// SAFETY: the string_arena that backs `s` has lifetime `'a` — the same lifetime as the
-/// node arena. The caller (parse_document_zerocopy / parse_document_raw) owns both arenas
-/// on the stack, so pooled strings live at least as long as every node that references them.
+/// node arena. `parse_document_zerocopy` owns both arenas on the stack, so pooled strings
+/// live at least as long as every node that references them.
 unsafe fn extend_lifetime(s: &str) -> &'static str {
     unsafe { std::mem::transmute::<&str, &'static str>(s) }
 }

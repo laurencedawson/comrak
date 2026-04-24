@@ -68,11 +68,13 @@
 
 pub mod adapters;
 pub mod arena_tree;
+pub mod benchmarks;
 pub mod blob;
-pub mod blob_bench;
 pub mod html;
+pub mod image_url;
 pub mod nodes;
 pub mod plugins;
+pub mod text;
 
 pub mod arena;
 mod character_set;
@@ -96,11 +98,11 @@ pub use html::format_document as format_html;
 pub use html::format_document_with_plugins as format_html_with_plugins;
 pub use nodes::Node;
 pub use parser::options;
-pub use parser::clean_urls::clean_url;
-pub use parser::{Options, ResolvedReference, parse_document, parse_document_raw, parse_document_zerocopy};
+pub use parser::url::clean_url;
+pub use parser::{Options, ResolvedReference, parse_document, parse_document_zerocopy};
 
 /// Arena for pooling paragraph content strings during zero-copy parsing.
-/// Must outlive the returned `Node<'a>` from `parse_document_zerocopy` / `parse_document_raw`.
+/// Used internally by `parse_document_zerocopy` to pool paragraph content.
 pub type StringArena = typed_arena::Arena<String>;
 pub use xml::format_document as format_xml;
 pub use xml::format_document_with_plugins as format_xml_with_plugins;

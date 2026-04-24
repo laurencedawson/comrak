@@ -1,5 +1,5 @@
 mod autolink;
-pub mod clean_urls;
+pub mod url;
 mod inlines;
 pub mod options;
 #[cfg(feature = "phoenix_heex")]
@@ -62,18 +62,6 @@ where
     let string_arena: typed_arena::Arena<String> = typed_arena::Arena::with_capacity(sc);
     let root = parse_document_inner(&arena, md, options, true, Some(&string_arena));
     f(root)
-}
-
-/// Parse markdown into an AST without text node postprocessing.
-/// Adjacent Text nodes may not be merged, but all block/inline structure is correct.
-/// Suitable for consumers that handle adjacent Text nodes themselves (e.g. blob rendering).
-pub fn parse_document_raw<'a>(
-    arena: &'a Arena<'a>,
-    string_arena: &'a typed_arena::Arena<String>,
-    md: &str,
-    options: &Options,
-) -> Node<'a> {
-    parse_document_inner(arena, md, options, false, Some(string_arena))
 }
 
 fn parse_document_inner<'a>(

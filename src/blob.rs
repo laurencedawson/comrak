@@ -1,4 +1,4 @@
-//! Binary blob renderer for Android's FastSpannable.
+//! Binary blob renderer for syncdown's FastSpannable.
 //!
 //! Produces a compact blob: `[text_len:4][span_count:4][text][pad][spans][url_data]`
 //! All positions are UTF-16 code units mapping directly to Java String indices.
@@ -6,33 +6,26 @@
 //! Unlike HTML rendering, this walks the AST once and writes text + span metadata
 //! into a single contiguous buffer with zero intermediate allocations.
 
-use crate::arena_tree::Node;
-use crate::nodes::{Ast, NodeValue::*, ListType};
 use std::cell::RefCell;
+
+use crate::arena_tree::Node;
+use crate::image_url::is_image_url;
+use crate::nodes::{Ast, ListType, NodeValue::*};
+use crate::parser::url::extract_domain;
+use crate::text::collapse_whitespace;
+
+/// Span type constants, generated at build time from `library/span_types.toml`
+/// by the Gradle `generateSpanTypes` task. File is gitignored — first-time
+/// cargo builds require Gradle to have run once.
+#[allow(missing_docs)]
+mod span_types;
+
+// Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
+// can reference span type ids without reaching into `span_types` directly.
+pub(crate) use span_types::*;
 
 type AstNode<'a> = Node<'a, RefCell<Ast>>;
 
-// Span type constants (must match SpanTypes.java)
-const QUOTE: i32 = 0;
-const LIST_ITEM: i32 = 1;
-const HEADING_1: i32 = 2;
-const CODE: i32 = 8;
-const CODE_BLOCK: i32 = 9;
-const IMAGE: i32 = 10;
-const TABLE: i32 = 11;
-const HRULE: i32 = 12;
-const BOLD: i32 = 14;
-const ITALIC: i32 = 15;
-const STRIKETHROUGH: i32 = 16;
-const SUPERSCRIPT: i32 = 17;
-const SUBSCRIPT: i32 = 18;
-const SUPERSCRIPT_SIZE: i32 = 19;
-const SUBSCRIPT_SIZE: i32 = 20;
-const SPOILER: i32 = 21;
-const LINK: i32 = 22;
-const LINK_SIZE: i32 = 23;
-
-const HEADINGS: [i32; 6] = [HEADING_1, HEADING_1 + 1, HEADING_1 + 2, HEADING_1 + 3, HEADING_1 + 4, HEADING_1 + 5];
 const HEADER_SIZE: usize = 8;
 const MAX_URL_LEN: usize = 4095;
 
@@ -47,156 +40,38 @@ fn utf16_len(s: &str) -> usize {
     len
 }
 
-/// Collapse runs of whitespace into a single space.
-#[inline]
-fn collapse_whitespace(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.as_bytes().windows(2).any(|w| w[0] == b' ' && w[1] == b' ') {
-        return std::borrow::Cow::Borrowed(s);
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut prev_space = false;
-    for c in s.chars() {
-        if c == ' ' {
-            if !prev_space { out.push(' '); }
-            prev_space = true;
-        } else {
-            out.push(c);
-            prev_space = false;
-        }
-    }
-    std::borrow::Cow::Owned(out)
-}
-
-/// Extract the domain from a URL for display suffix deduplication.
-/// Returns a borrowed slice when the host is already lowercase ASCII — most
-/// links in practice — avoiding an allocation per link render.
-fn extract_domain(url: &str) -> Option<std::borrow::Cow<'_, str>> {
-    let start = url.find("://")? + 3;
-    let end = url[start..].find('/').or_else(|| url[start..].find('?')).map_or(url.len(), |i| start + i);
-    let mut host = &url[start..end];
-    if host.starts_with("www.") { host = &host[4..]; }
-    if host.is_empty() { return None; }
-    if host.bytes().all(|b| !b.is_ascii_uppercase()) {
-        Some(std::borrow::Cow::Borrowed(host))
-    } else {
-        Some(std::borrow::Cow::Owned(host.to_ascii_lowercase()))
-    }
-}
-
-/// Strip `http://` / `https://`, returning the rest of the URL.
-fn strip_scheme(url: &str) -> Option<&str> {
-    url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
-}
-
-/// Returns `true` if the URL points to an image (by known host, path pattern,
-/// or file extension). Conservative: may return false for actual images with
-/// unusual hosting, never true for non-image URLs. Used by the blob renderer
-/// to convert bare autolinks into inline image embeds, and exposed to callers
-/// so they can make the same heuristic decision at their own layer.
-pub fn is_image_url(url: &str) -> bool {
-    let rest = match strip_scheme(url) {
-        Some(r) => r,
-        None => return false,
-    };
-
-    if IMAGE_HOSTS.iter().any(|h| rest.starts_with(h)) {
-        return !IMAGE_HOST_EXCLUDED.iter().any(|p| rest.starts_with(p));
-    }
-
-    if IMAGE_PATHS.iter().any(|p| rest.contains(p)) {
-        return true;
-    }
-
-    let path = rest.split(['?', '#']).next().unwrap_or(rest);
-    for segment in path.split('/') {
-        if let Some((_, ext)) = segment.rsplit_once('.') {
-            if IMAGE_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e)) {
-                return true;
-            }
-        }
-    }
-
-    if let Some(qs) = rest.split_once('?').map(|(_, q)| q) {
-        for pair in qs.split('&') {
-            let value = pair.split_once('=').map(|(_, v)| v).unwrap_or(pair);
-            let v = value.split(['?', '#']).next().unwrap_or(value);
-            if let Some((_, ext)) = v.rsplit_once('.') {
-                if IMAGE_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e)) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-const IMAGE_HOSTS: &[&str] = &[
-    "i.redd.it/",
-    "preview.redd.it/",
-    "i.imgur.com/",
-    "upload.wikimedia.org/",
-    "s.yimg.com/",
-    "encrypted-tbn0.gstatic.com/",
-    "pbs.twimg.com/",
-    "cdn.bsky.app/img/",
-];
-
-const IMAGE_HOST_EXCLUDED: &[&str] = &[
-    "i.imgur.com/a/",
-    "i.imgur.com/gallery/",
-];
-
-const IMAGE_PATHS: &[&str] = &[
-    "/pictrs/image/",
-    "/api/v3/image_proxy",
-    "/api/v4/image/proxy",
-];
-
-const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
-    "svg", "ico", "tif", "tiff", "heic", "heif", "jfif",
-];
-
-/// Render a comrak AST into a binary blob for Android's FastSpannable.
+/// Render a comrak AST into a binary blob.
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-///
-/// For best performance, use `parse_document_raw()` to skip text node postprocessing,
-/// since the blob visitor handles adjacent Text nodes natively.
 pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
     let mut b = BlobWriter::new(input.len());
     visit(root, &mut b, 0, 0, 0);
     b.append_footnotes();
-
-    if b.spans.is_empty() && b.text() == input {
-        return None;
-    }
-    Some(b.into_blob())
+    if b.spans.is_empty() && b.text() == input { None } else { Some(b.into_blob()) }
 }
 
-struct BlobWriter {
+pub(crate) struct BlobWriter {
     blob: Vec<u8>,
-    spans: Vec<i32>,
-    url_data: Vec<u8>,
+    pub(crate) spans: Vec<i32>,
+    pub(crate) url_data: Vec<u8>,
     footnotes: Vec<String>,
     len: usize,
     p: usize,
 }
 
 impl BlobWriter {
-    fn new(cap: usize) -> Self {
+    pub(crate) fn new(cap: usize) -> Self {
         let mut blob = Vec::with_capacity(HEADER_SIZE + cap);
         blob.extend_from_slice(&[0u8; HEADER_SIZE]);
         Self { blob, spans: vec![], url_data: vec![], footnotes: vec![], len: 0, p: 0 }
     }
 
     #[inline]
-    fn pos(&self) -> usize { self.len + self.p }
+    pub(crate) fn pos(&self) -> usize { self.len + self.p }
 
     #[inline]
-    fn write_text(&mut self, s: &str) {
+    pub(crate) fn write_text(&mut self, s: &str) {
         if self.p > 0 {
             self.blob.extend(std::iter::repeat_n(b'\n', self.p));
             self.len += self.p;
@@ -206,37 +81,44 @@ impl BlobWriter {
         self.len += if s.is_ascii() { s.len() } else { utf16_len(s) };
     }
 
-    fn nl(&mut self, n: usize) { if n > self.p { self.p = n; } }
+    pub(crate) fn nl(&mut self, n: usize) { self.p = self.p.max(n); }
 
-    fn span(&mut self, t: i32, start: usize) { self.span_data(t, start, 0); }
+    /// Drop pending (unflushed) newlines. Test-only.
+    #[cfg(test)]
+    pub(crate) fn clear_pending(&mut self) { self.p = 0; }
 
-    fn span_data(&mut self, t: i32, start: usize, data: i32) {
+    /// Rendered text bytes so far (excluding header). Used during render and by tests.
+    pub(crate) fn text(&self) -> &str {
+        std::str::from_utf8(&self.blob[HEADER_SIZE..]).unwrap_or("")
+    }
+
+    pub(crate) fn span(&mut self, t: i32, start: usize) { self.span_data(t, start, 0); }
+
+    pub(crate) fn span_data(&mut self, t: i32, start: usize, data: i32) {
         if start < self.len {
             self.spans.extend_from_slice(&[start as i32, self.len as i32, t, data]);
         }
     }
 
-    fn span_url(&mut self, t: i32, start: usize, url: &str) {
+    pub(crate) fn span_url(&mut self, t: i32, start: usize, url: &str) {
         if start >= self.len { return; }
         let offset = self.url_data.len();
         let url_len = url.len().min(MAX_URL_LEN);
         self.url_data.extend_from_slice(&url.as_bytes()[..url_len]);
-        let data = ((offset as i32) << 12) | (url_len as i32);
-        self.spans.extend_from_slice(&[start as i32, self.len as i32, t, data]);
+        self.spans.extend_from_slice(&[start as i32, self.len as i32, t,
+            ((offset as i32) << 12) | (url_len as i32)]);
     }
 
-    fn blob_len(&self) -> usize { self.blob.len() }
-
     fn emit_image(&mut self, url: &str) {
-        if self.len > 0 {
-            let mut i = self.blob.len();
-            while i > HEADER_SIZE && matches!(self.blob[i - 1], b' ' | b'\t') { i -= 1; }
-            let after_ws = i;
-            while i > HEADER_SIZE && self.blob[i - 1] == b'\n' { i -= 1; }
-            let nl = after_ws - i;
-            self.p += 2usize.saturating_sub(nl + self.p);
-        } else {
+        if self.len == 0 {
             self.write_text("\n");
+        } else {
+            // Separate the image from prior content by at least two newlines;
+            // existing trailing `\n` (past any trailing spaces/tabs) count.
+            let existing = self.blob[HEADER_SIZE..].iter().rev()
+                .skip_while(|&&b| matches!(b, b' ' | b'\t'))
+                .take_while(|&&b| b == b'\n').count();
+            self.nl(2_usize.saturating_sub(existing));
         }
         let start = self.pos();
         self.write_text("\u{FFFC}");
@@ -245,19 +127,17 @@ impl BlobWriter {
     }
 
     fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
-        if let Some(domain) = extract_domain(url) {
-            let link_text = &self.blob[text_start..];
-            let needle = domain.as_bytes();
-            let has_domain = link_text.windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle));
-            if !has_domain {
-                self.write_text(" (");
-                self.write_text(&domain);
-                self.write_text(")");
-            }
+        let Some(domain) = extract_domain(url) else { return };
+        let needle = domain.as_bytes();
+        if self.blob[text_start..].windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle)) {
+            return;
         }
+        self.write_text(" (");
+        self.write_text(&domain);
+        self.write_text(")");
     }
 
-    fn append_footnotes(&mut self) {
+    pub(crate) fn append_footnotes(&mut self) {
         let notes = std::mem::take(&mut self.footnotes);
         if notes.is_empty() { return; }
         self.nl(2);
@@ -276,11 +156,7 @@ impl BlobWriter {
         }
     }
 
-    fn text(&self) -> &str {
-        std::str::from_utf8(&self.blob[HEADER_SIZE..]).unwrap_or("")
-    }
-
-    fn into_blob(mut self) -> Vec<u8> {
+    pub(crate) fn into_blob(mut self) -> Vec<u8> {
         let txt_len = self.blob.len() - HEADER_SIZE;
         let span_count = self.spans.len() / 4;
 
@@ -316,7 +192,7 @@ impl BlobWriter {
     }
 }
 
-fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quote_depth: usize, ordinal: i32) {
+pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quote_depth: usize, ordinal: i32) {
     let val = &node.data.borrow().value;
     let start = out.pos();
 
@@ -333,20 +209,17 @@ fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quo
         Item(_) | TaskItem(_) => {
             let indent = list_depth.saturating_sub(1);
             let number = match val {
-                TaskItem(ti) => if ti.symbol.is_some() { 0xFFFF } else { 0xFFFE },
+                TaskItem(ti) => 0xFFFE + ti.symbol.is_some() as i32,
                 _ => ordinal.max(0),
             };
-            for c in node.children() {
-                if !matches!(c.data.borrow().value, List(_)) {
-                    visit(c, out, list_depth, quote_depth, 0);
-                }
+            let is_list = |c: &&AstNode<'a>| matches!(c.data.borrow().value, List(_));
+            for c in node.children().filter(|c| !is_list(c)) {
+                visit(c, out, list_depth, quote_depth, 0);
             }
             out.span_data(LIST_ITEM, start, ((indent as i32) << 16) | number);
-            for c in node.children() {
-                if matches!(c.data.borrow().value, List(_)) {
-                    out.nl(1);
-                    visit(c, out, list_depth, quote_depth, 0);
-                }
+            for c in node.children().filter(is_list) {
+                out.nl(1);
+                visit(c, out, list_depth, quote_depth, 0);
             }
             out.nl(1);
         }
@@ -418,34 +291,34 @@ fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quo
         LineBreak => out.nl(1),
         SoftBreak => if quote_depth > 0 { out.nl(1) } else { out.write_text(" ") },
 
-        Strong | Emph | Strikethrough | Superscript | Subscript | SpoileredText => {
+        Strong | Emph | Strikethrough | SpoileredText => {
             visit_children(node, out, list_depth, quote_depth);
-            let (t, size) = match val {
-                Strong => (BOLD, 0),
-                Emph => (ITALIC, 0),
-                Strikethrough => (STRIKETHROUGH, 0),
-                Superscript => (SUPERSCRIPT, SUPERSCRIPT_SIZE),
-                Subscript => (SUBSCRIPT, SUBSCRIPT_SIZE),
-                SpoileredText => (SPOILER, 0),
-                _ => unreachable!(),
-            };
+            out.span(match val {
+                Strong => BOLD, Emph => ITALIC, Strikethrough => STRIKETHROUGH,
+                SpoileredText => SPOILER, _ => unreachable!(),
+            }, start);
+        }
+
+        Superscript | Subscript => {
+            visit_children(node, out, list_depth, quote_depth);
+            let (t, size) = if matches!(val, Superscript)
+                { (SUPERSCRIPT, SUPERSCRIPT_SIZE) } else { (SUBSCRIPT, SUBSCRIPT_SIZE) };
             out.span(t, start);
-            if size != 0 { out.span(size, start); }
+            out.span(size, start);
         }
 
         Link(l) => {
             let url: &str = &l.cleaned_url();
-            let only_child = node.first_child().filter(|c| c.next_sibling().is_none());
-            let is_autolink = only_child.is_some_and(|c| {
-                let v = &c.data.borrow().value;
-                matches!(v, Text(t) if t.starts_with("http://") || t.starts_with("https://"))
-            });
-            if only_child.is_some_and(|c| matches!(&c.data.borrow().value, Image(_))) {
+            let only = node.first_child().filter(|c| c.next_sibling().is_none());
+            let wraps_image = only.is_some_and(|c| matches!(&c.data.borrow().value, Image(_)));
+            let autolink = only.is_some_and(|c| matches!(&c.data.borrow().value,
+                Text(t) if t.starts_with("http://") || t.starts_with("https://")));
+            if wraps_image {
                 visit_children(node, out, list_depth, quote_depth);
-            } else if is_autolink && is_image_url(url) {
+            } else if autolink && is_image_url(url) {
                 out.emit_image(url);
             } else {
-                let text_start = out.blob_len();
+                let text_start = out.blob.len();
                 visit_children(node, out, list_depth, quote_depth);
                 out.span_url(LINK, start, url);
                 out.span(LINK_SIZE, start);
@@ -471,43 +344,4 @@ fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quo
 
 fn visit_children<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, ld: usize, qd: usize) {
     for c in node.children() { visit(c, out, ld, qd, 0); }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn is_image_url_extensions() {
-        assert!(is_image_url("https://example.com/photo.jpg"));
-        assert!(is_image_url("https://example.com/photo.PNG"));
-        assert!(is_image_url("https://example.com/photo.webp"));
-        assert!(!is_image_url("https://example.com/page.html"));
-        assert!(!is_image_url("https://example.com/"));
-    }
-
-    #[test]
-    fn is_image_url_known_hosts() {
-        assert!(is_image_url("https://i.redd.it/abc123.jpg"));
-        assert!(is_image_url("https://i.imgur.com/abc123"));
-        assert!(is_image_url("https://pbs.twimg.com/media/abc123"));
-        assert!(!is_image_url("https://i.imgur.com/a/abc123"));
-        assert!(!is_image_url("https://i.imgur.com/gallery/abc123"));
-    }
-
-    #[test]
-    fn is_image_url_paths() {
-        assert!(is_image_url("https://lemmy.ml/pictrs/image/abc123"));
-        assert!(is_image_url("https://lemmy.ml/api/v3/image_proxy?url=test"));
-    }
-
-    #[test]
-    fn is_image_url_query_param() {
-        assert!(is_image_url("https://proxy.example.com/?url=https://example.com/img.png"));
-    }
-
-    #[test]
-    fn is_image_url_no_scheme() {
-        assert!(!is_image_url("example.com/photo.jpg"));
-    }
 }

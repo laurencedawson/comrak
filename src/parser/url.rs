@@ -151,3 +151,23 @@ fn query_param(url: &str, param: &str) -> Option<String> {
     }
     Some(value.into_owned())
 }
+
+/// Extract the host component from a URL for display-suffix deduplication.
+/// Returns `Cow::Borrowed` when the host is already lowercase ASCII — most
+/// links in practice — avoiding an allocation per link render. Strips a
+/// leading `www.` prefix; returns `None` when scheme or host is missing.
+pub fn extract_domain(url: &str) -> Option<Cow<'_, str>> {
+    let start = url.find("://")? + 3;
+    let end = url[start..]
+        .find('/')
+        .or_else(|| url[start..].find('?'))
+        .map_or(url.len(), |i| start + i);
+    let mut host = &url[start..end];
+    if host.starts_with("www.") { host = &host[4..]; }
+    if host.is_empty() { return None; }
+    if host.bytes().all(|b| !b.is_ascii_uppercase()) {
+        Some(Cow::Borrowed(host))
+    } else {
+        Some(Cow::Owned(host.to_ascii_lowercase()))
+    }
+}

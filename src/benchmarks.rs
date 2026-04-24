@@ -104,7 +104,7 @@ pub fn long_doc() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{parse_document_raw, Arena, Options, blob};
+    use crate::{blob, parse_document_zerocopy, Options};
 
     fn default_opts() -> Options<'static> {
         let mut opts = Options::default();
@@ -122,11 +122,7 @@ mod tests {
     }
 
     fn parse_and_render(input: &str) -> Option<Vec<u8>> {
-        let (nc, sc) = crate::arena_capacities(input.len());
-        let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
-        let opts = default_opts();
-        let root = parse_document_raw(&arena, &string_arena, input, &opts);
-        blob::render_blob(root, input)
+        parse_document_zerocopy(input, &default_opts(), |root| blob::render_blob(root, input))
     }
 
     #[test]
@@ -191,19 +187,13 @@ mod tests {
 
             // Warmup
             for _ in 0..100 {
-                let (nc, sc) = crate::arena_capacities(trimmed.len());
-                let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
-                let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-                let _ = blob::render_blob(root, trimmed);
+                let _ = parse_document_zerocopy(trimmed, &opts, |root| blob::render_blob(root, trimmed));
             }
 
             let iterations = 500;
             let start = std::time::Instant::now();
             for _ in 0..iterations {
-                let (nc, sc) = crate::arena_capacities(trimmed.len());
-                let (arena, string_arena) = (Arena::with_capacity(nc), crate::StringArena::with_capacity(sc));
-                let root = parse_document_raw(&arena, &string_arena, trimmed, &opts);
-                let _ = blob::render_blob(root, trimmed);
+                let _ = parse_document_zerocopy(trimmed, &opts, |root| blob::render_blob(root, trimmed));
             }
             let elapsed = start.elapsed() / iterations;
             eprintln!("{} ({} chars): {:.1} us",
