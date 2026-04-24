@@ -2552,6 +2552,9 @@ where
         let mut children = vec![];
         let coalesce_escaped =
             !(self.options.parse.escaped_char_spans || self.options.render.escaped_char_spans);
+        // Pre-sized buffer for adjacent-text-node sourcepos tracking. Reused
+        // across every text node — was 580+ allocs/long-doc when fresh per call.
+        let mut spxv_buf: VecDeque<(Sourcepos, usize)> = VecDeque::with_capacity(4);
 
         while let Some((parent, in_bracket_context)) = stack.pop() {
             let mut it = parent.first_child();
@@ -2570,6 +2573,7 @@ where
                             sourcepos,
                             text,
                             in_bracket_context,
+                            &mut spxv_buf,
                         );
                         emptied = text.is_empty();
                         ast.sourcepos = sourcepos;
@@ -2648,19 +2652,20 @@ where
         mut sourcepos: Sourcepos,
         root: &mut Cow<'static, str>,
         in_bracket_context: bool,
+        spxv_buf: &mut VecDeque<(Sourcepos, usize)>,
     ) -> Sourcepos {
         // Join adjacent text nodes together, then post-process.
         // Record the original list of sourcepos and bytecounts
         // for the post-processing step.
 
-        let mut spxv = VecDeque::new();
-        spxv.push_back((sourcepos, root.len()));
+        spxv_buf.clear();
+        spxv_buf.push_back((sourcepos, root.len()));
         while let Some(ns) = node.next_sibling() {
             match ns.data().value {
                 NodeValue::Text(ref adj) => {
                     root.to_mut().push_str(adj);
                     let sp = ns.data().sourcepos;
-                    spxv.push_back((sp, adj.len()));
+                    spxv_buf.push_back((sp, adj.len()));
                     sourcepos.end.column = sp.end.column;
                     ns.detach();
                 }
@@ -2672,7 +2677,7 @@ where
             node,
             root,
             &mut sourcepos,
-            spxv,
+            spxv_buf,
             in_bracket_context,
         );
 
@@ -2684,7 +2689,7 @@ where
         node: Node<'a>,
         text: &mut Cow<'static, str>,
         sourcepos: &mut Sourcepos,
-        spxv: VecDeque<(Sourcepos, usize)>,
+        spxv: &mut VecDeque<(Sourcepos, usize)>,
         in_bracket_context: bool,
     ) {
         let mut spx = Spx(spxv);
@@ -3045,9 +3050,9 @@ pub enum AutolinkType {
     Email,
 }
 
-pub(crate) struct Spx(VecDeque<(Sourcepos, usize)>);
+pub(crate) struct Spx<'q>(pub(crate) &'q mut VecDeque<(Sourcepos, usize)>);
 
-impl Spx {
+impl Spx<'_> {
     // Sourcepos end column `e` of a node determined by advancing through `spx`
     // until `i` bytes of input are seen.
     //
