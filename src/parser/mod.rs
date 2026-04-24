@@ -2660,17 +2660,38 @@ where
 
         spxv_buf.clear();
         spxv_buf.push_back((sourcepos, root.len()));
-        while let Some(ns) = node.next_sibling() {
-            match ns.data().value {
-                NodeValue::Text(ref adj) => {
-                    root.to_mut().push_str(adj);
-                    let sp = ns.data().sourcepos;
-                    spxv_buf.push_back((sp, adj.len()));
-                    sourcepos.end.column = sp.end.column;
-                    ns.detach();
-                }
-                _ => break,
+        // Two-pass: total length is computed from the sibling chain so we can
+        // promote `root` to an Owned String of exact capacity in one shot.
+        // The naive single-pass `root.to_mut().push_str(adj)` made Cow::to_mut
+        // allocate the *current* len (often 1–2 bytes), then immediately
+        // re-grow on the first push — burning two allocs per joined run.
+        let mut total_len = root.len();
+        let mut walk = node.next_sibling();
+        while let Some(ns) = walk {
+            if let NodeValue::Text(ref adj) = ns.data().value {
+                total_len += adj.len();
+                walk = ns.next_sibling();
+            } else {
+                break;
             }
+        }
+        if total_len > root.len() {
+            let mut owned = String::with_capacity(total_len);
+            owned.push_str(root);
+            while let Some(ns) = node.next_sibling() {
+                let (sp, adj_len) = {
+                    let data = ns.data();
+                    let NodeValue::Text(ref adj) = data.value else {
+                        break;
+                    };
+                    owned.push_str(adj);
+                    (data.sourcepos, adj.len())
+                };
+                spxv_buf.push_back((sp, adj_len));
+                sourcepos.end.column = sp.end.column;
+                ns.detach();
+            }
+            *root = Cow::Owned(owned);
         }
 
         self.postprocess_text_node_with_context_inner(
