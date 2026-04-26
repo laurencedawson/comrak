@@ -83,6 +83,13 @@ impl BlobWriter {
 
     pub(crate) fn nl(&mut self, n: usize) { self.p = self.p.max(n); }
 
+    /// True if the next byte written would land at the start of a line.
+    /// Either nothing has been written, the last byte is a newline, or
+    /// pending newlines are queued for flush.
+    pub(crate) fn at_line_start(&self) -> bool {
+        self.p > 0 || self.len == 0 || self.blob.last() == Some(&b'\n')
+    }
+
     /// Drop pending (unflushed) newlines. Test-only.
     #[cfg(test)]
     pub(crate) fn clear_pending(&mut self) { self.p = 0; }
@@ -289,7 +296,7 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         Image(l) => out.emit_image(&l.url),
 
         LineBreak => out.nl(1),
-        SoftBreak => if quote_depth > 0 { out.nl(1) } else { out.write_text(" ") },
+        SoftBreak => if quote_depth > 0 { out.nl(1) } else if !out.at_line_start() { out.write_text(" ") },
 
         Strong | Emph | Strikethrough | SpoileredText => {
             visit_children(node, out, list_depth, quote_depth);
