@@ -324,6 +324,68 @@ fn lemmy_spoiler_no_title() {
 }
 
 #[test]
+fn lemmy_spoiler_title_with_trailing_colon() {
+    html_opts!(
+        [extension.lemmy_spoiler],
+        concat!(
+            "::: spoiler twitter bio now:\n",
+            "Hidden\n",
+            ":::\n",
+        ),
+        concat!(
+            "<details>\n",
+            "<summary>twitter bio now:</summary>\n",
+            "<p>Hidden</p>\n",
+            "</details>\n",
+        ),
+        no_roundtrip,
+    );
+}
+
+#[test]
+fn lemmy_spoiler_title_with_internal_colon() {
+    html_opts!(
+        [extension.lemmy_spoiler],
+        concat!(
+            "::: spoiler about: stuff\n",
+            "Hidden\n",
+            ":::\n",
+        ),
+        concat!(
+            "<details>\n",
+            "<summary>about: stuff</summary>\n",
+            "<p>Hidden</p>\n",
+            "</details>\n",
+        ),
+        no_roundtrip,
+    );
+}
+
+// Real-world comment from lemmy.world/post/46436930/23571125: spoiler with a
+// title that ends in `:`, followed by an image whose alt text spans many lines.
+#[test]
+fn lemmy_spoiler_realworld_trailing_colon_with_multiline_image() {
+    html_opts!(
+        [extension.lemmy_spoiler],
+        concat!(
+            "::: spoiler and it's also his twitter bio now:\n",
+            "![screenshot of twitter profile\n",
+            "Aaron Abernethy\n",
+            "@theronster\n",
+            "](https://lemmy.ml/pictrs/image/a7e4edb1-8b21-46a2-b248-f69c04cf481c.png)\n",
+            ":::\n",
+        ),
+        concat!(
+            "<details>\n",
+            "<summary>and it's also his twitter bio now:</summary>\n",
+            "<p><img src=\"https://lemmy.ml/pictrs/image/a7e4edb1-8b21-46a2-b248-f69c04cf481c.png\" alt=\"screenshot of twitter profile Aaron Abernethy @theronster \" /></p>\n",
+            "</details>\n",
+        ),
+        no_roundtrip,
+    );
+}
+
+#[test]
 fn lemmy_spoiler_not_other_directives() {
     html_opts!(
         [extension.lemmy_spoiler],
