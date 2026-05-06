@@ -238,6 +238,9 @@ where
             Cow::Borrowed(s)
         };
         let mut s: &str = &stripped;
+        if self.options.parse.strip_leading_breaks {
+            s = strings::strip_leading_breaks(s);
+        }
 
         if let Some(delimiter) = &self.options.extension.front_matter_delimiter {
             if let Some((front_matter, rest)) = split_off_front_matter(s, delimiter) {

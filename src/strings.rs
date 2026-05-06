@@ -577,6 +577,29 @@ pub fn strip_invisible(s: &str) -> Cow<'_, str> {
     }
 }
 
+/// Strip leading whitespace and hard line breaks (`\` + newline).
+/// Returns a sub-slice; no allocation. No-op when no leading break is present.
+pub fn strip_leading_breaks(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut found = false;
+    loop {
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+        }
+        if i + 1 < bytes.len()
+            && bytes[i] == b'\\'
+            && (bytes[i + 1] == b'\n' || bytes[i + 1] == b'\r')
+        {
+            i += 2;
+            found = true;
+        } else {
+            break;
+        }
+    }
+    if found { &s[i..] } else { s }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::{

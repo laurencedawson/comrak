@@ -47,6 +47,7 @@ mod sourcepos_;
 mod sourcepos_chars;
 mod spoiler;
 mod strip_invisible;
+mod strip_leading_breaks;
 mod strikethrough;
 mod subscript;
 mod subtext;

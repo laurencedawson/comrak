@@ -978,6 +978,23 @@ pub struct Parse<'c> {
     /// ```
     #[cfg_attr(feature = "bon", builder(default))]
     pub strip_invisible: bool,
+
+    /// Strip leading hard line breaks (`\` + newline) before parsing.
+    ///
+    /// User content from Lemmy / Reddit sometimes starts with a stray hard
+    /// line break that produces an empty paragraph above the first real
+    /// content. Strips any leading run of whitespace + `\<newline>` sequences.
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.parse.strip_leading_breaks = true;
+    ///
+    /// assert_eq!(markdown_to_html("\\\n![alt](url)\n", &options),
+    ///            "<p><img src=\"url\" alt=\"alt\" /></p>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub strip_leading_breaks: bool,
 }
 
 /// The type of the callback used when a reference link is encountered with no
