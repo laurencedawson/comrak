@@ -334,19 +334,16 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         LemmySpoiler(ls) => {
-            // Without a title there's no toggle target - emit content only.
-            let has_title = !ls.title.is_empty();
-            if has_title {
-                out.write_text(&ls.title);
-                out.span(BOLD, start);
-                out.span(LEMMY_SPOILER, start);
-                out.nl(1);
-            }
+            out.write_text(&ls.title);
+            out.span(BOLD, start);
+            out.span(LINK_SIZE, start);
+            out.span(LEMMY_SPOILER, start);
+            // content_start sits at the blank line so it collapses with the body.
+            out.nl(1);
             let content_start = out.pos();
+            out.nl(2);
             visit_children(node, out, list_depth, quote_depth);
-            if has_title {
-                out.span(LEMMY_SPOILER_CONTENT, content_start);
-            }
+            out.span(LEMMY_SPOILER_CONTENT, content_start);
             out.nl(2);
         }
 

@@ -306,7 +306,9 @@ fn lemmy_spoiler_space_after_colons() {
 }
 
 #[test]
-fn lemmy_spoiler_no_title() {
+fn lemmy_spoiler_no_title_rejected() {
+    // Lemmy's `^spoiler\s+(.*)$` requires a non-empty title; without one the
+    // opener falls through and the lines render as plain text.
     html_opts!(
         [extension.lemmy_spoiler],
         concat!(
@@ -315,9 +317,49 @@ fn lemmy_spoiler_no_title() {
             ":::\n",
         ),
         concat!(
-            "<details>\n",
-            "<p>Hidden</p>\n",
-            "</details>\n",
+            "<p>:::spoiler\n",
+            "Hidden\n",
+            ":::</p>\n",
+        ),
+        no_roundtrip,
+    );
+}
+
+#[test]
+fn lemmy_spoiler_keyword_must_have_whitespace_boundary() {
+    // `:::spoilers x` looks like "spoiler" followed by `s x`; without a
+    // whitespace boundary after the keyword Lemmy rejects it.
+    html_opts!(
+        [extension.lemmy_spoiler],
+        concat!(
+            "::: spoilers something\n",
+            "Hidden\n",
+            ":::\n",
+        ),
+        concat!(
+            "<p>::: spoilers something\n",
+            "Hidden\n",
+            ":::</p>\n",
+        ),
+        no_roundtrip,
+    );
+}
+
+#[test]
+fn lemmy_spoiler_whitespace_only_title_rejected() {
+    // Title that's only whitespace trims to empty -> reject.
+    // (The trailing run of spaces becomes a markdown hard break.)
+    html_opts!(
+        [extension.lemmy_spoiler],
+        concat!(
+            "::: spoiler   \n",
+            "Hidden\n",
+            ":::\n",
+        ),
+        concat!(
+            "<p>::: spoiler<br />\n",
+            "Hidden\n",
+            ":::</p>\n",
         ),
         no_roundtrip,
     );

@@ -933,10 +933,16 @@ where
         let mut info = info.into_owned();
         strings::unescape(&mut info);
 
-        let title = if let Some(rest) = info.strip_prefix("spoiler") {
-            rest.trim().to_string()
-        } else {
-            return false;
+        // Match Lemmy's `^spoiler\s+(.*)$`: literal "spoiler", a whitespace boundary,
+        // then a non-empty title. Rejects `:::spoiler` (no title) and `:::spoilers x`
+        // (no whitespace after the keyword).
+        let title = match info.strip_prefix("spoiler") {
+            Some(rest) if rest.starts_with(char::is_whitespace) => {
+                let trimmed = rest.trim();
+                if trimmed.is_empty() { return false; }
+                trimmed.to_string()
+            }
+            _ => return false,
         };
 
         let nls = NodeLemmySpoiler {
