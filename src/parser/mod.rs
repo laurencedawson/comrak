@@ -2286,6 +2286,13 @@ where
                     node.detach();
                 }
             }
+            NodeValue::LemmySpoiler(_) => {
+                // Empty body: no toggle target, drop the node so downstream renderers
+                // never see a title without paired content.
+                if node.first_child().is_none() {
+                    node.detach();
+                }
+            }
             NodeValue::CodeBlock(ref mut ncb) => {
                 let content = &mut ast.block.get_or_insert_with(Default::default).content;
                 if !ncb.fenced {

@@ -9,7 +9,7 @@
 //! - `footnotes` — footnote refs and definitions
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
-use crate::blob::{BlobWriter, LIST_ITEM, QUOTE, visit};
+use crate::blob::{BlobWriter, LEMMY_SPOILER, LIST_ITEM, QUOTE, visit};
 use crate::parse_document_zerocopy;
 use crate::Options;
 
@@ -96,10 +96,11 @@ impl<'a> Iterator for SpanIter<'a> {
         let typ = self.spans[base + 2];
         let raw_data = self.spans[base + 3];
         // The data field packs offset(20)|len(12) for URL-carrying spans;
-        // LIST_ITEM and QUOTE reuse the slot for (indent<<16)|number and depth.
+        // LIST_ITEM and QUOTE reuse the slot for (indent<<16)|number and depth;
+        // LEMMY_SPOILER reuses it for the title byte length.
         let url_len = (raw_data & 0xFFF) as usize;
         let offset = (raw_data >> 12) as usize;
-        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE {
+        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE && typ != LEMMY_SPOILER {
             Some(String::from_utf8_lossy(&self.url_data[offset..offset + url_len]).into_owned())
         } else { None };
         Some(SpanView {
@@ -846,6 +847,33 @@ mod block {
         let result = render_test("---\n\n---");
         let hr_count = result.span_iter().filter(|s| s.typ == HRULE).count();
         assert_eq!(hr_count, 2);
+    }
+
+    /// Lemmy spoiler emits LEMMY_SPOILER over the title and LEMMY_SPOILER_CONTENT
+    /// over the body, plus BOLD + LINK_SIZE for title styling. The body's start sits
+    /// 1 byte past the title's end (the gap newline) so cache[title.idx + 1] always
+    /// resolves to the body span — no other span shares that position.
+    #[test]
+    fn lemmy_spoiler_two_spans() {
+        let result = render_test("::: spoiler tap me\nhidden body\n:::");
+        let title = result.span_iter().find(|s| s.typ == LEMMY_SPOILER).unwrap();
+        let body = result.span_iter().find(|s| s.typ == LEMMY_SPOILER_CONTENT).unwrap();
+        assert_eq!(&result.text()[title.start..title.end], "tap me");
+        assert_eq!(body.start, title.end + 1, "body must start one byte past title end");
+        assert!(result.text()[body.start..body.end].contains("hidden body"));
+        // Title also gets BOLD + LINK_SIZE for styling.
+        assert!(result.span_iter().any(|s| s.typ == BOLD && s.start == title.start && s.end == title.end));
+        assert!(result.span_iter().any(|s| s.typ == LINK_SIZE && s.start == title.start && s.end == title.end));
+    }
+
+    /// Empty-body spoilers are dropped by the parser (no toggle target), so the
+    /// blob writer never sees a LemmySpoiler without a paired body. This guarantees
+    /// the title→body adjacency invariant in Java.
+    #[test]
+    fn lemmy_spoiler_empty_body_dropped() {
+        let result = render_test("::: spoiler title only\n:::");
+        assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER));
+        assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER_CONTENT));
     }
 }
 
