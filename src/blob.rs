@@ -298,11 +298,11 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         LineBreak => out.nl(1),
         SoftBreak => if quote_depth > 0 { out.nl(1) } else if !out.at_line_start() { out.write_text(" ") },
 
-        Strong | Emph | Strikethrough | SpoileredText => {
+        Strong | Emph | Strikethrough => {
             visit_children(node, out, list_depth, quote_depth);
             out.span(match val {
                 Strong => BOLD, Emph => ITALIC, Strikethrough => STRIKETHROUGH,
-                SpoileredText => SPOILER, _ => unreachable!(),
+                _ => unreachable!(),
             }, start);
         }
 

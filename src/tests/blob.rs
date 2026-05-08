@@ -2,7 +2,7 @@
 //!
 //! Organized into sections:
 //! - `format`    — blob byte layout, header, padding, UTF-16 positions, sort
-//! - `inline`    — bold/italic/strike/super/sub/code/spoiler/breaks/shortcodes
+//! - `inline`    — bold/italic/strike/super/sub/code/breaks/shortcodes
 //! - `links`     — explicit links, domain suffixes, autolinks
 //! - `images`    — markdown images, autolink-to-image, link-wrapping-image
 //! - `block`     — headings, lists, task lists, blockquotes, code blocks, tables
@@ -22,7 +22,6 @@ fn test_opts() -> Options<'static> {
     opts.extension.autolink = true;
     opts.extension.superscript = true;
     opts.extension.subscript = true;
-    opts.extension.spoiler = true;
     opts.extension.tasklist = true;
     opts.extension.shortcodes = true;
     opts.extension.footnotes = true;
@@ -388,25 +387,6 @@ mod inline {
         let result = render_test("`code`");
         assert!(result.span_iter().any(|s| s.typ == CODE));
         assert_eq!(result.text(), "code");
-    }
-
-    #[test]
-    fn spoiler_rendered() {
-        let result = render_test("||secret||");
-        assert!(result.span_iter().any(|s| s.typ == SPOILER));
-        assert_eq!(result.text(), "secret");
-    }
-
-    /// Spoiler markers inside code spans / code blocks must not produce a SPOILER span.
-    #[test]
-    fn spoiler_in_code() {
-        let result = render_test("Use `||spoiler||` for spoilers");
-        assert!(result.span_iter().any(|s| s.typ == CODE));
-        assert!(!result.span_iter().any(|s| s.typ == SPOILER));
-
-        let result = render_test("```\n||spoiler||\n```");
-        assert!(result.span_iter().any(|s| s.typ == CODE_BLOCK));
-        assert!(!result.span_iter().any(|s| s.typ == SPOILER));
     }
 
     /// Trailing double-space forces a line break.
