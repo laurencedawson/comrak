@@ -468,7 +468,7 @@ hello world
 after"#,
 );
 
-const LEMMY_SPOILER: TestCase = (
+const LEMMY_SPOILER_TITLE: TestCase = (
     &[sourcepos!((2:1-4:3))],
     r#"before
 :::spoiler Title
@@ -531,7 +531,7 @@ fn node_values() -> HashMap<NodeValueDiscriminants, TestCase> {
                 Alert => ALERT,
                 Subtext => SUBTEXT,
                 BlockDirective => BLOCK_DIRECTIVE,
-                LemmySpoiler => LEMMY_SPOILER,
+                LemmySpoiler => LEMMY_SPOILER_TITLE,
                 Raw => unreachable!(),
                 #[cfg(feature = "phoenix_heex")]
                 HeexBlock => HEEX_BLOCK,

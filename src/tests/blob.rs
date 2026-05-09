@@ -9,7 +9,7 @@
 //! - `footnotes` — footnote refs and definitions
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
-use crate::blob::{BlobWriter, LEMMY_SPOILER, LIST_ITEM, QUOTE, visit};
+use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, visit};
 use crate::parse_document_zerocopy;
 use crate::Options;
 
@@ -97,10 +97,10 @@ impl<'a> Iterator for SpanIter<'a> {
         let raw_data = self.spans[base + 3];
         // The data field packs offset(20)|len(12) for URL-carrying spans;
         // LIST_ITEM and QUOTE reuse the slot for (indent<<16)|number and depth;
-        // LEMMY_SPOILER reuses it for the title byte length.
+        // LEMMY_SPOILER_TITLE reuses it for the title byte length.
         let url_len = (raw_data & 0xFFF) as usize;
         let offset = (raw_data >> 12) as usize;
-        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE && typ != LEMMY_SPOILER {
+        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE && typ != LEMMY_SPOILER_TITLE {
             Some(String::from_utf8_lossy(&self.url_data[offset..offset + url_len]).into_owned())
         } else { None };
         Some(SpanView {
@@ -849,14 +849,14 @@ mod block {
         assert_eq!(hr_count, 2);
     }
 
-    /// Lemmy spoiler emits LEMMY_SPOILER over the title and LEMMY_SPOILER_CONTENT
+    /// Lemmy spoiler emits LEMMY_SPOILER_TITLE over the title and LEMMY_SPOILER_CONTENT
     /// over the body, plus BOLD + LINK_SIZE for title styling. The body's start sits
     /// 1 byte past the title's end (the gap newline) so cache[title.idx + 1] always
     /// resolves to the body span — no other span shares that position.
     #[test]
     fn lemmy_spoiler_two_spans() {
         let result = render_test("::: spoiler tap me\nhidden body\n:::");
-        let title = result.span_iter().find(|s| s.typ == LEMMY_SPOILER).unwrap();
+        let title = result.span_iter().find(|s| s.typ == LEMMY_SPOILER_TITLE).unwrap();
         let body = result.span_iter().find(|s| s.typ == LEMMY_SPOILER_CONTENT).unwrap();
         assert_eq!(&result.text()[title.start..title.end], "tap me");
         assert_eq!(body.start, title.end + 1, "body must start one byte past title end");
@@ -872,7 +872,7 @@ mod block {
     #[test]
     fn lemmy_spoiler_empty_body_dropped() {
         let result = render_test("::: spoiler title only\n:::");
-        assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER));
+        assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER_TITLE));
         assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER_CONTENT));
     }
 }

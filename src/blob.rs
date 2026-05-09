@@ -334,13 +334,13 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         LemmySpoiler(ls) => {
-            // Title: bold + 1.25x size (via BOLD + LINK_SIZE), plus LEMMY_SPOILER for the
+            // Title: bold + 1.25x size (via BOLD + LINK_SIZE), plus LEMMY_SPOILER_TITLE for the
             // tap target and indicator. Title is plain text — no inline parsing.
             // Parser guarantees at least one child; empty-body spoilers are detached.
             out.write_text(&ls.title);
             out.span(BOLD, start);
             out.span(LINK_SIZE, start);
-            out.span(LEMMY_SPOILER, start);
+            out.span(LEMMY_SPOILER_TITLE, start);
             // Body span owns one trailing newline so the blank-line gap collapses with it.
             out.nl(1);
             let content_start = out.pos();
