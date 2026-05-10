@@ -128,7 +128,7 @@ impl BlobWriter {
             self.nl(2_usize.saturating_sub(existing));
         }
         let start = self.pos();
-        self.write_text("\u{FFFC}");
+        self.write_text("\u{0001}");
         self.span_url(IMAGE, start, url);
         self.nl(2);
     }
@@ -149,7 +149,7 @@ impl BlobWriter {
         if notes.is_empty() { return; }
         self.nl(2);
         let start = self.pos();
-        self.write_text("\u{FFFC}");
+        self.write_text("\u{0001}");
         self.span(HRULE, start);
         self.nl(2);
         for (i, note) in notes.iter().enumerate() {
@@ -269,7 +269,7 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         ThematicBreak => {
-            out.write_text("\u{FFFC}");
+            out.write_text("\u{0001}");
             out.span(HRULE, start);
             out.nl(2);
         }

@@ -539,7 +539,7 @@ mod images {
     fn markdown_image() {
         let result = render_test("![alt](https://example.com/img.png)");
         assert!(result.span_iter().any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://example.com/img.png")));
-        assert_eq!(result.text(), "\n\u{FFFC}");
+        assert_eq!(result.text(), "\n\u{0001}");
     }
 
     /// Bare autolink to an image URL becomes IMAGE, not LINK.
@@ -838,7 +838,7 @@ mod block {
     fn thematic_break() {
         let result = render_test("---");
         assert!(result.span_iter().any(|s| s.typ == HRULE));
-        assert_eq!(result.text(), "\u{FFFC}");
+        assert_eq!(result.text(), "\u{0001}");
     }
 
     /// Consecutive thematic breaks produce separate spans.
@@ -888,7 +888,7 @@ mod footnotes {
     #[test]
     fn refs_and_definitions() {
         let out = render_test("Hello[^1] world[^2].\n\n[^1]: First note.\n[^2]: Second note.");
-        assert_eq!(out.text(), "Hello1 world2.\n\n\u{FFFC}\n\n1 First note.\n2 Second note.");
+        assert_eq!(out.text(), "Hello1 world2.\n\n\u{0001}\n\n1 First note.\n2 Second note.");
         let spans: Vec<_> = out.span_iter().collect();
         assert_eq!(spans.iter().filter(|s| s.typ == HRULE).count(), 1);
         assert_eq!(spans.iter().filter(|s| s.typ == SUPERSCRIPT).count(), 4);
@@ -1026,7 +1026,7 @@ mod edge {
     #[test]
     fn ambiguous_empty_formatting() {
         let result = render_test("****");
-        assert_eq!(result.text(), "\u{FFFC}");
+        assert_eq!(result.text(), "\u{0001}");
         assert!(result.span_iter().any(|s| s.typ == HRULE));
 
         let result = render_test("``");
