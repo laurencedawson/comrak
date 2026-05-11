@@ -969,14 +969,6 @@ mod edge {
         assert_eq!(result.span_iter().count(), 0);
     }
 
-    /// Smart quotes transform text but produce no spans.
-    #[test]
-    fn smart_quotes_change_text_no_spans() {
-        let result = render_test("\"hello\"");
-        assert_eq!(result.span_iter().count(), 0);
-        assert!(result.text().contains('\u{201C}') || result.text().contains('\u{201D}'));
-    }
-
     /// Empty link text: LINK span is skipped (zero length), but domain suffix still appends.
     #[test]
     fn empty_link_text() {

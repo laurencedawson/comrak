@@ -12,7 +12,7 @@ use crate::arena_tree::Node;
 use crate::image_url::is_image_url;
 use crate::nodes::{Ast, ListType, NodeValue::*};
 use crate::parser::url::extract_domain;
-use crate::text::collapse_whitespace;
+use crate::text::{collapse_whitespace, prefer_ascii};
 
 /// Span type constants, generated at build time from `library/span_types.toml`
 /// by the Gradle `generateSpanTypes` task. File is gitignored - first-time
@@ -286,7 +286,7 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
             out.footnotes.push(tmp.text().trim().to_string());
         }
 
-        Text(t) => out.write_text(&collapse_whitespace(t)),
+        Text(t) => out.write_text(&prefer_ascii(&collapse_whitespace(t))),
         ShortCode(sc) => out.write_text(&sc.emoji),
         Code(c) => {
             out.write_text(&c.literal);
