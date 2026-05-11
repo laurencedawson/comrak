@@ -1,7 +1,8 @@
 //! Binary blob renderer for syncdown's FastSpannable.
 //!
-//! Produces a compact blob: `[text_len:4][span_count:4][text][pad][spans][url_data]`
+//! Produces a compact blob: `[text_len:4][span_count:3|flags:1][text][pad][spans][url_data]`
 //! All positions are UTF-16 code units mapping directly to Java String indices.
+//! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = needs_reflow, bits 2-7 reserved.
 //!
 //! Unlike HTML rendering, this walks the AST once and writes text + span metadata
 //! into a single contiguous buffer with zero intermediate allocations.
@@ -58,13 +59,29 @@ pub(crate) struct BlobWriter {
     footnotes: Vec<String>,
     len: usize,
     p: usize,
+    /// Set if every byte written to the text section is ASCII (< 0x80).
+    /// Stored as a header flag so consumers can skip their own scan.
+    all_ascii: bool,
+    /// Set if any IMAGE or LEMMY_SPOILER_TITLE span exists. Stored as a header
+    /// flag so consumers can pick a cheaper layout when no post-render reflow
+    /// is possible.
+    needs_reflow: bool,
 }
 
 impl BlobWriter {
     pub(crate) fn new(cap: usize) -> Self {
         let mut blob = Vec::with_capacity(HEADER_SIZE + cap);
         blob.extend_from_slice(&[0u8; HEADER_SIZE]);
-        Self { blob, spans: vec![], url_data: vec![], footnotes: vec![], len: 0, p: 0 }
+        Self {
+            blob,
+            spans: vec![],
+            url_data: vec![],
+            footnotes: vec![],
+            len: 0,
+            p: 0,
+            all_ascii: true,
+            needs_reflow: false,
+        }
     }
 
     #[inline]
@@ -78,7 +95,9 @@ impl BlobWriter {
             self.p = 0;
         }
         self.blob.extend_from_slice(s.as_bytes());
-        self.len += if s.is_ascii() { s.len() } else { utf16_len(s) };
+        let ascii = s.is_ascii();
+        self.all_ascii &= ascii;
+        self.len += if ascii { s.len() } else { utf16_len(s) };
     }
 
     pub(crate) fn nl(&mut self, n: usize) { self.p = self.p.max(n); }
@@ -104,6 +123,7 @@ impl BlobWriter {
     pub(crate) fn span_data(&mut self, t: i32, start: usize, data: i32) {
         if start < self.len {
             self.spans.extend_from_slice(&[start as i32, self.len as i32, t, data]);
+            self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
         }
     }
 
@@ -114,6 +134,7 @@ impl BlobWriter {
         self.url_data.extend_from_slice(&url.as_bytes()[..url_len]);
         self.spans.extend_from_slice(&[start as i32, self.len as i32, t,
             ((offset as i32) << 12) | (url_len as i32)]);
+        self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
     }
 
     fn emit_image(&mut self, url: &str) {
@@ -184,8 +205,16 @@ impl BlobWriter {
             (start << 32) | (end_inv << 8) | ty
         });
 
+        // Header layout: text_len in bytes 0-3, span_count in bytes 4-6, flags
+        // in byte 7. span_count is capped at 24 bits (16M); the high byte is
+        // reused as a flag field so the header stays 8 bytes.
+        //   bit 0: is_ascii      — text section is pure ASCII
+        //   bit 1: needs_reflow  — has an IMAGE or LEMMY_SPOILER_TITLE span
+        //   bits 2-7: reserved
+        let flags: u32 = (self.all_ascii as u32) | ((self.needs_reflow as u32) << 1);
+        let count_with_flags = (span_count as u32 & 0x00FF_FFFF) | (flags << 24);
         self.blob[0..4].copy_from_slice(&(txt_len as i32).to_le_bytes());
-        self.blob[4..8].copy_from_slice(&(span_count as i32).to_le_bytes());
+        self.blob[4..8].copy_from_slice(&count_with_flags.to_le_bytes());
 
         let padding = (4 - (txt_len % 4)) % 4;
         self.blob.extend_from_slice(&[0u8; 3][..padding]);

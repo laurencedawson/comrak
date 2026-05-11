@@ -64,7 +64,13 @@ fn blob_text(blob: &[u8]) -> &str {
 }
 
 fn blob_span_count(blob: &[u8]) -> usize {
-    i32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) as usize
+    // High byte of the span_count word carries flags; mask it off for the count.
+    (i32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) & 0x00FF_FFFF) as usize
+}
+
+#[allow(dead_code)]
+fn blob_flags(blob: &[u8]) -> u8 {
+    blob[7]
 }
 
 /// Decoded view of one span in the BlobWriter (not the serialized blob).
@@ -344,6 +350,69 @@ mod format {
             assert!(end >= 0 && end <= text_utf16_len);
             assert!(start <= end);
         }
+    }
+
+    const FLAG_IS_ASCII: u8 = 1 << 0;
+    const FLAG_NEEDS_REFLOW: u8 = 1 << 1;
+
+    /// Empty writer: is_ascii vacuously true, no reflow trigger.
+    #[test]
+    fn flags_empty_blob() {
+        let blob = BlobWriter::new(0).into_blob();
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
+    }
+
+    /// Pure ASCII text with formatting spans sets is_ascii but no reflow flag.
+    #[test]
+    fn flags_ascii_bold_no_reflow() {
+        let blob = blob_bytes("**bold text**");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
+    }
+
+    /// Image span sets needs_reflow and is_ascii (text stays ASCII).
+    #[test]
+    fn flags_image_sets_reflow() {
+        let blob = blob_bytes("![](https://example.com/x.jpg)");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        assert_eq!(flags & FLAG_NEEDS_REFLOW, FLAG_NEEDS_REFLOW);
+    }
+
+    /// LEMMY_SPOILER_TITLE sets needs_reflow.
+    #[test]
+    fn flags_lemmy_spoiler_sets_reflow() {
+        let blob = blob_bytes(":::spoiler the secret\nhidden body\n:::");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_NEEDS_REFLOW, FLAG_NEEDS_REFLOW);
+    }
+
+    /// HRULE alone does NOT set needs_reflow (only IMAGE / LEMMY_SPOILER_TITLE do).
+    #[test]
+    fn flags_hrule_does_not_set_reflow() {
+        let blob = blob_bytes("text\n\n---\n\nmore text");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
+    }
+
+    /// Non-ASCII content (emoji) clears is_ascii.
+    #[test]
+    fn flags_non_ascii_clears_is_ascii() {
+        let blob = blob_bytes("**bold \u{1F389}**");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, 0);
+    }
+
+    /// span_count remains correctly readable when flag bits are set.
+    #[test]
+    fn span_count_unaffected_by_flag_byte() {
+        let blob = blob_bytes("![](https://example.com/x.jpg)");
+        // image, image_size span... at least 1 span and flags must coexist.
+        assert!(blob_flags(&blob) != 0);
+        assert!(blob_span_count(&blob) > 0);
     }
 }
 

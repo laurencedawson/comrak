@@ -144,20 +144,24 @@ All multi-byte integers are little-endian i32. All text positions are
 UTF-16 code units (matching Java `String` indexing directly).
 
 ```
-┌───────────────────┬───────────────────┬─────────┬─────────┬─────────┬──────────┐
-│  text_len (4 B)   │ span_count (4 B)  │  text   │   pad   │  spans  │ url_data │
-├───────────────────┼───────────────────┼─────────┼─────────┼─────────┼──────────┤
-│ bytes of text     │ number of spans   │ UTF-8   │ 0..3 B  │ 16 B    │ raw URL  │
-│ (header, excl.)   │                   │ source  │ to 4B   │ per     │ bytes    │
-│                   │                   │         │ align   │ span    │ (indexed │
-│                   │                   │         │         │         │ by spans)│
-└───────────────────┴───────────────────┴─────────┴─────────┴─────────┴──────────┘
+┌───────────────────┬───────────────────────────┬─────────┬─────────┬─────────┬──────────┐
+│  text_len (4 B)   │ span_count (3 B) │ flags │  text   │   pad   │  spans  │ url_data │
+├───────────────────┼──────────────────┼───────┼─────────┼─────────┼─────────┼──────────┤
+│ bytes of text     │ number of spans  │  1 B  │ UTF-8   │ 0..3 B  │ 16 B    │ raw URL  │
+│ (header, excl.)   │ (low 24 bits)    │       │ source  │ to 4B   │ per     │ bytes    │
+│                   │                  │       │         │ align   │ span    │ (indexed │
+│                   │                  │       │         │         │         │ by spans)│
+└───────────────────┴──────────────────┴───────┴─────────┴─────────┴─────────┴──────────┘
 ```
 
 Byte offsets, in order:
 
 - `0..4` — `text_len` (i32)
-- `4..8` — `span_count` (i32)
+- `4..7` — `span_count` (low 24 bits; max 16 M spans)
+- `7..8` — `flags` (u8):
+  - bit 0: `IS_ASCII` — every byte in the text section is < 0x80
+  - bit 1: `NEEDS_REFLOW` — at least one `IMAGE` or `LEMMY_SPOILER_TITLE` span exists
+  - bits 2-7: reserved (zero)
 - `8..8 + text_len` — text bytes (UTF-8)
 - next — zero padding to align to a 4-byte boundary (0..3 bytes)
 - next — `span_count × 16` bytes of packed span records
