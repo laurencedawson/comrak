@@ -138,9 +138,7 @@ impl BlobWriter {
     }
 
     fn emit_image(&mut self, url: &str) {
-        if self.len == 0 {
-            self.write_text("\n");
-        } else {
+        if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
             // existing trailing `\n` (past any trailing spaces/tabs) count.
             let existing = self.blob[HEADER_SIZE..].iter().rev()

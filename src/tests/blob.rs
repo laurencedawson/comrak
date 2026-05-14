@@ -608,7 +608,7 @@ mod images {
     fn markdown_image() {
         let result = render_test("![alt](https://example.com/img.png)");
         assert!(result.span_iter().any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://example.com/img.png")));
-        assert_eq!(result.text(), "\n\u{0001}");
+        assert_eq!(result.text(), "\u{0001}");
     }
 
     /// Bare autolink to an image URL becomes IMAGE, not LINK.
