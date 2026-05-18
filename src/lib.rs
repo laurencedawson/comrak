@@ -99,7 +99,9 @@ pub use html::format_document_with_plugins as format_html_with_plugins;
 pub use nodes::Node;
 pub use parser::options;
 pub use parser::url::clean_url;
-pub use parser::{Options, ResolvedReference, parse_document, parse_document_zerocopy};
+pub use parser::{
+    Options, ResolvedReference, parse_document, parse_document_zerocopy,
+};
 
 /// Arena for pooling paragraph content strings during zero-copy parsing.
 /// Used internally by `parse_document_zerocopy` to pool paragraph content.

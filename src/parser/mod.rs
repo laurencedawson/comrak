@@ -46,10 +46,18 @@ pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> 
     parse_document_inner(arena, md, options, true, None)
 }
 
-/// Parse markdown into an AST with zero-copy text nodes, own the arenas
-/// internally, and hand the root to a caller closure. The arenas (and the
-/// AST nodes they back) are dropped once the closure returns, so the closure
-/// may only return values that don't borrow from the tree.
+/// Parse markdown into an AST with zero-copy pooled-string text nodes; the
+/// arenas (and the AST nodes they back) live on the stack and are dropped once
+/// the closure returns, so the closure may only return values that don't borrow
+/// from the tree. Skips text-node postprocessing (adjacent-Text coalescing and
+/// sourcepos column fixups) — block/inline structure is correct and inline
+/// detectors (mentions, autolinks) still run. Suitable for consumers that
+/// don't read sourcepos and join text themselves (e.g. blob rendering).
+///
+/// **Tasklists are not detected on this path.** Their `[ ]` / `[x]` trigger
+/// gets fragmented by inline bracket processing, and re-joining it would
+/// require the text coalescing pass this function skips. Use
+/// [`parse_document`] if tasklist detection is needed.
 ///
 /// Arena capacities are sized from `md.len()` via [`arena_capacities`]; the
 /// caller doesn't need to plumb those through.
@@ -60,7 +68,7 @@ where
     let (nc, sc) = crate::arena_capacities(md.len());
     let arena = crate::Arena::with_capacity(nc);
     let string_arena: typed_arena::Arena<String> = typed_arena::Arena::with_capacity(sc);
-    let root = parse_document_inner(&arena, md, options, true, Some(&string_arena));
+    let root = parse_document_inner(&arena, md, options, false, Some(&string_arena));
     f(root)
 }
 
@@ -279,9 +287,11 @@ where
         }
 
         self.finalize_document(postprocess);
-        if postprocess {
-            self.postprocess_text_nodes(self.root);
-        }
+        // Always run the inline detectors (tasklists, mentions, bare-URL
+        // autolinks). Tree normalization (adjacent-Text coalescing, escape
+        // coalescing) is only worth it for consumers that read sourcepos
+        // or want fewer Text fragments — gated by `postprocess`.
+        self.postprocess_text_nodes(self.root, postprocess);
         self.root
     }
 
@@ -2573,11 +2583,19 @@ where
         }
     }
 
-    fn postprocess_text_nodes(&mut self, root: Node<'a>) {
+    /// Run inline detectors (mentions, autolinks; tasklists if `coalesce` is
+    /// also true) on every Text node. When `coalesce` is true, additionally
+    /// join adjacent-Text siblings into single nodes and merge Escaped nodes
+    /// with their neighbours — required for tasklist detection because its
+    /// `[ ]` trigger is fragmented by inline bracket handling. Skipping the
+    /// join trades tree compactness for ~20 µs / ~300 allocs on long docs,
+    /// with no semantic effect for consumers (like blob rendering) that walk
+    /// Text nodes in order and don't need tasklist detection.
+    fn postprocess_text_nodes(&mut self, root: Node<'a>, coalesce: bool) {
         let mut stack = vec![(root, false)];
         let mut children = vec![];
-        let coalesce_escaped =
-            !(self.options.parse.escaped_char_spans || self.options.render.escaped_char_spans);
+        let coalesce_escaped = coalesce
+            && !(self.options.parse.escaped_char_spans || self.options.render.escaped_char_spans);
         // Pre-sized buffer for adjacent-text-node sourcepos tracking. Reused
         // across every text node — was 580+ allocs/long-doc when fresh per call.
         let mut spxv_buf: VecDeque<(Sourcepos, usize)> = VecDeque::with_capacity(4);
@@ -2594,13 +2612,29 @@ where
                 let sourcepos = ast.sourcepos;
                 match ast.value {
                     NodeValue::Text(ref mut text) => {
-                        let sourcepos = self.postprocess_text_node_with_context(
-                            node,
-                            sourcepos,
-                            text,
-                            in_bracket_context,
-                            &mut spxv_buf,
-                        );
+                        let sourcepos = if coalesce {
+                            self.postprocess_text_node_with_context(
+                                node,
+                                sourcepos,
+                                text,
+                                in_bracket_context,
+                                &mut spxv_buf,
+                            )
+                        } else {
+                            // No sibling-walk: just run inline detectors on
+                            // this Text node alone with a single-entry Spx.
+                            spxv_buf.clear();
+                            spxv_buf.push_back((sourcepos, text.len()));
+                            let mut sp = sourcepos;
+                            self.postprocess_text_node_with_context_inner(
+                                node,
+                                text,
+                                &mut sp,
+                                &mut spxv_buf,
+                                in_bracket_context,
+                            );
+                            sp
+                        };
                         emptied = text.is_empty();
                         ast.sourcepos = sourcepos;
                     }

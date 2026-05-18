@@ -201,7 +201,7 @@ impl<'a, T> Node<'a, T> {
 
     /// Append a freshly created child that is not part of any tree.
     /// Skips the detach() call for a minor speedup on hot paths.
-    pub fn append_new(&'a self, new_child: &'a Node<'a, T>) {
+    pub(crate) fn append_new(&'a self, new_child: &'a Node<'a, T>) {
         debug_assert!(new_child.parent.get().is_none());
         self.append_inner(new_child);
     }
