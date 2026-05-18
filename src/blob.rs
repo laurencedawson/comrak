@@ -46,7 +46,15 @@ fn utf16_len(s: &str) -> usize {
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
 pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
-    let mut b = BlobWriter::new(input.len());
+    // One upfront SIMD `is_ascii` on the input replaces ~thousands of small
+    // per-Text-node scans inside `write_text`. ShortCode emoji is the only
+    // visitor arm that turns ASCII input into non-ASCII output; it explicitly
+    // disables the fast path before writing.
+    let mut b = if input.is_ascii() {
+        BlobWriter::new_ascii(input.len())
+    } else {
+        BlobWriter::new(input.len())
+    };
     visit(root, &mut b, 0, 0, 0);
     b.append_footnotes();
     if b.spans.is_empty() && b.text() == input { None } else { Some(b.into_blob()) }
@@ -62,6 +70,13 @@ pub(crate) struct BlobWriter {
     /// Set if every byte written to the text section is ASCII (< 0x80).
     /// Stored as a header flag so consumers can skip their own scan.
     all_ascii: bool,
+    /// When true, every `write_text` input is known to be ASCII (because the
+    /// original markdown is ASCII and every code path that turns ASCII input
+    /// into non-ASCII output — currently just `ShortCode` emoji — clears this
+    /// flag before writing). Lets `write_text` skip the per-call `is_ascii`
+    /// SIMD scan on long ASCII docs. Soundness rests on every non-ASCII-
+    /// producing caller invoking `disable_ascii_fast_path()` first.
+    fast_path_ascii: bool,
     /// Set if any IMAGE or LEMMY_SPOILER_TITLE span exists. Stored as a header
     /// flag so consumers can pick a cheaper layout when no post-render reflow
     /// is possible.
@@ -69,7 +84,21 @@ pub(crate) struct BlobWriter {
 }
 
 impl BlobWriter {
+    /// Construct a writer that runs the per-write `is_ascii` scan on every
+    /// `write_text` call. Use when the input may contain non-ASCII bytes.
     pub(crate) fn new(cap: usize) -> Self {
+        Self::with_fast_path(cap, false)
+    }
+
+    /// Construct a writer that skips the per-write `is_ascii` scan because
+    /// the input is known to be pure ASCII. Any code path that would turn
+    /// ASCII input into non-ASCII output (`ShortCode` emoji) must call
+    /// `disable_ascii_fast_path()` before writing.
+    pub(crate) fn new_ascii(cap: usize) -> Self {
+        Self::with_fast_path(cap, true)
+    }
+
+    fn with_fast_path(cap: usize, fast_path_ascii: bool) -> Self {
         let mut blob = Vec::with_capacity(HEADER_SIZE + cap);
         blob.extend_from_slice(&[0u8; HEADER_SIZE]);
         Self {
@@ -80,8 +109,16 @@ impl BlobWriter {
             len: 0,
             p: 0,
             all_ascii: true,
+            fast_path_ascii,
             needs_reflow: false,
         }
+    }
+
+    /// Force the slow `write_text` path for the remainder of this render.
+    /// Called by every visitor arm whose output is non-ASCII despite ASCII
+    /// input — currently only `ShortCode` emoji expansion.
+    pub(crate) fn disable_ascii_fast_path(&mut self) {
+        self.fast_path_ascii = false;
     }
 
     #[inline]
@@ -95,6 +132,14 @@ impl BlobWriter {
             self.p = 0;
         }
         self.blob.extend_from_slice(s.as_bytes());
+        if self.fast_path_ascii {
+            // Caller contract: every input is ASCII. `all_ascii` already starts
+            // `true` and no path that violates this can reach here without
+            // disabling the fast path first, so it stays correct without the
+            // per-call scan.
+            self.len += s.len();
+            return;
+        }
         let ascii = s.is_ascii();
         self.all_ascii &= ascii;
         self.len += if ascii { s.len() } else { utf16_len(s) };
@@ -314,7 +359,12 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         Text(t) => out.write_text(&prefer_ascii(&collapse_whitespace(t))),
-        ShortCode(sc) => out.write_text(&sc.emoji),
+        ShortCode(sc) => {
+            // Emoji breaks the "ASCII in → ASCII out" invariant the fast
+            // path relies on; force the slow per-write scan from here on.
+            out.disable_ascii_fast_path();
+            out.write_text(&sc.emoji);
+        }
         Code(c) => {
             out.write_text(&c.literal);
             out.span(CODE, start);

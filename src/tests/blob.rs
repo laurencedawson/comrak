@@ -10,8 +10,7 @@
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
 use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, visit};
-use crate::parse_document_zerocopy;
-use crate::Options;
+use crate::{parse_document, parse_document_zerocopy, Arena, Options};
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -47,6 +46,20 @@ fn render_raw(markdown: &str) -> BlobWriter {
 /// rendering assertions want.
 fn render_test(markdown: &str) -> BlobWriter {
     let mut out = render_raw(markdown);
+    out.append_footnotes();
+    out.clear_pending();
+    out
+}
+
+/// Render via the arena-managed full-postprocess path. Required by tasklist
+/// tests because `parse_document_zerocopy` skips the text coalescing pass
+/// that `[ ]` detection needs.
+fn render_test_full_parse(markdown: &str) -> BlobWriter {
+    let opts = test_opts();
+    let arena = Arena::new();
+    let root = parse_document(&arena, markdown.trim(), &opts);
+    let mut out = BlobWriter::new(256);
+    visit(root, &mut out, 0, 0, 0);
     out.append_footnotes();
     out.clear_pending();
     out
@@ -402,6 +415,51 @@ mod format {
     #[test]
     fn flags_non_ascii_clears_is_ascii() {
         let blob = blob_bytes("**bold \u{1F389}**");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, 0);
+    }
+
+    /// One Cyrillic character buried in an otherwise-ASCII long doc must
+    /// still clear is_ascii. Guards against any fast-path optimization in
+    /// `prefer_ascii` / `write_text` that would skip per-write tracking.
+    #[test]
+    fn flags_single_cyrillic_in_long_doc_clears_is_ascii() {
+        let mut md = String::from("# heading\n\n");
+        for _ in 0..200 {
+            md.push_str("ordinary paragraph text that is fully ASCII and prints normally. ");
+        }
+        md.push_str("a buried \u{0444} character\n");
+        for _ in 0..200 {
+            md.push_str("more padding text continuing as plain ASCII content here. ");
+        }
+        let blob = blob_bytes(&md);
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, 0, "single non-ASCII char must clear is_ascii");
+    }
+
+    /// Typographic chars that `prefer_ascii` converts (curly quotes, em-dash,
+    /// ellipsis) end up as pure ASCII in the blob — is_ascii must stay set.
+    /// This pins the contract: prefer_ascii's output drives the flag, not the
+    /// input. If someone shortcuts the per-write `is_ascii()` check, this fails.
+    #[test]
+    fn flags_typographic_chars_converted_keeps_is_ascii() {
+        // Curly quotes, em-dash, ellipsis — all in prefer_ascii's conversion set.
+        let blob = blob_bytes("he said \u{201C}hello\u{201D} \u{2014} then left\u{2026}");
+        let flags = blob_flags(&blob);
+        let text = std::str::from_utf8(&blob[8..8 + i32::from_le_bytes(
+            [blob[0], blob[1], blob[2], blob[3]]) as usize]).unwrap();
+        assert!(text.is_ascii(), "prefer_ascii should have converted to ASCII: {text:?}");
+        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+    }
+
+    /// Non-ASCII chars NOT in prefer_ascii's conversion set survive into the
+    /// blob and must clear is_ascii. Picks U+00E9 (é) — UTF-8 `0xC3 0xA9`,
+    /// no `0xE2` prefix, so prefer_ascii's memchr fast path returns immediately
+    /// without converting. The per-write `is_ascii()` is the only thing that
+    /// catches it.
+    #[test]
+    fn flags_unhandled_non_ascii_clears_is_ascii() {
+        let blob = blob_bytes("caf\u{00E9} latte");
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, 0);
     }
@@ -790,9 +848,11 @@ mod block {
     }
 
     /// Task list checkbox encoded in number field: unchecked=0xFFFE, checked=0xFFFF.
+    /// Tasklists need the full-postprocess path; the zero-copy path skips
+    /// the text coalescing that `[ ]` detection requires.
     #[test]
     fn task_list_basic() {
-        let result = render_test("- [ ] unchecked\n- [x] checked");
+        let result = render_test_full_parse("- [ ] unchecked\n- [x] checked");
         assert_eq!(result.text(), "unchecked\nchecked");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!((items[0].indent(), items[0].number()), (0, 0xFFFE));
@@ -801,7 +861,7 @@ mod block {
 
     #[test]
     fn task_list_mixed_with_regular_items() {
-        let result = render_test("- regular\n- [ ] unchecked\n- [x] checked");
+        let result = render_test_full_parse("- regular\n- [ ] unchecked\n- [x] checked");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!(items[0].number(), 0);
         assert_eq!(items[1].number(), 0xFFFE);
@@ -810,7 +870,7 @@ mod block {
 
     #[test]
     fn task_list_nested() {
-        let result = render_test("- [ ] parent\n  - [x] child");
+        let result = render_test_full_parse("- [ ] parent\n  - [x] child");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!((items[0].indent(), items[0].number()), (0, 0xFFFE));
         assert_eq!((items[1].indent(), items[1].number()), (1, 0xFFFF));
@@ -818,8 +878,8 @@ mod block {
 
     #[test]
     fn task_list_markers_stripped() {
-        assert_eq!(render_test("- [ ] todo item").text(), "todo item");
-        assert_eq!(render_test("- [x] done item").text(), "done item");
+        assert_eq!(render_test_full_parse("- [ ] todo item").text(), "todo item");
+        assert_eq!(render_test_full_parse("- [x] done item").text(), "done item");
     }
 
     #[test]
