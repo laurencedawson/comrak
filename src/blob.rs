@@ -101,10 +101,23 @@ impl BlobWriter {
     fn with_fast_path(cap: usize, fast_path_ascii: bool) -> Self {
         let mut blob = Vec::with_capacity(HEADER_SIZE + cap);
         blob.extend_from_slice(&[0u8; HEADER_SIZE]);
+        // Pre-size spans/url_data to skip the doubling chain from 0. spans
+        // holds 4 i32 per span; budget ~1 span per 40 input bytes (typical
+        // density across the bench corpus). url_data is bytes; budget ~1
+        // byte per 32 input bytes. Below ~96 chars the doc is too small to
+        // make pre-allocation worthwhile (plain text has zero spans); leave
+        // both at zero capacity, which std::vec::Vec specializes to no
+        // allocation. Both clamp at the top to keep pathological input from
+        // requesting megabytes up front.
+        let (spans_cap, url_cap) = if cap < 96 {
+            (0, 0)
+        } else {
+            ((cap / 40).min(2048) * 4, (cap / 32).min(8192))
+        };
         Self {
             blob,
-            spans: vec![],
-            url_data: vec![],
+            spans: Vec::with_capacity(spans_cap),
+            url_data: Vec::with_capacity(url_cap),
             footnotes: vec![],
             len: 0,
             p: 0,

@@ -2143,21 +2143,23 @@ where
     fn add_line(&mut self, node: Node<'a>, line: &str) {
         let mut ast = node.data_mut();
         assert!(ast.open);
+        // Take the block borrow once and reuse — saves up to three
+        // `get_or_insert_with` calls per line on the parse hot path.
+        let block = ast.block_mut();
         if self.partially_consumed_tab {
             self.offset += 1;
             let chars_to_tab = TAB_STOP - (self.column % TAB_STOP);
-            ast.content_mut().reserve(chars_to_tab);
+            block.content.reserve(chars_to_tab);
             for _ in 0..chars_to_tab {
-                ast.content_mut().push(' ');
+                block.content.push(' ');
             }
         }
         if self.offset < line.len() {
             // Since whitespace is stripped off the beginning of lines, we need
             // to keep track of how much was stripped off. This allows us to
             // properly calculate inline sourcepos during inline processing.
-            ast.line_offsets_mut().push(self.offset);
-
-            ast.content_mut().push_str(&line[self.offset..]);
+            block.line_offsets.push(self.offset);
+            block.content.push_str(&line[self.offset..]);
         }
     }
 

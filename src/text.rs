@@ -6,7 +6,17 @@ use std::borrow::Cow;
 /// path when the input has no double-space (the common case).
 #[inline]
 pub fn collapse_whitespace(s: &str) -> Cow<'_, str> {
-    if !s.as_bytes().windows(2).any(|w| w[0] == b' ' && w[1] == b' ') {
+    let bytes = s.as_bytes();
+    // Small inputs (most inline Text runs after tokenization): a simple
+    // windows(2) byte loop already auto-vectorizes to a tight check, and
+    // beats memmem's per-call SIMD setup cost. Larger inputs (long paragraph
+    // fragments) flip the trade-off — memmem's SIMD search dominates.
+    let has_double = if bytes.len() < 64 {
+        bytes.windows(2).any(|w| w[0] == b' ' && w[1] == b' ')
+    } else {
+        memchr::memmem::find(bytes, b"  ").is_some()
+    };
+    if !has_double {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len());

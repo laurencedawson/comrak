@@ -829,6 +829,14 @@ impl Ast {
         &mut self.block.get_or_insert_with(Default::default).line_offsets
     }
 
+    /// Joint accessor for block content + line offsets. Saves one
+    /// `get_or_insert_with` call vs hitting `content_mut`/`line_offsets_mut`
+    /// in sequence — meaningful on `add_line`, which fires once per line of
+    /// every paragraph/heading/code-block.
+    pub(crate) fn block_mut(&mut self) -> &mut BlockContent {
+        self.block.get_or_insert_with(Default::default)
+    }
+
     pub(crate) fn take_content(&mut self) -> String {
         match &mut self.block {
             Some(b) => std::mem::take(&mut b.content),
