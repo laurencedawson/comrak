@@ -89,8 +89,10 @@ impl<'o, 'c> XmlFormatter<'o, 'c> {
                             NodeValue::Text(ref literal) => {
                                 self.escape(literal)?;
                             }
-                            NodeValue::Code(NodeCode { ref literal, .. })
-                            | NodeValue::HtmlInline(ref literal)
+                            NodeValue::Code(NodeCode { ref literal, .. }) => {
+                                self.escape(literal)?;
+                            }
+                            NodeValue::HtmlInline(ref literal)
                             | NodeValue::Raw(ref literal) => {
                                 self.escape(literal)?;
                             }
@@ -158,8 +160,13 @@ impl<'o, 'c> XmlFormatter<'o, 'c> {
                     write!(self.output, "</{}", ast.value.xml_node_name())?;
                     was_literal = true;
                 }
-                NodeValue::Code(NodeCode { ref literal, .. })
-                | NodeValue::HtmlBlock(NodeHtmlBlock { ref literal, .. })
+                NodeValue::Code(NodeCode { ref literal, .. }) => {
+                    self.output.write_str(" xml:space=\"preserve\">")?;
+                    self.escape(literal)?;
+                    write!(self.output, "</{}", ast.value.xml_node_name())?;
+                    was_literal = true;
+                }
+                NodeValue::HtmlBlock(NodeHtmlBlock { ref literal, .. })
                 | NodeValue::HtmlInline(ref literal)
                 | NodeValue::Raw(ref literal) => {
                     self.output.write_str(" xml:space=\"preserve\">")?;

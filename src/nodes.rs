@@ -340,20 +340,30 @@ pub struct NodeCode {
     /// As the contents are not interpreted as Markdown at all,
     /// they are contained within this structure,
     /// rather than inserted into a child inline of any kind.
-    pub literal: String,
+    ///
+    /// Stored as `Cow<'static, str>` so the zero-copy parse path can
+    /// borrow directly from the pooled input (most code spans need no
+    /// allocation in that mode); the `'static` lifetime is a safety
+    /// fiction backed by the parser's string arena outliving every node
+    /// that references it (see `Subject::text_cow`).
+    pub literal: Cow<'static, str>,
 }
 
 /// The details of a link's destination, or an image's source.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct NodeLink {
     /// The URL for the link destination or image source.
-    pub url: String,
+    ///
+    /// Stored as `Cow<'static, str>`; the zero-copy parse path borrows
+    /// directly from the input arena. See [`NodeCode::literal`] for the
+    /// soundness contract behind the `'static` lifetime.
+    pub url: Cow<'static, str>,
 
     /// The title for the link or image.
     ///
     /// Note this field is used for the `title` attribute by the HTML formatter even for images;
     /// `alt` text is supplied in the image inline text.
-    pub title: String,
+    pub title: Cow<'static, str>,
 }
 
 impl NodeLink {

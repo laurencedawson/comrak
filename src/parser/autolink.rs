@@ -75,8 +75,8 @@ fn lemmy_mention_match<'a>(
     let inl = make_inline(
         arena,
         NodeValue::Link(Box::new(NodeLink {
-            url,
-            title: String::new(),
+            url: url.into(),
+            title: Cow::Borrowed(""),
         })),
         (0, 1, 0, 1).into(),
     );
@@ -364,8 +364,8 @@ fn email_match<'a>(
     let inl = make_inline(
         arena,
         NodeValue::Link(Box::new(NodeLink {
-            url,
-            title: String::new(),
+            url: url.into(),
+            title: Cow::Borrowed(""),
         })),
         (0, 1, 0, 1).into(),
     );
@@ -425,8 +425,8 @@ pub fn www_match<'a>(
     let inl = make_inline(
         subject.arena,
         NodeValue::Link(Box::new(NodeLink {
-            url,
-            title: String::new(),
+            url: url.into(),
+            title: Cow::Borrowed(""),
         })),
         (0, 1, 0, 1).into(),
     );
@@ -602,8 +602,8 @@ pub fn url_match<'a>(
     let inl = make_inline(
         subject.arena,
         NodeValue::Link(Box::new(NodeLink {
-            url: url.to_string(),
-            title: String::new(),
+            url: Cow::Owned(url.to_string()),
+            title: Cow::Borrowed(""),
         })),
         (0, 1, 0, 1).into(),
     );

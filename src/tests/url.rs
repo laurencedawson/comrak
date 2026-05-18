@@ -1,9 +1,11 @@
+use std::borrow::Cow;
+
 use crate::nodes::NodeLink;
 
 fn check(url: &str, expected: &str) {
     let nl = NodeLink {
-        url: url.into(),
-        title: String::new(),
+        url: Cow::Owned(url.to_string()),
+        title: Cow::Borrowed(""),
     };
     assert_eq!(nl.cleaned_url().as_ref(), expected, "\ninput: {url:?}");
 }

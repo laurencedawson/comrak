@@ -290,19 +290,26 @@ fn shift_buf_left(buf: &mut [u8], n: usize) {
     }
 }
 
-pub fn clean_url(url: &str) -> Cow<'static, str> {
+pub fn clean_url(url: &str) -> Cow<'_, str> {
     let url = trim_slice(url);
 
     if url.is_empty() {
         return "".into();
     }
 
-    let mut b = entity::unescape_html(url).into_owned();
+    let unescaped = entity::unescape_html(url);
+    // Skip the to_owned + unescape call entirely when no backslash escapes
+    // are present (the common case for typical URLs). Lets the caller keep
+    // a borrow into the input arena and skip a String alloc per link.
+    if memchr::memchr(b'\\', unescaped.as_bytes()).is_none() {
+        return unescaped;
+    }
+    let mut b = unescaped.into_owned();
     unescape(&mut b);
     b.into()
 }
 
-pub fn clean_title(title: &str) -> Cow<'static, str> {
+pub fn clean_title(title: &str) -> Cow<'_, str> {
     let title_len = title.len();
     if title_len == 0 {
         return "".into();
@@ -312,16 +319,18 @@ pub fn clean_title(title: &str) -> Cow<'static, str> {
     let first = bytes[0];
     let last = bytes[title_len - 1];
 
-    let mut b = if (first == b'\'' && last == b'\'')
+    let inner = if (first == b'\'' && last == b'\'')
         || (first == b'(' && last == b')')
         || (first == b'"' && last == b'"')
     {
         entity::unescape_html(&title[1..title_len - 1])
     } else {
         entity::unescape_html(title)
+    };
+    if memchr::memchr(b'\\', inner.as_bytes()).is_none() {
+        return inner;
     }
-    .into_owned();
-
+    let mut b = inner.into_owned();
     unescape(&mut b);
     b.into()
 }

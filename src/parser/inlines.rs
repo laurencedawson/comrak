@@ -199,6 +199,21 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         }
     }
 
+    /// Promote a parse-temporary `Cow<'_, str>` to `Cow<'static, str>`.
+    /// In zerocopy mode the borrow points into the input arena (which
+    /// outlives the AST) so we keep the borrow; otherwise the borrow
+    /// is tied to a heap String that drops at end of `parse_inlines`,
+    /// so we must clone.
+    fn into_static_cow(&self, c: Cow<'_, str>) -> Cow<'static, str> {
+        match c {
+            Cow::Borrowed(s) if self.is_zerocopy() => {
+                Cow::Borrowed(unsafe { extend_lifetime(s) })
+            }
+            Cow::Borrowed(s) => Cow::Owned(s.to_string()),
+            Cow::Owned(s) => Cow::Owned(s),
+        }
+    }
+
     //////////////////
     // Constructors //
     //////////////////
@@ -234,8 +249,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     ) -> Node<'a> {
         let inl = self.make_inline(
             NodeValue::Link(Box::new(NodeLink {
-                url: strings::clean_autolink(url, kind).into(),
-                title: String::new(),
+                url: strings::clean_autolink(url, kind).into_owned().into(),
+                title: Cow::Borrowed(""),
             })),
             start_column,
             end_column,
@@ -522,9 +537,21 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             Some(endpos) => {
                 let buf = &self.input[startpos + openticks..endpos - openticks];
                 let buf = strings::normalize_code(buf);
+                // Promote the Cow's lifetime to 'static: in zerocopy mode the
+                // borrow points into the string arena that outlives the AST;
+                // owned strings carry their own backing. Skips a String alloc
+                // per clean code span (the common case — heavy-inline drops
+                // ~50 String allocs/parse).
+                let literal: Cow<'static, str> = match buf {
+                    Cow::Borrowed(s) if self.is_zerocopy() => {
+                        Cow::Borrowed(unsafe { extend_lifetime(s) })
+                    }
+                    Cow::Borrowed(s) => Cow::Owned(s.to_string()),
+                    Cow::Owned(s) => Cow::Owned(s),
+                };
                 let code = NodeCode {
                     num_backticks: openticks,
-                    literal: buf.into(),
+                    literal,
                 };
                 let node = self.make_inline(NodeValue::Code(code), startpos, endpos - 1);
                 self.adjust_node_newlines(
@@ -1936,10 +1963,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                         self.scanner.pos = endall + 1;
                         let url = strings::clean_url(url);
                         let title = strings::clean_title(&self.input[starttitle..endtitle]);
+                        let url = self.into_static_cow(url);
+                        let title = self.into_static_cow(title);
                         self.close_bracket_match(
                             is_image,
-                            url.into(),
-                            title.into(),
+                            url,
+                            title,
                             source_end_pos,
                         );
                         return None;
@@ -1992,7 +2021,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             // When reff is Cow::Owned (from callback), into_owned() is a no-op
             // When reff is Cow::Borrowed (from refmap), into_owned() clones
             let reff = reff.into_owned();
-            self.close_bracket_match(is_image, reff.url, reff.title, self.scanner.pos);
+            self.close_bracket_match(
+                is_image,
+                Cow::Owned(reff.url),
+                Cow::Owned(reff.title),
+                self.scanner.pos,
+            );
             return None;
         }
 
@@ -2115,8 +2149,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     fn close_bracket_match(
         &mut self,
         is_image: bool,
-        url: String,
-        title: String,
+        url: Cow<'static, str>,
+        title: Cow<'static, str>,
         source_end_pos: usize,
     ) {
         let last = self.brackets.pop().unwrap();

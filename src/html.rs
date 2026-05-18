@@ -289,8 +289,10 @@ pub fn format_document_with_formatter<'a, 'o, 'c: 'o, T>(
                             NodeValue::Text(ref literal) => {
                                 context.escape(literal)?;
                             }
-                            NodeValue::Code(NodeCode { ref literal, .. })
-                            | NodeValue::HtmlInline(ref literal) => {
+                            NodeValue::Code(NodeCode { ref literal, .. }) => {
+                                context.escape(literal)?;
+                            }
+                            NodeValue::HtmlInline(ref literal) => {
                                 context.escape(literal)?;
                             }
                             NodeValue::LineBreak | NodeValue::SoftBreak => {
