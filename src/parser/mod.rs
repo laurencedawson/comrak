@@ -2814,6 +2814,11 @@ where
         sourcepos: &mut Sourcepos,
         spx: &mut Spx,
     ) {
+        // Fast path: tasklist syntax is `[ ]` / `[x]` at the start of the
+        // text. If the first byte isn't `[`, the re2c scanner can't match.
+        if text.as_bytes().first() != Some(&b'[') {
+            return;
+        }
         let (end, matched, symbol_range) = match scanners::tasklist(text) {
             Some(p) => p,
             None => return,

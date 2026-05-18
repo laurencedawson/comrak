@@ -33,6 +33,11 @@ pub fn collapse_whitespace(s: &str) -> Cow<'_, str> {
 /// Zero-copy fast path when none are present (the common case).
 #[inline]
 pub fn prefer_ascii(s: &str) -> Cow<'_, str> {
+    // Fast path: all typographic chars start with `0xE2` in UTF-8. memchr
+    // SIMD-scans for it in one shot; ASCII-only text returns immediately.
+    if memchr::memchr(0xE2, s.as_bytes()).is_none() {
+        return Cow::Borrowed(s);
+    }
     if !s.as_bytes().windows(3).any(|w|
         w[0] == 0xE2 && w[1] == 0x80 && matches!(w[2], 0x93 | 0x94 | 0x98 | 0x99 | 0x9C | 0x9D | 0xA6))
     {

@@ -97,6 +97,11 @@ pub(crate) fn process_lemmy_mentions<'a>(
     sourcepos: &mut Sourcepos,
     spx: &mut Spx,
 ) {
+    // Fast path: mentions trigger on `@` or `!`. Without one, no match is
+    // possible — skip the per-byte scan entirely.
+    if memchr::memchr2(b'@', b'!', contents.as_bytes()).is_none() {
+        return;
+    }
     let bytes = contents.as_bytes();
     let len = contents.len();
     let mut i = 0;
@@ -175,6 +180,11 @@ pub(crate) fn process_email_autolinks<'a>(
     sourcepos: &mut Sourcepos,
     spx: &mut Spx,
 ) {
+    // Fast path: emails always contain `@`. Without one in the buffer, no
+    // match is possible and we can skip the per-byte bracket-tracking loop.
+    if memchr::memchr(b'@', contents.as_bytes()).is_none() {
+        return;
+    }
     let bytes = contents.as_bytes();
     let len = contents.len();
     let mut i = 0;
