@@ -2413,7 +2413,13 @@ where
 
     fn process_inlines(&mut self) {
         let char_tables = inlines::CharTables::from_options(self.options);
-        let delimiter_arena = typed_arena::Arena::with_capacity(16);
+        // Size the delimiter arena from input length so heavy-inline docs
+        // don't pay the typed_arena 16→32→64→128→… doubling chain. A
+        // delimiter is ~56 bytes; one per ~80 input bytes is a generous
+        // upper bound across the bench corpus. Clamped to a small floor so
+        // tiny docs don't over-allocate.
+        let delim_cap = (self.total_size / 80).clamp(16, 1024);
+        let delimiter_arena = typed_arena::Arena::with_capacity(delim_cap);
         for node in self.root.descendants() {
             if node.data().value.contains_inlines() {
                 self.parse_inlines(node, &char_tables, &delimiter_arena);
