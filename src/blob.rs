@@ -193,6 +193,8 @@ impl BlobWriter {
 
     pub(crate) fn span_url(&mut self, t: i32, start: usize, url: &str) {
         if start >= self.len { return; }
+        // The single URL-emission chokepoint: finalize here so no caller can emit a raw URL.
+        let url = crate::parser::url::resolve_url(url);
         let offset = self.url_data.len();
         let url_len = url.len().min(MAX_URL_LEN);
         self.url_data.extend_from_slice(&url.as_bytes()[..url_len]);
@@ -414,7 +416,7 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         Link(l) => {
-            let url: &str = &l.cleaned_url();
+            let url: &str = &crate::parser::url::resolve_url(&l.url);
             let only = node.first_child().filter(|c| c.next_sibling().is_none());
             let wraps_image = only.is_some_and(|c| matches!(&c.data.borrow().value, Image(_)));
             let autolink = only.is_some_and(|c| matches!(&c.data.borrow().value,

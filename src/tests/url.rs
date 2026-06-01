@@ -1,13 +1,7 @@
-use std::borrow::Cow;
-
-use crate::nodes::NodeLink;
+use crate::parser::url::resolve_url;
 
 fn check(url: &str, expected: &str) {
-    let nl = NodeLink {
-        url: Cow::Owned(url.to_string()),
-        title: Cow::Borrowed(""),
-    };
-    assert_eq!(nl.cleaned_url().as_ref(), expected, "\ninput: {url:?}");
+    assert_eq!(resolve_url(url).as_ref(), expected, "\ninput: {url:?}");
 }
 
 fn unchanged(url: &str) {
@@ -108,6 +102,42 @@ fn lemmy_v4_image_proxy() {
         "https://lemmy.ml/api/v4/image/proxy?url=https%3A%2F%2Fexample.com%2Fimg.png",
         "https://example.com/img.png",
     );
+}
+
+#[test]
+fn pictrs_thumbnailed() {
+    check(
+        "https://lemmy.world/pictrs/image/abc.jpeg",
+        "https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=250&format=webp",
+    );
+}
+
+#[test]
+fn pictrs_existing_query_replaced() {
+    check(
+        "https://x.tld/pictrs/image/abc.png?thumbnail=800&format=webp",
+        "https://x.tld/pictrs/image/abc.png?thumbnail=250&format=webp",
+    );
+}
+
+#[test]
+fn pictrs_gif_unchanged() {
+    unchanged("https://x.tld/pictrs/image/abc.gif");
+    unchanged("https://x.tld/pictrs/image/abc.gif?thumbnail=800");
+}
+
+#[test]
+fn proxied_pictrs_unwrapped_then_thumbnailed() {
+    check(
+        "https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg",
+        "https://other.tld/pictrs/image/abc.jpeg?thumbnail=250&format=webp",
+    );
+}
+
+#[test]
+fn pictrs_video_not_thumbnailed() {
+    unchanged("https://lemmy.world/pictrs/image/abc.mp4");
+    unchanged("https://lemmy.world/pictrs/image/abc.webm");
 }
 
 #[test]

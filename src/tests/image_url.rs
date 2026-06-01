@@ -35,3 +35,20 @@ fn query_param() {
 fn no_scheme() {
     assert!(!is_image_url("example.com/photo.jpg"));
 }
+
+#[test]
+fn video_on_image_host_not_image() {
+    assert!(!is_image_url("https://i.imgur.com/abc.mp4"));
+    assert!(!is_image_url("https://i.imgur.com/abc.gifv"));
+    assert!(is_image_url("https://i.imgur.com/abc.jpg"));
+}
+
+#[test]
+fn video_on_pictrs_path_not_image() {
+    assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.mp4"));
+    assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.webm"));
+    assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.mp4?thumbnail=250"));
+    assert!(is_image_url("https://lemmy.world/pictrs/image/abc.jpeg"));
+    // No extension: can't tell, defaults to image.
+    assert!(is_image_url("https://lemmy.world/pictrs/image/abc123"));
+}

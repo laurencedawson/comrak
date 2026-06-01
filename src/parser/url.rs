@@ -1,8 +1,21 @@
 use std::borrow::Cow;
 
-/// Apply all URL transforms (proxy unwrapping, short URL expansion, mobile normalization).
-/// Returns `Cow::Borrowed` when no transform modifies the input (zero-copy fast path).
-pub fn clean_url(url: &str) -> Cow<'_, str> {
+/// Finalize a URL for display: resolve it to its real target (unwrap proxies/redirects,
+/// expand short URLs) and, for Lemmy pict-rs images, rewrite to a thumbnail preview.
+/// The single URL finalizer; callers store the result and never re-process. Note this
+/// thumbnails pict-rs URLs even on links, not just inline images; harmless because the
+/// host strips the query for full-res (see image_url::pictrs_preview).
+pub fn resolve_url(url: &str) -> Cow<'_, str> {
+    let resolved = resolve_target(url);
+    match pictrs_preview(&resolved) {
+        Cow::Owned(s) => Cow::Owned(s),
+        Cow::Borrowed(_) => resolved,
+    }
+}
+
+/// Resolve a URL to its real target: proxy unwrapping, redirect unwrapping, short-URL
+/// and mobile-URL expansion. Returns `Cow::Borrowed` when nothing changed (zero-copy).
+fn resolve_target(url: &str) -> Cow<'_, str> {
     let url = unwrap_proxy(url);
     let rest = match strip_scheme(&url) {
         Some(r) => r,
@@ -51,6 +64,30 @@ pub fn clean_url(url: &str) -> Cow<'_, str> {
     }
 
     url
+}
+
+/// Width passed to pict-rs `thumbnail` for inline image previews. Caps the in-body
+/// download; the full-size original is one tap away (the host's image viewer strips
+/// the query). Fixed because the parser has no display width, so an image shown wider
+/// than this upscales slightly.
+const PICTRS_PREVIEW_WIDTH: u32 = 250;
+
+/// If `url` is a Lemmy pict-rs image, rewrite it to request a server-side `thumbnail`
+/// resize in webp, the only processing Lemmy honors on image URLs (`crop`/`resize`
+/// are silently ignored). Any existing query is dropped. Animated (`.gif`) and video
+/// formats are left untouched because the webp transcode strips animation or reduces a
+/// video to a still frame. Non-pict-rs URLs pass through unchanged (zero-copy).
+fn pictrs_preview(url: &str) -> Cow<'_, str> {
+    if !url.contains("/pictrs/image/") {
+        return Cow::Borrowed(url);
+    }
+    let non_static = path_ext(url).is_some_and(|e| e.eq_ignore_ascii_case("gif")
+        || crate::image_url::VIDEO_EXTENSIONS.iter().any(|v| e.eq_ignore_ascii_case(v)));
+    if non_static {
+        return Cow::Borrowed(url);
+    }
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    Cow::Owned(format!("{path}?thumbnail={PICTRS_PREVIEW_WIDTH}&format=webp"))
 }
 
 fn unwrap_redirect(url: &str, prefix: &str, param: &str) -> Option<String> {
@@ -139,6 +176,14 @@ fn normalize_mobile_youtube(url: &str) -> Option<String> {
 
 fn strip_scheme(url: &str) -> Option<&str> {
     url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
+}
+
+/// The extension of a URL's last path segment, with any query/fragment stripped.
+/// `"https://x/a/b.MP4?q=1"` -> `Some("MP4")`. Case preserved; callers compare
+/// case-insensitively.
+pub(crate) fn path_ext(url: &str) -> Option<&str> {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    path.rsplit('/').next()?.rsplit_once('.').map(|(_, ext)| ext)
 }
 
 fn query_param(url: &str, param: &str) -> Option<String> {

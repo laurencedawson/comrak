@@ -366,14 +366,6 @@ pub struct NodeLink {
     pub title: Cow<'static, str>,
 }
 
-impl NodeLink {
-    /// Returns the URL after cleaning (unwrapping redirects, expanding short URLs, etc.).
-    /// Zero-copy when no cleaning is needed.
-    pub fn cleaned_url(&self) -> Cow<'_, str> {
-        crate::parser::url::clean_url(&self.url)
-    }
-}
-
 /// The details of a wikilink's destination.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct NodeWikiLink {

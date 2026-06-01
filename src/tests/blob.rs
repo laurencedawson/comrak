@@ -715,6 +715,41 @@ mod images {
         assert!(result.span_iter().any(|s| s.typ == IMAGE));
     }
 
+    /// Lemmy pict-rs images are rewritten to request a server-side thumbnail preview.
+    #[test]
+    fn pictrs_image_gets_thumbnail_preview() {
+        let result = render_test("![](https://lemmy.world/pictrs/image/abc.jpeg)");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref()
+                == Some("https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=250&format=webp")));
+    }
+
+    /// Animated pict-rs gifs are NOT rewritten (webp transcode would strip animation).
+    #[test]
+    fn pictrs_gif_not_rewritten() {
+        let result = render_test("![](https://lemmy.world/pictrs/image/abc.gif)");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref() == Some("https://lemmy.world/pictrs/image/abc.gif")));
+    }
+
+    /// Inline image proxy URLs are unwrapped (matching the link path), not left proxied.
+    #[test]
+    fn image_proxy_url_unwrapped() {
+        let result = render_test("![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fwww.explainxkcd.com%2Fwiki%2Fimages%2F1%2F1c%2Ftv_problems.png)");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref()
+                == Some("https://www.explainxkcd.com/wiki/images/1/1c/tv_problems.png")));
+    }
+
+    /// A proxied cross-instance pict-rs image is unwrapped first, then thumbnailed.
+    #[test]
+    fn proxied_pictrs_unwrapped_then_thumbnailed() {
+        let result = render_test("![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg)");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref()
+                == Some("https://other.tld/pictrs/image/abc.jpeg?thumbnail=250&format=webp")));
+    }
+
     /// Known image hosts trigger IMAGE via autolink detection.
     #[test]
     fn known_hosts_become_image() {

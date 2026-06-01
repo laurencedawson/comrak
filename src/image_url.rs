@@ -18,12 +18,14 @@ pub fn is_image_url(url: &str) -> bool {
         None => return false,
     };
 
+    // Host/path shortcuts skip extension checking, so exclude video files explicitly:
+    // pict-rs serves video under /pictrs/image/, and image hosts (imgur) serve mp4/gifv.
     if IMAGE_HOSTS.iter().any(|h| rest.starts_with(h)) {
-        return !IMAGE_HOST_EXCLUDED.iter().any(|p| rest.starts_with(p));
+        return !IMAGE_HOST_EXCLUDED.iter().any(|p| rest.starts_with(p)) && !has_video_ext(rest);
     }
 
     if IMAGE_PATHS.iter().any(|p| rest.contains(p)) {
-        return true;
+        return !has_video_ext(rest);
     }
 
     let path = rest.split(['?', '#']).next().unwrap_or(rest);
@@ -48,6 +50,14 @@ pub fn is_image_url(url: &str) -> bool {
     }
 
     false
+}
+
+/// True if the URL's last path segment has a known video extension. Video files can
+/// live on image hosts and pict-rs paths, where the shortcuts would otherwise treat
+/// them as images.
+fn has_video_ext(url: &str) -> bool {
+    crate::parser::url::path_ext(url)
+        .is_some_and(|ext| VIDEO_EXTENSIONS.iter().any(|v| ext.eq_ignore_ascii_case(v)))
 }
 
 const IMAGE_HOSTS: &[&str] = &[
@@ -75,4 +85,10 @@ const IMAGE_PATHS: &[&str] = &[
 const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
     "svg", "ico", "tif", "tiff", "heic", "heif", "jfif",
+];
+
+/// Video extensions that can appear on image hosts / pict-rs paths. Used to keep
+/// videos from being detected as images or thumbnailed into a still frame.
+pub(crate) const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "webm", "mov", "m4v", "mkv", "avi", "gifv", "ogv",
 ];
