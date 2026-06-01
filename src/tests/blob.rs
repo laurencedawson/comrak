@@ -367,6 +367,7 @@ mod format {
 
     const FLAG_IS_ASCII: u8 = 1 << 0;
     const FLAG_NEEDS_REFLOW: u8 = 1 << 1;
+    const FLAG_HAS_SPOILER_BODY: u8 = 1 << 2;
 
     /// Empty writer: is_ascii vacuously true, no reflow trigger.
     #[test]
@@ -375,6 +376,7 @@ mod format {
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
         assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
+        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
     }
 
     /// Pure ASCII text with formatting spans sets is_ascii but no reflow flag.
@@ -384,6 +386,7 @@ mod format {
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
         assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
+        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
     }
 
     /// Image span sets needs_reflow and is_ascii (text stays ASCII).
@@ -393,6 +396,7 @@ mod format {
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
         assert_eq!(flags & FLAG_NEEDS_REFLOW, FLAG_NEEDS_REFLOW);
+        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
     }
 
     /// LEMMY_SPOILER_TITLE sets needs_reflow.
@@ -401,6 +405,7 @@ mod format {
         let blob = blob_bytes(":::spoiler the secret\nhidden body\n:::");
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_NEEDS_REFLOW, FLAG_NEEDS_REFLOW);
+        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, FLAG_HAS_SPOILER_BODY);
     }
 
     /// HRULE alone does NOT set needs_reflow (only IMAGE / LEMMY_SPOILER_TITLE do).
@@ -1155,4 +1160,3 @@ mod edge {
         assert_eq!(result.span_iter().count(), 0);
     }
 }
-

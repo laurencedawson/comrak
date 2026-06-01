@@ -2,7 +2,8 @@
 //!
 //! Produces a compact blob: `[text_len:4][span_count:3|flags:1][text][pad][spans][url_data]`
 //! All positions are UTF-16 code units mapping directly to Java String indices.
-//! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = needs_reflow, bits 2-7 reserved.
+//! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = needs_reflow,
+//! bit 2 = has_spoiler_body, bits 3-7 reserved.
 //!
 //! Unlike HTML rendering, this walks the AST once and writes text + span metadata
 //! into a single contiguous buffer with zero intermediate allocations.
@@ -81,6 +82,9 @@ pub(crate) struct BlobWriter {
     /// flag so consumers can pick a cheaper layout when no post-render reflow
     /// is possible.
     needs_reflow: bool,
+    /// Set if any LEMMY_SPOILER_CONTENT span exists. Stored as a header flag so
+    /// consumers can skip hidden-spoiler containment checks for normal content.
+    has_spoiler_body: bool,
 }
 
 impl BlobWriter {
@@ -124,6 +128,7 @@ impl BlobWriter {
             all_ascii: true,
             fast_path_ascii,
             needs_reflow: false,
+            has_spoiler_body: false,
         }
     }
 
@@ -182,6 +187,7 @@ impl BlobWriter {
         if start < self.len {
             self.spans.extend_from_slice(&[start as i32, self.len as i32, t, data]);
             self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
+            self.has_spoiler_body |= t == LEMMY_SPOILER_CONTENT;
         }
     }
 
@@ -266,8 +272,11 @@ impl BlobWriter {
         // reused as a flag field so the header stays 8 bytes.
         //   bit 0: is_ascii      — text section is pure ASCII
         //   bit 1: needs_reflow  — has an IMAGE or LEMMY_SPOILER_TITLE span
-        //   bits 2-7: reserved
-        let flags: u32 = (self.all_ascii as u32) | ((self.needs_reflow as u32) << 1);
+        //   bit 2: has_spoiler_body — has a LEMMY_SPOILER_CONTENT span
+        //   bits 3-7: reserved
+        let flags: u32 = (self.all_ascii as u32)
+            | ((self.needs_reflow as u32) << 1)
+            | ((self.has_spoiler_body as u32) << 2);
         let count_with_flags = (span_count as u32 & 0x00FF_FFFF) | (flags << 24);
         self.blob[0..4].copy_from_slice(&(txt_len as i32).to_le_bytes());
         self.blob[4..8].copy_from_slice(&count_with_flags.to_le_bytes());
