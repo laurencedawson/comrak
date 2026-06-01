@@ -732,6 +732,24 @@ mod images {
             && s.url.as_deref() == Some("https://lemmy.world/pictrs/image/abc.gif")));
     }
 
+    /// A video in image syntax renders as a LINK, not a broken IMAGE.
+    #[test]
+    fn video_in_image_syntax_becomes_link() {
+        let result = render_test("![clip](https://lemmy.world/pictrs/image/abc.mp4)");
+        assert!(result.span_iter().any(|s| s.typ == LINK
+            && s.url.as_deref() == Some("https://lemmy.world/pictrs/image/abc.mp4")));
+        assert!(!result.span_iter().any(|s| s.typ == IMAGE));
+    }
+
+    /// With no alt text, the downgraded video link uses the URL as its visible text.
+    #[test]
+    fn video_in_image_syntax_no_alt_uses_url() {
+        let result = render_test("![](https://lemmy.world/pictrs/image/abc.mp4)");
+        assert!(result.text().contains("https://lemmy.world/pictrs/image/abc.mp4"));
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+        assert!(!result.span_iter().any(|s| s.typ == IMAGE));
+    }
+
     /// Inline image proxy URLs are unwrapped (matching the link path), not left proxied.
     #[test]
     fn image_proxy_url_unwrapped() {

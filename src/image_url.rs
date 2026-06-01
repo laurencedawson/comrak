@@ -21,11 +21,11 @@ pub fn is_image_url(url: &str) -> bool {
     // Host/path shortcuts skip extension checking, so exclude video files explicitly:
     // pict-rs serves video under /pictrs/image/, and image hosts (imgur) serve mp4/gifv.
     if IMAGE_HOSTS.iter().any(|h| rest.starts_with(h)) {
-        return !IMAGE_HOST_EXCLUDED.iter().any(|p| rest.starts_with(p)) && !has_video_ext(rest);
+        return !IMAGE_HOST_EXCLUDED.iter().any(|p| rest.starts_with(p)) && !is_video_url(rest);
     }
 
     if IMAGE_PATHS.iter().any(|p| rest.contains(p)) {
-        return !has_video_ext(rest);
+        return !is_video_url(rest);
     }
 
     let path = rest.split(['?', '#']).next().unwrap_or(rest);
@@ -53,9 +53,9 @@ pub fn is_image_url(url: &str) -> bool {
 }
 
 /// True if the URL's last path segment has a known video extension. Video files can
-/// live on image hosts and pict-rs paths, where the shortcuts would otherwise treat
-/// them as images.
-fn has_video_ext(url: &str) -> bool {
+/// live on image hosts and pict-rs paths (where the image shortcuts would otherwise
+/// treat them as images), or be embedded with `![](...)` image syntax.
+pub(crate) fn is_video_url(url: &str) -> bool {
     crate::parser::url::path_ext(url)
         .is_some_and(|ext| VIDEO_EXTENSIONS.iter().any(|v| ext.eq_ignore_ascii_case(v)))
 }

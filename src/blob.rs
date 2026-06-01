@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 
 use crate::arena_tree::Node;
-use crate::image_url::is_image_url;
+use crate::image_url::{is_image_url, is_video_url};
 use crate::nodes::{Ast, ListType, NodeValue::*};
 use crate::parser::url::extract_domain;
 use crate::text::{collapse_whitespace, prefer_ascii};
@@ -394,7 +394,21 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
             out.span(CODE, start);
         }
 
-        Image(l) => out.emit_image(&l.url),
+        Image(l) => {
+            let url: &str = &crate::parser::url::resolve_url(&l.url);
+            if is_video_url(url) {
+                // A video in image syntax can't be embedded as an image. Render it as a
+                // link instead: the alt text, or the URL itself when there is no alt.
+                let text_start = out.blob.len();
+                visit_children(node, out, list_depth, quote_depth);
+                if out.blob.len() == text_start { out.write_text(url); }
+                out.span_url(LINK, start, url);
+                out.span(LINK_SIZE, start);
+                out.append_domain_suffix(text_start, url);
+            } else {
+                out.emit_image(url);
+            }
+        }
 
         LineBreak => out.nl(1),
         SoftBreak => if quote_depth > 0 { out.nl(1) } else if !out.at_line_start() { out.write_text(" ") },
