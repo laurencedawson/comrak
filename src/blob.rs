@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use crate::arena_tree::Node;
 use crate::image_url::{is_image_url, is_video_url};
 use crate::nodes::{Ast, ListType, NodeValue::*};
-use crate::parser::url::extract_domain;
+use crate::parser::url::{ResolvedUrl, extract_domain};
 use crate::text::{collapse_whitespace, prefer_ascii};
 
 /// Span type constants, generated at build time from `library/span_types.toml`
@@ -191,10 +191,9 @@ impl BlobWriter {
         }
     }
 
-    pub(crate) fn span_url(&mut self, t: i32, start: usize, url: &str) {
+    pub(crate) fn span_url(&mut self, t: i32, start: usize, url: &ResolvedUrl) {
         if start >= self.len { return; }
-        // The single URL-emission chokepoint: finalize here so no caller can emit a raw URL.
-        let url = crate::parser::url::resolve_url(url);
+        // Takes only a ResolvedUrl, so no caller can emit a raw URL and none is resolved twice.
         let offset = self.url_data.len();
         let url_len = url.len().min(MAX_URL_LEN);
         self.url_data.extend_from_slice(&url.as_bytes()[..url_len]);
@@ -203,7 +202,7 @@ impl BlobWriter {
         self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
     }
 
-    fn emit_image(&mut self, url: &str) {
+    fn emit_image(&mut self, url: &ResolvedUrl) {
         if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
             // existing trailing `\n` (past any trailing spaces/tabs) count.
@@ -395,18 +394,18 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         Image(l) => {
-            let url: &str = &crate::parser::url::resolve_url(&l.url);
-            if is_video_url(url) {
+            let url = crate::parser::url::resolve_url(&l.url);
+            if is_video_url(&url) {
                 // A video in image syntax can't be embedded as an image. Render it as a
                 // link instead: the alt text, or the URL itself when there is no alt.
                 let text_start = out.blob.len();
                 visit_children(node, out, list_depth, quote_depth);
-                if out.blob.len() == text_start { out.write_text(url); }
-                out.span_url(LINK, start, url);
+                if out.blob.len() == text_start { out.write_text(&url); }
+                out.span_url(LINK, start, &url);
                 out.span(LINK_SIZE, start);
-                out.append_domain_suffix(text_start, url);
+                out.append_domain_suffix(text_start, &url);
             } else {
-                out.emit_image(url);
+                out.emit_image(&url);
             }
         }
 
@@ -430,21 +429,21 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         Link(l) => {
-            let url: &str = &crate::parser::url::resolve_url(&l.url);
+            let url = crate::parser::url::resolve_url(&l.url);
             let only = node.first_child().filter(|c| c.next_sibling().is_none());
             let wraps_image = only.is_some_and(|c| matches!(&c.data.borrow().value, Image(_)));
             let autolink = only.is_some_and(|c| matches!(&c.data.borrow().value,
                 Text(t) if t.starts_with("http://") || t.starts_with("https://")));
             if wraps_image {
                 visit_children(node, out, list_depth, quote_depth);
-            } else if autolink && is_image_url(url) {
-                out.emit_image(url);
+            } else if autolink && is_image_url(&url) {
+                out.emit_image(&url);
             } else {
                 let text_start = out.blob.len();
                 visit_children(node, out, list_depth, quote_depth);
-                out.span_url(LINK, start, url);
+                out.span_url(LINK, start, &url);
                 out.span(LINK_SIZE, start);
-                out.append_domain_suffix(text_start, url);
+                out.append_domain_suffix(text_start, &url);
             }
         }
 

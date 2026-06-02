@@ -287,7 +287,7 @@ mod format {
     fn span_url_empty_url() {
         let mut out = BlobWriter::new(64);
         out.write_text("text");
-        out.span_url(LINK, 0, "");
+        out.span_url(LINK, 0, &crate::resolve_url(""));
         let span = out.span_iter().find(|s| s.typ == LINK).unwrap();
         assert_eq!(span.url, None);
     }
@@ -306,9 +306,9 @@ mod format {
     fn multiple_urls_correct_offsets() {
         let mut out = BlobWriter::new(64);
         out.write_text("aaa");
-        out.span_url(LINK, 0, "https://first.com");
+        out.span_url(LINK, 0, &crate::resolve_url("https://first.com"));
         out.write_text("bbb");
-        out.span_url(LINK, 3, "https://second.com");
+        out.span_url(LINK, 3, &crate::resolve_url("https://second.com"));
         let urls: Vec<_> = out.span_iter().filter_map(|s| s.url).collect();
         assert_eq!(urls, vec!["https://first.com", "https://second.com"]);
     }

@@ -1,16 +1,37 @@
 use std::borrow::Cow;
+use std::ops::Deref;
+
+/// A URL that has been through [`resolve_url`]. Its only constructor is
+/// `resolve_url`, so holding one is proof the URL was finalized exactly once.
+/// The blob writer accepts `&ResolvedUrl`, never a raw `&str`, which makes
+/// "every emitted URL is resolved, and resolved only once" a compile-time
+/// invariant rather than a convention. Derefs to `str`, so it passes straight
+/// into the `&str` predicate/text helpers with no ceremony.
+#[derive(Debug)]
+pub struct ResolvedUrl<'a>(Cow<'a, str>);
+
+impl Deref for ResolvedUrl<'_> {
+    type Target = str;
+    fn deref(&self) -> &str { &self.0 }
+}
+
+impl AsRef<str> for ResolvedUrl<'_> {
+    fn as_ref(&self) -> &str { &self.0 }
+}
 
 /// Finalize a URL for display: resolve it to its real target (unwrap proxies/redirects,
 /// expand short URLs) and, for Lemmy pict-rs images, rewrite to a thumbnail preview.
-/// The single URL finalizer; callers store the result and never re-process. Note this
+/// The single URL finalizer; the [`ResolvedUrl`] it returns is the only thing the blob
+/// writer will emit, so a URL is resolved here once and never re-processed. Note this
 /// thumbnails pict-rs URLs even on links, not just inline images; harmless because the
 /// host strips the query for full-res (see image_url::pictrs_preview).
-pub fn resolve_url(url: &str) -> Cow<'_, str> {
+pub fn resolve_url(url: &str) -> ResolvedUrl<'_> {
     let resolved = resolve_target(url);
-    match pictrs_preview(&resolved) {
+    let finalized = match pictrs_preview(&resolved) {
         Cow::Owned(s) => Cow::Owned(s),
         Cow::Borrowed(_) => resolved,
-    }
+    };
+    ResolvedUrl(finalized)
 }
 
 /// Resolve a URL to its real target: proxy unwrapping, redirect unwrapping, short-URL
