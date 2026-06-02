@@ -108,7 +108,7 @@ fn lemmy_v4_image_proxy() {
 fn pictrs_thumbnailed() {
     check(
         "https://lemmy.world/pictrs/image/abc.jpeg",
-        "https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=250&format=webp",
+        "https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=400&format=webp",
     );
 }
 
@@ -116,7 +116,7 @@ fn pictrs_thumbnailed() {
 fn pictrs_existing_query_replaced() {
     check(
         "https://x.tld/pictrs/image/abc.png?thumbnail=800&format=webp",
-        "https://x.tld/pictrs/image/abc.png?thumbnail=250&format=webp",
+        "https://x.tld/pictrs/image/abc.png?thumbnail=400&format=webp",
     );
 }
 
@@ -130,7 +130,7 @@ fn pictrs_gif_unchanged() {
 fn proxied_pictrs_unwrapped_then_thumbnailed() {
     check(
         "https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg",
-        "https://other.tld/pictrs/image/abc.jpeg?thumbnail=250&format=webp",
+        "https://other.tld/pictrs/image/abc.jpeg?thumbnail=400&format=webp",
     );
 }
 

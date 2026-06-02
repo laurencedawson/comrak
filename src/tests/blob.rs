@@ -721,7 +721,7 @@ mod images {
         let result = render_test("![](https://lemmy.world/pictrs/image/abc.jpeg)");
         assert!(result.span_iter().any(|s| s.typ == IMAGE
             && s.url.as_deref()
-                == Some("https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=250&format=webp")));
+                == Some("https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=400&format=webp")));
     }
 
     /// Animated pict-rs gifs are NOT rewritten (webp transcode would strip animation).
@@ -765,7 +765,7 @@ mod images {
         let result = render_test("![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg)");
         assert!(result.span_iter().any(|s| s.typ == IMAGE
             && s.url.as_deref()
-                == Some("https://other.tld/pictrs/image/abc.jpeg?thumbnail=250&format=webp")));
+                == Some("https://other.tld/pictrs/image/abc.jpeg?thumbnail=400&format=webp")));
     }
 
     /// Known image hosts trigger IMAGE via autolink detection.

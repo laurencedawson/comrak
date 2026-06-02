@@ -91,7 +91,7 @@ fn resolve_target(url: &str) -> Cow<'_, str> {
 /// download; the full-size original is one tap away (the host's image viewer strips
 /// the query). Fixed because the parser has no display width, so an image shown wider
 /// than this upscales slightly.
-const PICTRS_PREVIEW_WIDTH: u32 = 250;
+const PICTRS_PREVIEW_WIDTH: u32 = 400;
 
 /// If `url` is a Lemmy pict-rs image, rewrite it to request a server-side `thumbnail`
 /// resize in webp, the only processing Lemmy honors on image URLs (`crop`/`resize`

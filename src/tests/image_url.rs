@@ -47,7 +47,7 @@ fn video_on_image_host_not_image() {
 fn video_on_pictrs_path_not_image() {
     assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.mp4"));
     assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.webm"));
-    assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.mp4?thumbnail=250"));
+    assert!(!is_image_url("https://lemmy.world/pictrs/image/abc.mp4?thumbnail=400"));
     assert!(is_image_url("https://lemmy.world/pictrs/image/abc.jpeg"));
     // No extension: can't tell, defaults to image.
     assert!(is_image_url("https://lemmy.world/pictrs/image/abc123"));
