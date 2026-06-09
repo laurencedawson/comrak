@@ -207,12 +207,22 @@ pub(crate) fn path_ext(url: &str) -> Option<&str> {
     path.rsplit('/').next()?.rsplit_once('.').map(|(_, ext)| ext)
 }
 
+/// Extract and percent-decode a query parameter. Decodes per RFC 3986, not
+/// form-urlencoding: a raw `+` is a literal `+` (common in proxied file URLs),
+/// never a space. Returns `None` for malformed percent sequences or a decoded
+/// value containing whitespace/control chars — such a value can't be a usable
+/// URL, and callers keep the wrapped URL instead, which still serves.
 fn query_param(url: &str, param: &str) -> Option<String> {
     let parsed = url::Url::parse(url).ok()?;
-    let value = parsed
-        .query_pairs()
-        .find_map(|(k, v)| (k == param).then_some(v))?;
-    if value.is_empty() {
+    let raw = parsed
+        .query()?
+        .split('&')
+        .find_map(|kv| kv.split_once('=').filter(|(k, _)| *k == param).map(|(_, v)| v))?;
+    if raw.is_empty() {
+        return None;
+    }
+    let value = percent_encoding_rfc3986::percent_decode_str(raw).ok()?.decode_utf8().ok()?;
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return None;
     }
     Some(value.into_owned())

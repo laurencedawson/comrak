@@ -105,6 +105,44 @@ fn lemmy_v4_image_proxy() {
 }
 
 #[test]
+fn image_proxy_preserves_literal_plus() {
+    // RFC 3986 decoding: a raw + in the query is a literal +, not a space.
+    check(
+        "https://lemmy.ml/api/v3/image_proxy?url=https://files.catbox.moe/a+b.png",
+        "https://files.catbox.moe/a+b.png",
+    );
+    check(
+        "https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Ffiles.catbox.moe%2Fa%2Bb.png",
+        "https://files.catbox.moe/a+b.png",
+    );
+}
+
+#[test]
+fn image_proxy_unusable_inner_url_kept_wrapped() {
+    // %20 decodes to a raw space — not a loadable URL. Keep the proxy URL,
+    // which still serves the image.
+    unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fmy%20pic.png");
+    // Control char (%00) likewise.
+    unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%00b.png");
+}
+
+#[test]
+fn image_proxy_undecodable_inner_url_kept_wrapped() {
+    // Malformed percent sequence: strict RFC 3986 decoding rejects it.
+    unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%2Gb.png");
+    // Decodes to invalid UTF-8.
+    unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%FFb.png");
+}
+
+#[test]
+fn redirect_preserves_literal_plus() {
+    check(
+        "https://www.google.com/url?q=https://example.com/a+b",
+        "https://example.com/a+b",
+    );
+}
+
+#[test]
 fn pictrs_thumbnailed() {
     check(
         "https://lemmy.world/pictrs/image/abc.jpeg",
