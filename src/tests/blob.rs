@@ -469,6 +469,77 @@ mod format {
         assert_eq!(flags & FLAG_IS_ASCII, 0);
     }
 
+    /// Render through `render_blob` proper so the ASCII-input writer
+    /// selection (`new_ascii` fast path) is exercised, unlike `render_raw`
+    /// which always constructs the scanning writer.
+    fn render_blob_full(markdown: &str) -> Vec<u8> {
+        let opts = test_opts();
+        let md = markdown.trim();
+        parse_document_zerocopy(md, &opts, |root| crate::blob::render_blob(root, md))
+            .expect("expected a blob")
+    }
+
+    /// First (start, end, type) span record decoded from a serialized blob.
+    fn first_span(blob: &[u8]) -> (i32, i32, i32) {
+        let txt_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+        let o = 8 + txt_len + (4 - txt_len % 4) % 4;
+        (
+            i32::from_le_bytes([blob[o], blob[o + 1], blob[o + 2], blob[o + 3]]),
+            i32::from_le_bytes([blob[o + 4], blob[o + 5], blob[o + 6], blob[o + 7]]),
+            i32::from_le_bytes([blob[o + 8], blob[o + 9], blob[o + 10], blob[o + 11]]),
+        )
+    }
+
+    /// Smartypants turns ASCII `(c)` into © after the fast-path writer was
+    /// already selected from the ASCII input. The violation check must force
+    /// a re-render: flag cleared and span offsets in UTF-16 over the real
+    /// text, not bytes.
+    #[test]
+    fn flags_ascii_input_smartypants_symbol_clears_is_ascii() {
+        let blob = render_blob_full("(c) 2024 **bold**");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert_eq!(blob_text(&blob), "\u{00A9} 2024 bold");
+        // "© 2024 " is 7 UTF-16 units; byte-based accounting would give 8.
+        assert_eq!(first_span(&blob), (7, 11, crate::blob::BOLD));
+    }
+
+    /// Decoded HTML entities are another ASCII-in, non-ASCII-out path.
+    #[test]
+    fn flags_ascii_input_entity_clears_is_ascii() {
+        let blob = render_blob_full("&copy; entity test");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert!(blob_text(&blob).starts_with('\u{00A9}'));
+    }
+
+    /// Footnote definitions render into a temporary writer; their text lands
+    /// in the main writer via `append_footnotes`, after the visit. An emoji
+    /// shortcode inside one must still clear is_ascii on the final blob.
+    #[test]
+    fn flags_ascii_input_footnote_shortcode_clears_is_ascii() {
+        let blob = render_blob_full("a[^1]\n\n[^1]: note with :joy: emoji");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert!(blob_text(&blob).contains('\u{1F602}'));
+    }
+
+    /// Inline shortcode emoji from ASCII input: another transform the
+    /// re-render fallback must catch, with offsets where UTF-16 units
+    /// (surrogate pair = 2) differ from both bytes (4) and chars (1).
+    #[test]
+    fn flags_ascii_input_inline_shortcode_clears_is_ascii() {
+        let blob = render_blob_full("happy :joy: time **bold**");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        // "happy 😂 time " is 14 UTF-16 units (emoji = surrogate pair).
+        assert_eq!(first_span(&blob), (14, 18, crate::blob::BOLD));
+    }
+
+    /// Control: ASCII input whose output stays ASCII keeps the flag set when
+    /// rendered through the fast-path writer selection.
+    #[test]
+    fn flags_ascii_input_ascii_output_keeps_is_ascii() {
+        let blob = render_blob_full("plain ascii control **bold**");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, FLAG_IS_ASCII);
+    }
+
     /// span_count remains correctly readable when flag bits are set.
     #[test]
     fn span_count_unaffected_by_flag_byte() {
