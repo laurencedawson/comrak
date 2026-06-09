@@ -312,7 +312,10 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
             let indent = list_depth.saturating_sub(1);
             let number = match val {
                 TaskItem(ti) => 0xFFFE + ti.symbol.is_some() as i32,
-                _ => ordinal.max(0),
+                // Clamp below the checkbox sentinels: ordered starts go up to
+                // 999,999,999 and would render as checkboxes or spill into the
+                // indent bits.
+                _ => ordinal.clamp(0, 0xFFFD),
             };
             let is_list = |c: &&AstNode<'a>| matches!(c.data.borrow().value, List(_));
             for c in node.children().filter(|c| !is_list(c)) {

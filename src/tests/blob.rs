@@ -948,6 +948,15 @@ mod block {
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!(items[0].number(), 5);
         assert_eq!(items[1].number(), 6);
+
+        // Huge ordinals clamp below the 0xFFFE/0xFFFF checkbox sentinels and
+        // never spill into the indent bits.
+        let result = render_test("65534. a\n65535. b\n65536. c");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items.len(), 3);
+        for item in &items {
+            assert_eq!((item.indent(), item.number()), (0, 0xFFFD));
+        }
     }
 
     /// Bullet list containing ordered sub-list.
