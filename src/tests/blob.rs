@@ -593,6 +593,18 @@ mod inline {
         assert_eq!(result.text(), "code");
     }
 
+    #[test]
+    fn raw_html_block_renders_as_literal_text() {
+        let result = render_test("<Laughs in GrapheneOS>");
+        assert_eq!(result.text(), "<Laughs in GrapheneOS>");
+    }
+
+    #[test]
+    fn raw_html_inline_renders_as_literal_text() {
+        let result = render_test("hey <Laughs in GrapheneOS> there");
+        assert_eq!(result.text(), "hey <Laughs in GrapheneOS> there");
+    }
+
     /// Trailing double-space forces a line break.
     #[test]
     fn hard_line_break() {

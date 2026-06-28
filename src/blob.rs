@@ -391,6 +391,13 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
             out.span(CODE, start);
         }
 
+        // Safe-mode comrak discards raw HTML; keep the source as literal text so comments don't vanish.
+        HtmlInline(h) => out.write_text(&prefer_ascii(&collapse_whitespace(h))),
+        HtmlBlock(b) => {
+            out.write_text(b.literal.trim_end());
+            out.nl(2);
+        }
+
         Image(l) => {
             let url = crate::parser::url::resolve_url(&l.url);
             if is_video_url(&url) {
