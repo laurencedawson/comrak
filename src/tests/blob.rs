@@ -9,7 +9,7 @@
 //! - `footnotes` — footnote refs and definitions
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
-use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, visit};
+use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, TABLE, visit};
 use crate::{parse_document, parse_document_zerocopy, Arena, Options};
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ impl<'a> Iterator for SpanIter<'a> {
         // LEMMY_SPOILER_TITLE reuses it for the title byte length.
         let url_len = (raw_data & 0xFFF) as usize;
         let offset = (raw_data >> 12) as usize;
-        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE && typ != LEMMY_SPOILER_TITLE {
+        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE && typ != LEMMY_SPOILER_TITLE && typ != TABLE {
             Some(String::from_utf8_lossy(&self.url_data[offset..offset + url_len]).into_owned())
         } else { None };
         Some(SpanView {
@@ -1110,6 +1110,34 @@ mod block {
         let result = render_test("| A | B |\n|---|---|\n| 1 | 2 |");
         assert_eq!(result.text(), "View Table");
         assert!(result.span_iter().any(|s| s.typ == TABLE));
+    }
+
+    /// Decodes a TABLE span's url_data payload: a `(rows<<16|cols)` header then
+    /// length-prefixed cell markdown, row-major.
+    fn decode_table(url_data: &[u8], data: i32) -> (usize, usize, Vec<String>) {
+        let mut p = (data - 1) as usize;
+        let packed = u32::from_le_bytes([url_data[p], url_data[p + 1], url_data[p + 2], url_data[p + 3]]);
+        p += 4;
+        let (rows, cols) = ((packed >> 16) as usize, (packed & 0xFFFF) as usize);
+        let mut cells = Vec::new();
+        for _ in 0..rows * cols {
+            let len = u16::from_le_bytes([url_data[p], url_data[p + 1]]) as usize;
+            p += 2;
+            cells.push(String::from_utf8(url_data[p..p + len].to_vec()).unwrap());
+            p += len;
+        }
+        (rows, cols, cells)
+    }
+
+    /// Table cells are packed into url_data, addressed by `data = offset+1`:
+    /// a `(rows<<16|cols)` header then length-prefixed inline-markdown cells.
+    #[test]
+    fn table_payload_roundtrips() {
+        let result = render_test("| a | b |\n|---|---|\n| 1 | 2 |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (rows, cols, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!((rows, cols), (2, 2));
+        assert_eq!(cells, vec!["a", "b", "1", "2"]);
     }
 
     /// `---` produces HRULE span with object-replacement char.

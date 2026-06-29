@@ -56,6 +56,21 @@ fn format_internal(root: Node<'_>, options: &Options, output: &mut dyn Write) ->
     f.format(root)
 }
 
+/// Serializes a table cell's inline content to standalone CommonMark, without
+/// the surrounding `|` syntax. The blob renderer stores this per cell so a cell
+/// can be re-parsed and rendered on demand. Each child subtree is serialized
+/// independently; `format` terminates each with a newline, and since cell
+/// content is inline that terminator is the only one to strip.
+pub(crate) fn format_table_cell_content(cell: Node<'_>, options: &Options) -> String {
+    let mut out = String::new();
+    for child in cell.children() {
+        let mut buf = String::new();
+        let _ = format_internal(child, options, &mut buf);
+        out.push_str(buf.trim_end_matches('\n'));
+    }
+    out.trim().to_string()
+}
+
 struct CommonMarkFormatter<'a, 'o, 'c, 'w> {
     node: Node<'a>,
     options: &'o Options<'c>,

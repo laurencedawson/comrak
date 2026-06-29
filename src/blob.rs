@@ -202,6 +202,37 @@ impl BlobWriter {
         self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
     }
 
+    /// Emit a TABLE span whose cells are packed into `url_data` and addressed by
+    /// `data = offset + 1` (0 stays reserved for a legacy/no-table placeholder).
+    /// Payload: `[ (rows<<16 | cols):u32 ] [ (len:u16)(utf8) x rows*cols ]`, cells
+    /// row-major as inline markdown for the UI to re-parse. Self-delimiting, so no
+    /// length cap.
+    pub(crate) fn span_table<'a>(&mut self, start: usize, node: &'a AstNode<'a>) {
+        if start >= self.len { return; }
+        let cols = match &node.data.borrow().value {
+            Table(nt) => nt.num_columns.min(0xFFFF),
+            _ => return,
+        };
+        let opts = crate::Options::default();
+        let rows = (node.children().count() as u32).min(0xFFFF);
+        let offset = self.url_data.len();
+        let packed = (rows << 16) | cols as u32;
+        self.url_data.extend_from_slice(&packed.to_le_bytes());
+        for row in node.children().take(rows as usize) {
+            // Each row writes exactly `cols` cells: its own, padded with empties.
+            let cells = row.children()
+                .map(|c| crate::cm::format_table_cell_content(c, &opts))
+                .chain(std::iter::repeat_with(String::new))
+                .take(cols);
+            for s in cells {
+                let len = s.len().min(u16::MAX as usize);
+                self.url_data.extend_from_slice(&(len as u16).to_le_bytes());
+                self.url_data.extend_from_slice(&s.as_bytes()[..len]);
+            }
+        }
+        self.spans.extend_from_slice(&[start as i32, self.len as i32, TABLE, (offset as i32) + 1]);
+    }
+
     fn emit_image(&mut self, url: &ResolvedUrl) {
         if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
@@ -362,7 +393,7 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
 
         Table(_) => {
             out.write_text("View Table");
-            out.span(TABLE, start);
+            out.span_table(start, node);
             out.nl(2);
         }
 
