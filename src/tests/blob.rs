@@ -1140,6 +1140,56 @@ mod block {
         assert_eq!(cells, vec!["a", "b", "1", "2"]);
     }
 
+    /// Body cells keep their inline markdown verbatim (emphasis, code, links),
+    /// so the host can re-parse and render each cell exactly as a post body.
+    #[test]
+    fn table_cell_inline_markdown_roundtrips() {
+        let result = render_test("| h |\n|---|\n| **bold** and `code` and [l](https://e.com) |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!(cells[1], "**bold** and `code` and [l](https://e.com)");
+    }
+
+    /// A cell whose text starts with a block marker is escaped, so re-parsing the
+    /// cell as a standalone document keeps it inline text rather than promoting it
+    /// to a list / heading / blockquote.
+    #[test]
+    fn table_cell_escapes_leading_block_markers() {
+        for (md, expected) in [
+            ("| h |\n|---|\n| 1. foo |", "1\\. foo"),
+            ("| h |\n|---|\n| # foo |", "\\# foo"),
+            ("| h |\n|---|\n| - foo |", "\\- foo"),
+            ("| h |\n|---|\n| > foo |", "\\> foo"),
+        ] {
+            let result = render_test(md);
+            let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+            let (_, _, cells) = decode_table(&result.url_data, span.data);
+            assert_eq!(cells[1], expected, "input {md:?}");
+        }
+    }
+
+    /// Extension inline syntax round-trips even though the cell encoder runs with
+    /// default Options: the formatter emits by node type, and the host re-parses
+    /// with the extensions enabled.
+    #[test]
+    fn table_cell_extension_syntax_roundtrips() {
+        let result = render_test("| h |\n|---|\n| ~~struck~~ |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!(cells[1], "~~struck~~");
+    }
+
+    /// A body row shorter than the header is padded with empty cells to the
+    /// column count, so every row contributes exactly `cols` entries.
+    #[test]
+    fn table_short_row_padded_to_columns() {
+        let result = render_test("| a | b |\n|---|---|\n| only |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (rows, cols, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!((rows, cols), (2, 2));
+        assert_eq!(cells, vec!["a", "b", "only", ""]);
+    }
+
     /// `---` produces HRULE span with object-replacement char.
     #[test]
     fn thematic_break() {
