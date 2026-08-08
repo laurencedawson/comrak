@@ -52,17 +52,11 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     no_link_openers: bool,
     char_tables: &'o CharTables,
     string_arena: Option<&'a typed_arena::Arena<String>>,
+    /// `input` at its full `'a` lifetime when borrowed (zerocopy mode);
+    /// cached at construction so hot paths avoid re-matching the Cow.
+    zerocopy_input: Option<&'a str>,
     /// Last plain Text node appended; sole merge target for `try_widen_last_text`.
     last_plain_text: Option<Node<'a>>,
-}
-
-/// Extend a borrowed `&'a str` from a string_arena to `'static` for NodeValue::Text.
-///
-/// SAFETY: the string_arena that backs `s` has lifetime `'a` — the same lifetime as the
-/// node arena. `parse_document_zerocopy` owns both arenas on the stack, so pooled strings
-/// live at least as long as every node that references them.
-unsafe fn extend_lifetime(s: &str) -> &'static str {
-    unsafe { std::mem::transmute::<&str, &'static str>(s) }
 }
 
 /// Pre-computed character lookup tables derived from Options.
@@ -167,6 +161,10 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         char_tables: &'o CharTables,
         string_arena: Option<&'a typed_arena::Arena<String>>,
     ) -> Self {
+        let input_ref = match input {
+            Cow::Borrowed(s) => Some(s),
+            Cow::Owned(_) => None,
+        };
         Subject {
             arena,
             options,
@@ -188,6 +186,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             no_link_openers: true,
             char_tables,
             string_arena,
+            zerocopy_input: input_ref,
             last_plain_text: None,
         }
     }
@@ -196,23 +195,44 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         matches!(self.input, Cow::Borrowed(_))
     }
 
-    fn text_cow(&self, s: &str) -> Cow<'static, str> {
-        if self.is_zerocopy() {
-            Cow::Borrowed(unsafe { extend_lifetime(s) })
-        } else {
-            s.to_string().into()
+    /// The input at its full `'a` lifetime when borrowed (zerocopy mode:
+    /// from the caller's md or the string arena), else None.
+    #[inline]
+    fn input_ref(&self) -> Option<&'a str> {
+        self.zerocopy_input
+    }
+
+    /// Re-derive `s` — a subslice of `self.input` — at the full `'a`
+    /// lifetime, by offset within the borrowed input. None when the input
+    /// is owned or `s` isn't inside it.
+    #[inline]
+    fn promote_str(&self, s: &str) -> Option<&'a str> {
+        let base = self.input_ref()?;
+        let off = (s.as_ptr() as usize).wrapping_sub(base.as_ptr() as usize);
+        base.get(off..off.wrapping_add(s.len()))
+    }
+
+    /// `self.input[r]` at the full `'a` lifetime; None when the input is
+    /// owned (non-zerocopy). Offset-known fast path — no pointer math.
+    #[inline]
+    fn input_slice(&self, r: std::ops::Range<usize>) -> Option<&'a str> {
+        self.input_ref().map(|b| &b[r])
+    }
+
+    #[inline]
+    fn text_cow(&self, s: &str) -> Cow<'a, str> {
+        match self.promote_str(s) {
+            Some(p) => Cow::Borrowed(p),
+            None => Cow::Owned(s.to_string()),
         }
     }
 
-    /// Promote a parse-temporary `Cow<'_, str>` to `Cow<'static, str>`.
-    /// In zerocopy mode the borrow points into the input arena (which
-    /// outlives the AST) so we keep the borrow; otherwise the borrow
-    /// is tied to a heap String that drops at end of `parse_inlines`,
-    /// so we must clone.
-    fn promote_cow(&self, c: Cow<'_, str>) -> Cow<'static, str> {
+    /// Promote a parse-temporary `Cow<'_, str>`: borrows that live inside
+    /// the `'a` input keep their borrow; anything else is cloned.
+    #[inline]
+    fn promote_cow(&self, c: Cow<'_, str>) -> Cow<'a, str> {
         match c {
-            Cow::Borrowed(s) if self.is_zerocopy() => Cow::Borrowed(unsafe { extend_lifetime(s) }),
-            Cow::Borrowed(s) => Cow::Owned(s.to_string()),
+            Cow::Borrowed(s) => self.text_cow(s),
             Cow::Owned(s) => Cow::Owned(s),
         }
     }
@@ -271,15 +291,17 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         if s.as_bytes().as_ptr_range().end != new.as_ptr() {
             return false;
         }
-        // SAFETY: contiguous byte ranges of the same input buffer, joined on
-        // char boundaries; same arena lifetime `extend_lifetime` already relies on.
-        let widened = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                s.as_ptr(),
-                s.len() + new.len(),
-            ))
+        // Contiguous subslices of the borrowed input: re-derive the joined
+        // range at 'a by offset.
+        let total = s.len() + new.len();
+        let Some(widened) = self.promote_str(s).and_then(|p| {
+            let base = self.input_ref()?;
+            let off = (p.as_ptr() as usize).wrapping_sub(base.as_ptr() as usize);
+            base.get(off..off + total)
+        }) else {
+            return false;
         };
-        ast.value = NodeValue::Text(Cow::Borrowed(unsafe { extend_lifetime(widened) }));
+        ast.value = NodeValue::Text(Cow::Borrowed(widened));
         ast.sourcepos.end.column =
             usize::try_from(endpos as isize + self.column_offset + self.line_offset as isize)
                 .unwrap();
@@ -299,10 +321,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         if self.try_widen_last_text(parent, startpos, endpos) {
             return None;
         }
-        let text: Cow<'static, str> = if self.is_zerocopy() {
-            Cow::Borrowed(unsafe { extend_lifetime(&self.input[startpos..endpos]) })
-        } else {
-            fallback.into()
+        let text: Cow<'a, str> = match self.input_slice(startpos..endpos) {
+            Some(p) => Cow::Borrowed(p),
+            None => fallback.into(),
         };
         let inl = self.make_inline(NodeValue::Text(text), startpos, endpos - 1);
         self.last_plain_text = Some(inl);
@@ -324,15 +345,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             start_column,
             end_column,
         );
-        let unescaped = entity::unescape_html(url);
-        let text: Cow<'static, str> = if self.is_zerocopy() {
-            match unescaped {
-                Cow::Borrowed(s) => Cow::Borrowed(unsafe { extend_lifetime(s) }),
-                Cow::Owned(s) => s.into(),
-            }
-        } else {
-            unescaped.into_owned().into()
-        };
+        let text = self.promote_cow(entity::unescape_html(url));
         inl.append_new(self.make_inline(NodeValue::Text(text), start_column + 1, end_column - 1));
         inl
     }
@@ -530,13 +543,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 {
                     None
                 } else {
-                    let text: Cow<'static, str> = if zerocopy {
-                        match contents {
-                            Cow::Borrowed(s) => Cow::Borrowed(unsafe { extend_lifetime(s) }),
-                            Cow::Owned(s) => s.into(),
-                        }
-                    } else {
-                        contents.into_owned().into()
+                    let text = match self.input_slice(startpos..endpos) {
+                        Some(p) => Cow::Borrowed(p),
+                        None => contents.into_owned().into(),
                     };
                     let inl = self.make_inline(NodeValue::Text(text), startpos, endpos - 1);
                     self.last_plain_text = Some(inl);
@@ -592,16 +601,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
         let buf = &self.input[startpos + openticks..endpos - openticks];
         let buf = strings::normalize_code(buf);
-        // Promote the Cow's lifetime to 'static: in zerocopy mode the
-        // borrow points into the string arena that outlives the AST;
-        // owned strings carry their own backing. Skips a String alloc
-        // per clean code span (the common case — heavy-inline drops
-        // ~50 String allocs/parse).
-        let literal: Cow<'static, str> = match buf {
-            Cow::Borrowed(s) if self.is_zerocopy() => Cow::Borrowed(unsafe { extend_lifetime(s) }),
-            Cow::Borrowed(s) => Cow::Owned(s.to_string()),
-            Cow::Owned(s) => Cow::Owned(s),
-        };
+        // Keeping the borrow skips a String alloc per clean code span (the
+        // common case — heavy-inline drops ~50 String allocs/parse).
+        let literal = self.promote_cow(buf);
         let code = NodeCode {
             num_backticks: openticks,
             literal,
@@ -634,7 +636,17 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             self.scanner.pos += 1;
 
             let inline_text = self.make_inline(
-                NodeValue::Text(self.text_cow(&self.input[self.scanner.pos - 1..self.scanner.pos])),
+                NodeValue::Text(
+                    self.input_slice(self.scanner.pos - 1..self.scanner.pos)
+                        .map_or_else(
+                            || {
+                                self.input[self.scanner.pos - 1..self.scanner.pos]
+                                    .to_string()
+                                    .into()
+                            },
+                            Cow::Borrowed,
+                        ),
+                ),
                 self.scanner.pos - 1,
                 self.scanner.pos - 1,
             );
@@ -935,7 +947,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     fn handle_delim(&mut self, b: u8) -> Node<'a> {
         let (numdelims, can_open, can_close) = self.scan_delims(b);
 
-        let contents: Cow<'static, str> = if b == b'\'' && self.options.parse.smart {
+        let contents: Cow<'a, str> = if b == b'\'' && self.options.parse.smart {
             "’".into()
         } else if b == b'"' && self.options.parse.smart {
             if can_close {
@@ -943,13 +955,16 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             } else {
                 "“".into()
             }
-        } else if self.is_zerocopy() {
-            let s = &self.input[self.scanner.pos - numdelims..self.scanner.pos];
-            Cow::Borrowed(unsafe { extend_lifetime(s) })
         } else {
-            self.input[self.scanner.pos - numdelims..self.scanner.pos]
-                .to_string()
-                .into()
+            self.input_slice(self.scanner.pos - numdelims..self.scanner.pos)
+                .map_or_else(
+                    || {
+                        self.input[self.scanner.pos - numdelims..self.scanner.pos]
+                            .to_string()
+                            .into()
+                    },
+                    Cow::Borrowed,
+                )
         };
         let inl = self.make_inline(
             NodeValue::Text(contents),
@@ -2232,8 +2247,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     fn close_bracket_match(
         &mut self,
         is_image: bool,
-        url: Cow<'static, str>,
-        title: Cow<'static, str>,
+        url: Cow<'a, str>,
+        title: Cow<'a, str>,
         source_end_pos: usize,
         #[cfg_attr(not(feature = "attributes"), allow(unused))] parent_line_offsets: &[usize],
     ) {
