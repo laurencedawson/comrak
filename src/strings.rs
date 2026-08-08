@@ -545,7 +545,7 @@ pub fn phoenix_inline_expression(s: &str) -> Option<usize> {
     find_matching_brace(s, 1)
 }
 
-fn is_invisible(c: char) -> bool {
+pub(crate) fn is_invisible(c: char) -> bool {
     matches!(c,
         // no rendering use in markdown
         '\u{200b}'                // Zero Width Space

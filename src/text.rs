@@ -65,3 +65,12 @@ pub fn prefer_ascii(s: &str) -> Cow<'_, str> {
     }
     Cow::Owned(out)
 }
+
+/// True if `s` contains a character `parse.strip_invisible` would remove.
+/// Callers that gate parsing on content (a needs-parse fast path) must admit
+/// such input, or the strip never runs on exactly the text it exists for.
+#[inline]
+pub fn contains_invisible(s: &str) -> bool {
+    // Every stripped char is multi-byte; pure-ASCII text skips the char walk.
+    s.bytes().any(|b| b >= 0xC2) && s.contains(crate::strings::is_invisible)
+}
