@@ -26,7 +26,7 @@ mod span_types;
 // can reference span type ids without reaching into `span_types` directly.
 pub(crate) use span_types::*;
 
-type AstNode<'a> = Node<'a, RefCell<Ast>>;
+type AstNode<'a> = Node<'a, RefCell<Ast<'a>>>;
 
 const HEADER_SIZE: usize = 8;
 const MAX_URL_LEN: usize = 4095;

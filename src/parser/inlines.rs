@@ -221,7 +221,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     // Constructors //
     //////////////////
 
-    fn make_inline(&self, value: NodeValue, start_column: usize, end_column: usize) -> Node<'a> {
+    fn make_inline(
+        &self,
+        value: NodeValue<'a>,
+        start_column: usize,
+        end_column: usize,
+    ) -> Node<'a> {
         let start_column =
             start_column as isize + 1 + self.column_offset + self.line_offset as isize;
         let end_column = end_column as isize + 1 + self.column_offset + self.line_offset as isize;
@@ -2860,7 +2865,7 @@ fn set_emph_delim_text(inl: Node<'_>, delim_byte: u8, len: usize) {
 
 pub(crate) fn make_inline<'a>(
     arena: &'a Arena<'a>,
-    value: NodeValue,
+    value: NodeValue<'a>,
     sourcepos: Sourcepos,
 ) -> Node<'a> {
     let ast = Ast {

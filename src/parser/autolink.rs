@@ -93,7 +93,7 @@ fn lemmy_mention_match<'a>(
 pub(crate) fn process_lemmy_mentions<'a>(
     arena: &'a Arena<'a>,
     node: Node<'a>,
-    contents: &mut Cow<'static, str>,
+    contents: &mut Cow<'a, str>,
     sourcepos: &mut Sourcepos,
     spx: &Spx,
     base: usize,
@@ -176,7 +176,7 @@ pub(crate) fn process_lemmy_mentions<'a>(
 pub(crate) fn process_email_autolinks<'a>(
     arena: &'a Arena<'a>,
     node: Node<'a>,
-    contents: &mut Cow<'static, str>,
+    contents: &mut Cow<'a, str>,
     relaxed_autolinks: bool,
     sourcepos: &mut Sourcepos,
     spx: &Spx,

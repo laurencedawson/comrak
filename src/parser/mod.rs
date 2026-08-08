@@ -63,6 +63,30 @@ pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> 
 ///
 /// Arena capacities are sized from `md.len()` via [`arena_capacities`]; the
 /// caller doesn't need to plumb those through.
+///
+/// The closure's return type cannot borrow from the AST — the arenas drop
+/// when this function returns, and the higher-ranked closure lifetime makes
+/// leaking a compile error:
+///
+/// ```compile_fail
+/// # use comrak::{parse_document_zerocopy, Options};
+/// let opts = Options::default();
+/// // Error: `NodeValue<'a>` cannot outlive the closure.
+/// let v = parse_document_zerocopy("`x`", &opts, |root| {
+///     root.first_child().unwrap().data().value.clone()
+/// });
+/// ```
+///
+/// Return owned data instead:
+///
+/// ```
+/// # use comrak::{parse_document_zerocopy, Options};
+/// let opts = Options::default();
+/// let n = parse_document_zerocopy("some *markdown*", &opts, |root| {
+///     root.descendants().count()
+/// });
+/// assert!(n > 1);
+/// ```
 pub fn parse_document_zerocopy<F, R>(md: &str, options: &Options, f: F) -> R
 where
     F: for<'a> FnOnce(Node<'a>) -> R,
@@ -1979,7 +2003,7 @@ where
     fn add_child(
         &mut self,
         mut parent: Node<'a>,
-        value: NodeValue,
+        value: NodeValue<'a>,
         start_column: usize,
     ) -> Node<'a> {
         while !parent.can_contain_type(&value) {
@@ -2763,7 +2787,7 @@ where
         &mut self,
         node: Node<'a>,
         mut sourcepos: Sourcepos,
-        root: &mut Cow<'static, str>,
+        root: &mut Cow<'a, str>,
         in_bracket_context: bool,
         spxv_buf: &mut VecDeque<(Sourcepos, usize)>,
     ) -> Sourcepos {
@@ -2821,7 +2845,7 @@ where
     fn postprocess_text_node_with_context_inner(
         &mut self,
         node: Node<'a>,
-        text: &mut Cow<'static, str>,
+        text: &mut Cow<'a, str>,
         sourcepos: &mut Sourcepos,
         spxv: &mut VecDeque<(Sourcepos, usize)>,
         in_bracket_context: bool,
@@ -2864,7 +2888,7 @@ where
     fn process_tasklist(
         &mut self,
         node: Node<'a>,
-        text: &mut Cow<'static, str>,
+        text: &mut Cow<'a, str>,
         sourcepos: &mut Sourcepos,
         spx: &Spx,
     ) -> usize {

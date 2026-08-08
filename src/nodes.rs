@@ -31,7 +31,7 @@ macro_rules! node_matches {
     test,
     strum_discriminants(vis(pub(crate)), derive(strum::VariantArray, Hash))
 )]
-pub enum NodeValue {
+pub enum NodeValue<'a> {
     /// The root of every CommonMark document.  Contains **blocks**.
     Document,
 
@@ -130,7 +130,7 @@ pub enum NodeValue {
 
     /// **Inline**.  [Textual content](https://github.github.com/gfm/#textual-content).  All text
     /// in a document will be contained in a `Text` node.
-    Text(Cow<'static, str>),
+    Text(Cow<'a, str>),
 
     /// **Block**. [Task list item](https://github.github.com/gfm/#task-list-items-extension-).
     /// The value is the symbol that was used in the brackets to mark a task item as checked, or
@@ -146,7 +146,7 @@ pub enum NodeValue {
     LineBreak,
 
     /// **Inline**.  A [code span](https://github.github.com/gfm/#code-spans).
-    Code(NodeCode),
+    Code(NodeCode<'a>),
 
     /// **Inline**.  [Raw HTML](https://github.github.com/gfm/#raw-html) contained inline.
     HtmlInline(String),
@@ -182,10 +182,10 @@ pub enum NodeValue {
 
     /// **Inline**.  A [link](https://github.github.com/gfm/#links) to some URL, with possible
     /// title.
-    Link(Box<NodeLink>),
+    Link(Box<NodeLink<'a>>),
 
     /// **Inline**.  An [image](https://github.github.com/gfm/#images).
-    Image(Box<NodeLink>),
+    Image(Box<NodeLink<'a>>),
 
     /// **Inline**.  A footnote reference.
     FootnoteReference(Box<NodeFootnoteReference>),
@@ -332,7 +332,7 @@ pub struct NodeTaskItem {
 
 /// An inline [code span](https://github.github.com/gfm/#code-spans).
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct NodeCode {
+pub struct NodeCode<'a> {
     /// The number of backticks
     pub num_backticks: usize,
 
@@ -341,29 +341,26 @@ pub struct NodeCode {
     /// they are contained within this structure,
     /// rather than inserted into a child inline of any kind.
     ///
-    /// Stored as `Cow<'static, str>` so the zero-copy parse path can
-    /// borrow directly from the pooled input (most code spans need no
-    /// allocation in that mode); the `'static` lifetime is a safety
-    /// fiction backed by the parser's string arena outliving every node
-    /// that references it (see `Subject::text_cow`).
-    pub literal: Cow<'static, str>,
+    /// Stored as `Cow<'a, str>` so the zero-copy parse path can borrow
+    /// directly from the input or its string arena (most code spans need
+    /// no allocation in that mode).
+    pub literal: Cow<'a, str>,
 }
 
 /// The details of a link's destination, or an image's source.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct NodeLink {
+pub struct NodeLink<'a> {
     /// The URL for the link destination or image source.
     ///
-    /// Stored as `Cow<'static, str>`; the zero-copy parse path borrows
-    /// directly from the input arena. See [`NodeCode::literal`] for the
-    /// soundness contract behind the `'static` lifetime.
-    pub url: Cow<'static, str>,
+    /// Stored as `Cow<'a, str>`; the zero-copy parse path borrows
+    /// directly from the input or its string arena.
+    pub url: Cow<'a, str>,
 
     /// The title for the link or image.
     ///
     /// Note this field is used for the `title` attribute by the HTML formatter even for images;
     /// `alt` text is supplied in the image inline text.
-    pub title: Cow<'static, str>,
+    pub title: Cow<'a, str>,
 }
 
 /// The details of a wikilink's destination.
@@ -689,7 +686,7 @@ pub struct Attributes {
     pub pairs: Vec<(String, String)>,
 }
 
-impl NodeValue {
+impl<'a> NodeValue<'a> {
     /// Indicates whether this node is a block node or inline node.
     pub fn block(&self) -> bool {
         match *self {
@@ -745,7 +742,7 @@ impl NodeValue {
     /// Return a mutable reference to the text of a `Text` inline, if this node is one.
     ///
     /// Convenience method.
-    pub fn text_mut(&mut self) -> Option<&mut Cow<'static, str>> {
+    pub fn text_mut(&mut self) -> Option<&mut Cow<'a, str>> {
         match *self {
             NodeValue::Text(ref mut t) => Some(t),
             _ => None,
@@ -830,9 +827,9 @@ impl NodeValue {
 /// The struct contains metadata about the node's position in the original document, and the core
 /// enum, `NodeValue`.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Ast {
+pub struct Ast<'a> {
     /// The node value itself.
-    pub value: NodeValue,
+    pub value: NodeValue<'a>,
 
     /// The positions in the source document this node comes from.
     pub sourcepos: Sourcepos,
@@ -857,7 +854,7 @@ pub(crate) struct BlockContent {
     pub line_offsets: smallvec::SmallVec<[usize; 4]>,
 }
 
-impl Ast {
+impl<'a> Ast<'a> {
     #[cfg(feature = "phoenix_heex")]
     pub(crate) fn content(&self) -> &str {
         match &self.block {
@@ -897,7 +894,7 @@ impl Ast {
     }
 }
 
-impl std::fmt::Debug for Ast {
+impl std::fmt::Debug for Ast<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<{:?} ({})>", self.value, self.sourcepos)
     }
@@ -1005,12 +1002,12 @@ impl LineColumn {
     }
 }
 
-impl Ast {
+impl<'a> Ast<'a> {
     /// Create a new AST node with the given value and starting sourcepos. The
     /// end column is set to zero; it is expected this will be set manually
     /// or later in the parse.  Use [`Ast::new_with_sourcepos`] if you have full
     /// sourcepos.
-    pub fn new(value: NodeValue, start: LineColumn) -> Self {
+    pub fn new(value: NodeValue<'a>, start: LineColumn) -> Self {
         Ast {
             value,
             block: None,
@@ -1024,7 +1021,7 @@ impl Ast {
     }
 
     /// Create a new AST node with the given value and sourcepos.
-    pub fn new_with_sourcepos(value: NodeValue, sourcepos: Sourcepos) -> Self {
+    pub fn new_with_sourcepos(value: NodeValue<'a>, sourcepos: Sourcepos) -> Self {
         Ast {
             value,
             block: None,
@@ -1070,22 +1067,22 @@ impl Ast {
 /// # let arena = Arena::new();
 /// let node_in_arena = arena.alloc(NodeValue::Document.into());
 /// ```
-pub type AstNode<'a> = arena_tree::Node<'a, RefCell<Ast>>;
+pub type AstNode<'a> = arena_tree::Node<'a, RefCell<Ast<'a>>>;
 
 /// A reference to a node in an arena.  Unless you are manually creating nodes
 /// before the arena, this is the type you will see most often.
 pub type Node<'a> = &'a AstNode<'a>;
 
-impl From<NodeValue> for AstNode<'_> {
+impl<'a> From<NodeValue<'a>> for AstNode<'a> {
     /// Create a new AST node with the given value. The sourcepos is set to (0,0)-(0,0).
-    fn from(value: NodeValue) -> Self {
+    fn from(value: NodeValue<'a>) -> Self {
         arena_tree::Node::new(RefCell::new(Ast::new(value, LineColumn::default())))
     }
 }
 
-impl From<Ast> for AstNode<'_> {
+impl<'a> From<Ast<'a>> for AstNode<'a> {
     /// Create a new AST node with the given Ast.
-    fn from(ast: Ast) -> Self {
+    fn from(ast: Ast<'a>) -> Self {
         arena_tree::Node::new(RefCell::new(ast))
     }
 }
@@ -1103,7 +1100,7 @@ pub enum ValidationError<'a> {
     },
 }
 
-impl<'a> arena_tree::Node<'a, RefCell<Ast>> {
+impl<'a> arena_tree::Node<'a, RefCell<Ast<'a>>> {
     /// Returns true if the given node can contain a node with the given value.
     pub fn can_contain_type(&self, child: &NodeValue) -> bool {
         match *child {
