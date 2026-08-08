@@ -74,6 +74,9 @@ impl<T> Arena<T> {
     /// Grows `current` by moving it into `rest` and allocating a fresh
     /// larger `Vec` when full — never reallocates `current` in place, so
     /// prior `&T`/`&mut T` references stay valid.
+    // Handing out `&mut T` from `&self` is the arena contract: every call yields
+    // a slot no other reference can reach. See the module-level Soundness notes.
+    #[allow(clippy::mut_from_ref)]
     #[inline]
     pub fn alloc(&self, value: T) -> &mut T {
         // Stage 1: take a scoped `&mut ChunkList` borrow just long enough to
@@ -103,6 +106,17 @@ impl<T> Arena<T> {
         // callers hold live `&mut T` from earlier `alloc()` calls.
         let chunks = unsafe { &*self.chunks.get() };
         chunks.current.len() + chunks.rest.iter().map(|c| c.len()).sum::<usize>()
+    }
+
+    /// True while nothing has been allocated.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<T> Default for Arena<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

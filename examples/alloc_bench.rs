@@ -130,7 +130,10 @@ fn main() {
     opts.extension.subscript = true;
     opts.extension.spoiler = true;
     opts.extension.tasklist = true;
-    opts.extension.shortcodes = true;
+    #[cfg(feature = "shortcodes")]
+    {
+        opts.extension.shortcodes = true;
+    }
     opts.extension.footnotes = true;
     opts.parse.smart = true;
 

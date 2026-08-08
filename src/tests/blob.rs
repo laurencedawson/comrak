@@ -22,7 +22,10 @@ fn test_opts() -> Options<'static> {
     opts.extension.superscript = true;
     opts.extension.subscript = true;
     opts.extension.tasklist = true;
-    opts.extension.shortcodes = true;
+    #[cfg(feature = "shortcodes")]
+    {
+        opts.extension.shortcodes = true;
+    }
     opts.extension.footnotes = true;
     opts.extension.lemmy_mention = true;
     opts.extension.lemmy_spoiler = true;
@@ -575,6 +578,7 @@ mod format {
     /// in the main writer via `append_footnotes`, after the visit. An emoji
     /// shortcode inside one must still clear is_ascii on the final blob.
     #[test]
+    #[cfg(feature = "shortcodes")]
     fn flags_ascii_input_footnote_shortcode_clears_is_ascii() {
         let blob = render_blob_full("a[^1]\n\n[^1]: note with :joy: emoji");
         assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
@@ -585,6 +589,7 @@ mod format {
     /// re-render fallback must catch, with offsets where UTF-16 units
     /// (surrogate pair = 2) differ from both bytes (4) and chars (1).
     #[test]
+    #[cfg(feature = "shortcodes")]
     fn flags_ascii_input_inline_shortcode_clears_is_ascii() {
         let blob = render_blob_full("happy :joy: time **bold**");
         assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
@@ -684,6 +689,7 @@ mod inline {
 
     /// Emoji shortcodes resolve to Unicode; unknown shortcodes pass through.
     #[test]
+    #[cfg(feature = "shortcodes")]
     fn shortcodes() {
         let out = render_test("Hello :smile: world");
         assert_eq!(out.text(), "Hello 😄 world");

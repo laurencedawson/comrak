@@ -44,7 +44,7 @@ fn lemmy_mention_match<'a>(
         name_end += 1;
     }
     let name_len = name_end - (i + 1);
-    if name_len < 3 || name_len > 20 || bytes.get(name_end) != Some(&b'@') {
+    if !(3..=20).contains(&name_len) || bytes.get(name_end) != Some(&b'@') {
         return None;
     }
 

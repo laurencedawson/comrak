@@ -198,11 +198,8 @@ fn expand_youtube_short(url: &str) -> Option<String> {
 
 fn normalize_mobile_youtube(url: &str) -> Option<String> {
     let rest = strip_scheme(url)?;
-    if rest.starts_with("m.youtube.com/") {
-        Some(format!("https://www.youtube.com/{}", &rest[14..]))
-    } else {
-        None
-    }
+    rest.strip_prefix("m.youtube.com/")
+        .map(|path| format!("https://www.youtube.com/{path}"))
 }
 
 fn strip_scheme(url: &str) -> Option<&str> {

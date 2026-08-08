@@ -480,6 +480,7 @@ pub(crate) fn visit<'a>(
         }
 
         Text(t) => out.write_text(&prefer_ascii(&collapse_whitespace(t))),
+        #[cfg(feature = "shortcodes")]
         ShortCode(sc) => out.write_text(&sc.emoji),
         Code(c) => {
             out.write_text(&c.literal);

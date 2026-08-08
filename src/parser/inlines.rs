@@ -204,7 +204,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     /// outlives the AST) so we keep the borrow; otherwise the borrow
     /// is tied to a heap String that drops at end of `parse_inlines`,
     /// so we must clone.
-    fn into_static_cow(&self, c: Cow<'_, str>) -> Cow<'static, str> {
+    fn promote_cow(&self, c: Cow<'_, str>) -> Cow<'static, str> {
         match c {
             Cow::Borrowed(s) if self.is_zerocopy() => Cow::Borrowed(unsafe { extend_lifetime(s) }),
             Cow::Borrowed(s) => Cow::Owned(s.to_string()),
@@ -945,10 +945,10 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         // Longer runs: build once without intermediate String::repeat allocations.
         let mut buf = String::with_capacity(3 * (ems + ens));
         for _ in 0..ems {
-            buf.push_str("—");
+            buf.push('—');
         }
         for _ in 0..ens {
-            buf.push_str("–");
+            buf.push('–');
         }
         self.make_inline(NodeValue::Text(buf.into()), start, self.scanner.pos - 1)
     }
@@ -1037,7 +1037,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             (b',', 1) => ",",
             _ => {
                 // Fallback for unexpected ch/capped combos; extremely rare.
-                let s: String = std::iter::repeat(ch as char).take(capped).collect();
+                let s: String = std::iter::repeat_n(ch as char, capped).collect();
                 return self.make_inline(
                     NodeValue::Text(s.into()),
                     start,
@@ -1940,8 +1940,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                         self.scanner.pos = endall + 1;
                         let url = strings::clean_url(url);
                         let title = strings::clean_title(&self.input[starttitle..endtitle]);
-                        let url = self.into_static_cow(url);
-                        let title = self.into_static_cow(title);
+                        let url = self.promote_cow(url);
+                        let title = self.promote_cow(title);
                         self.close_bracket_match(is_image, url, title, source_end_pos);
                         return None;
                     } else {
@@ -2685,7 +2685,7 @@ pub(crate) fn manual_scan_link_url_2(input: &str) -> Option<(&str, usize)> {
 /// Replace an emphasis delimiter text node's content with a static &str of the
 /// requested length, avoiding the String allocation that Cow::to_mut() forces.
 /// Falls back to to_mut().truncate() for unusual byte lengths.
-fn set_emph_delim_text<'a>(inl: Node<'a>, delim_byte: u8, len: usize) {
+fn set_emph_delim_text(inl: Node<'_>, delim_byte: u8, len: usize) {
     let mut data = inl.data_mut();
     let text = data.value.text_mut().unwrap();
     let s: &'static str = match (delim_byte, len) {
