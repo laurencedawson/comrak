@@ -1,5 +1,14 @@
+use memchr::memmem::Finder;
 use std::borrow::Cow;
 use std::ops::Deref;
+use std::sync::LazyLock;
+
+// These gates run once per rendered link. `str::contains`/`find` with a
+// multi-byte pattern rebuilds its two-way searcher on every call, which
+// dominates resolve_url in profiles; a precompiled Finder pays that once.
+static API_V: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new("/api/v"));
+static PICTRS_IMAGE: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new("/pictrs/image/"));
+static SCHEME_SEP: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new("://"));
 
 /// A URL that has been through [`resolve_url`]. Its only constructor is
 /// `resolve_url`, so holding one is proof the URL was finalized exactly once.
@@ -103,7 +112,7 @@ const PICTRS_PREVIEW_WIDTH: u32 = 400;
 /// formats are left untouched because the webp transcode strips animation or reduces a
 /// video to a still frame. Non-pict-rs URLs pass through unchanged (zero-copy).
 fn pictrs_preview(url: &str) -> Cow<'_, str> {
-    if !url.contains("/pictrs/image/") {
+    if PICTRS_IMAGE.find(url.as_bytes()).is_none() {
         return Cow::Borrowed(url);
     }
     let non_static = path_ext(url).is_some_and(|e| {
@@ -164,7 +173,7 @@ fn unwrap_discord_image(url: &str) -> Option<String> {
 }
 
 fn unwrap_proxy(url: &str) -> Cow<'_, str> {
-    if !url.contains("/api/v") {
+    if API_V.find(url.as_bytes()).is_none() {
         return Cow::Borrowed(url);
     }
     if !(url.contains("/api/v3/image_proxy") || url.contains("/api/v4/image/proxy")) {
@@ -248,7 +257,7 @@ fn query_param(url: &str, param: &str) -> Option<String> {
 /// links in practice — avoiding an allocation per link render. Strips a
 /// leading `www.` prefix; returns `None` when scheme or host is missing.
 pub fn extract_domain(url: &str) -> Option<Cow<'_, str>> {
-    let start = url.find("://")? + 3;
+    let start = SCHEME_SEP.find(url.as_bytes())? + 3;
     let end = url[start..]
         .find('/')
         .or_else(|| url[start..].find('?'))
