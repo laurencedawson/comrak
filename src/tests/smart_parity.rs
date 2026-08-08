@@ -65,7 +65,14 @@ fn span_records(blob: &[u8]) -> Vec<[i32; 4]> {
     (0..count)
         .map(|i| {
             let p = base + i * 16;
-            let f = |o: usize| i32::from_le_bytes([blob[p + o], blob[p + o + 1], blob[p + o + 2], blob[p + o + 3]]);
+            let f = |o: usize| {
+                i32::from_le_bytes([
+                    blob[p + o],
+                    blob[p + o + 1],
+                    blob[p + o + 2],
+                    blob[p + o + 3],
+                ])
+            };
             [f(0), f(4), f(8), f(12)]
         })
         .collect()
@@ -84,7 +91,10 @@ fn span_url(blob: &[u8], data: i32) -> &str {
 }
 
 fn first_url_of_type(blob: &[u8], typ: i32) -> String {
-    let rec = span_records(blob).into_iter().find(|r| r[2] == typ).expect("span type not found");
+    let rec = span_records(blob)
+        .into_iter()
+        .find(|r| r[2] == typ)
+        .expect("span type not found");
     span_url(blob, rec[3]).to_string()
 }
 
@@ -94,7 +104,10 @@ fn has_span_type(blob: &[u8], typ: i32) -> bool {
 
 /// Row-major cell markdown of the first TABLE span's payload.
 fn table_cells(blob: &[u8]) -> Vec<String> {
-    let rec = span_records(blob).into_iter().find(|r| r[2] == TABLE).expect("no TABLE span");
+    let rec = span_records(blob)
+        .into_iter()
+        .find(|r| r[2] == TABLE)
+        .expect("no TABLE span");
     let mut p = url_data_offset(blob) + (rec[3] - 1) as usize;
     let packed = u32::from_le_bytes([blob[p], blob[p + 1], blob[p + 2], blob[p + 3]]);
     p += 4;
@@ -172,7 +185,10 @@ mod invariant {
     #[test]
     fn symbols_become_typographic_and_clear_ascii() {
         let b = render("(c) (C) (r) (tm) (TM) 5 +- 2");
-        assert_eq!(text(&b), "\u{a9} \u{a9} \u{ae} \u{2122} \u{2122} 5 \u{b1} 2");
+        assert_eq!(
+            text(&b),
+            "\u{a9} \u{a9} \u{ae} \u{2122} \u{2122} 5 \u{b1} 2"
+        );
         assert!(!is_ascii_flag(&b));
     }
 
@@ -301,7 +317,15 @@ mod retired_transforms {
     // pinned separately in `invariant`.
     #[test]
     fn inline_hyphen_runs_render_verbatim() {
-        for md in ["a-b", "a--b", "a---b", "a----b", "a-----b", "x ------ y", "a -- b"] {
+        for md in [
+            "a-b",
+            "a--b",
+            "a---b",
+            "a----b",
+            "a-----b",
+            "x ------ y",
+            "a -- b",
+        ] {
             displays_verbatim(md);
         }
     }
