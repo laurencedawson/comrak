@@ -50,6 +50,7 @@ mod smart_parity;
 mod sourcepos_;
 mod sourcepos_chars;
 mod spoiler;
+mod spx;
 mod strikethrough;
 mod strip_invisible;
 mod strip_leading_breaks;

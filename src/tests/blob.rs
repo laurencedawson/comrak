@@ -574,6 +574,31 @@ mod format {
         assert!(blob_text(&blob).starts_with('\u{00A9}'));
     }
 
+    /// Entities and shortcode emoji write non-ASCII under fast-path UTF-16
+    /// accounting before any symbol substitution; write_prose's in-place ASCII
+    /// downgrade must not skip the re-render that repairs those offsets.
+    #[test]
+    fn flags_symbol_after_entity_keeps_span_offsets() {
+        let blob = render_blob_full("&eacute;x **bold** (c)");
+        let text = blob_text(&blob);
+        assert_eq!(text, "\u{e9}x bold \u{a9}");
+        let bold = text.find("bold").unwrap();
+        let start = text[..bold].encode_utf16().count() as i32;
+        let (s, e, _) = first_span(&blob);
+        assert_eq!((s, e), (start, start + 4));
+    }
+
+    #[cfg(feature = "shortcodes")]
+    #[test]
+    fn flags_symbol_after_emoji_keeps_span_offsets() {
+        let blob = render_blob_full(":smile: **bold** (c)");
+        let text = blob_text(&blob);
+        let bold = text.find("bold").unwrap();
+        let start = text[..bold].encode_utf16().count() as i32;
+        let (s, e, _) = first_span(&blob);
+        assert_eq!((s, e), (start, start + 4));
+    }
+
     /// Footnote definitions render into a temporary writer; their text lands
     /// in the main writer via `append_footnotes`, after the visit. An emoji
     /// shortcode inside one must still clear is_ascii on the final blob.

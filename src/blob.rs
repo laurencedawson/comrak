@@ -179,15 +179,21 @@ impl BlobWriter {
     }
 
     /// `write_text` for author prose (Text nodes): applies the typographic
-    /// symbol substitution. A substitution always introduces non-ASCII, so it
-    /// also drops the ASCII fast path in place — every byte written so far was
-    /// ASCII, meaning the accumulated UTF-16 length is still exact and the
-    /// scanning path keeps it exact from here; no re-render needed.
+    /// symbol substitution. A substitution always introduces non-ASCII; when
+    /// everything written so far is genuinely ASCII the accumulated UTF-16
+    /// length is still exact, so the writer can drop the fast path in place
+    /// and skip the re-render. Decoded entities and shortcode emoji break
+    /// that premise — they write non-ASCII under fast byte-as-unit accounting
+    /// — so with a dirty prefix the flag stays set and the final scan in
+    /// `render_blob` re-renders with exact accounting, as it did before
+    /// symbols moved here.
     fn write_prose(&mut self, s: &str) {
         match typographic_symbols(s) {
             Cow::Borrowed(_) => self.write_text(s),
             Cow::Owned(sym) => {
-                self.fast_path_ascii = false;
+                if !self.fast_path_ascii || self.text().is_ascii() {
+                    self.fast_path_ascii = false;
+                }
                 self.write_text(&sym);
             }
         }
