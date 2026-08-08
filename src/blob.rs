@@ -195,7 +195,9 @@ impl BlobWriter {
         if start >= self.len { return; }
         // Takes only a ResolvedUrl, so no caller can emit a raw URL and none is resolved twice.
         let offset = self.url_data.len();
-        let url_len = url.len().min(MAX_URL_LEN);
+        // Back a capped cut off to a char boundary; the host decodes this slice as UTF-8.
+        let mut url_len = url.len().min(MAX_URL_LEN);
+        while !url.is_char_boundary(url_len) { url_len -= 1; }
         self.url_data.extend_from_slice(&url.as_bytes()[..url_len]);
         self.spans.extend_from_slice(&[start as i32, self.len as i32, t,
             ((offset as i32) << 12) | (url_len as i32)]);
@@ -225,7 +227,9 @@ impl BlobWriter {
                 .chain(std::iter::repeat_with(String::new))
                 .take(cols);
             for s in cells {
-                let len = s.len().min(u16::MAX as usize);
+                // Same char-boundary contract as span_url: cells decode as UTF-8.
+                let mut len = s.len().min(u16::MAX as usize);
+                while !s.is_char_boundary(len) { len -= 1; }
                 self.url_data.extend_from_slice(&(len as u16).to_le_bytes());
                 self.url_data.extend_from_slice(&s.as_bytes()[..len]);
             }

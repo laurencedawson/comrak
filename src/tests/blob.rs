@@ -195,6 +195,17 @@ mod format {
         assert!(span.url.unwrap().len() <= 4095);
     }
 
+    /// The cap cut must land on a char boundary: the host decodes the url_data
+    /// slice as UTF-8, and a split codepoint becomes U+FFFD there.
+    #[test]
+    fn url_truncation_keeps_utf8_boundary() {
+        let md = format!("[click](https://example.com/{})", "€".repeat(2000));
+        let result = render_test(&md);
+        let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
+        let (offset, len) = ((span.data >> 12) as usize, (span.data & 0xFFF) as usize);
+        assert!(std::str::from_utf8(&result.url_data[offset..offset + len]).is_ok());
+    }
+
     /// `clear_pending()` drops unflushed queued newlines.
     #[test]
     fn pending_newlines_dont_materialize_without_text() {
@@ -1177,6 +1188,18 @@ mod block {
         let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
         let (_, _, cells) = decode_table(&result.url_data, span.data);
         assert_eq!(cells[1], "~~struck~~");
+    }
+
+    /// A cell cut at the u16 length cap must not end mid-codepoint: the host
+    /// decodes each cell as UTF-8.
+    #[test]
+    fn table_cell_truncation_keeps_utf8_boundary() {
+        let cell = "é".repeat(33_000); // 66 000 bytes; an unchecked cut at 65 535 splits a char
+        let result = render_test(&format!("| h |\n|---|\n| {cell} |"));
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        assert!(cells[1].len() <= u16::MAX as usize);
+        assert!(cells[1].chars().all(|c| c == 'é'));
     }
 
     /// A body row shorter than the header is padded with empty cells to the

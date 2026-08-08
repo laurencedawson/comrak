@@ -315,7 +315,10 @@ Blob-format bit budgets. All are well above realistic inputs, but worth
 knowing before you feed the renderer adversarial content.
 
 - **URL length**: 4095 bytes max per URL (12-bit `length` field in URL-
-  carrying spans). Longer URLs are silently truncated.
+  carrying spans). Longer URLs are silently truncated, backing off to a
+  UTF-8 char boundary so the host's decode never sees a split codepoint.
+- **Table cell length**: 65 535 bytes max per cell (u16 length prefix).
+  Longer cells are silently truncated, on a char boundary as above.
 - **URL data section**: 1 MiB max total (20-bit `offset` field). An
   overflow here would silently wrap; in practice a document would need
   thousands of distinct long URLs to hit it.
