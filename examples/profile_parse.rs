@@ -48,7 +48,9 @@ fn main() {
         });
     }
     let total_with_blob = start.elapsed() / iterations;
-    let blob_time = total_with_blob - total;
+    // Saturate: scheduler noise can make the parse-only loop measure slower
+    // than parse+blob; a negative difference would panic the subtraction.
+    let blob_time = total_with_blob.checked_sub(total).unwrap_or_default();
     println!(
         "long-doc parse+blob: {:.1} us (blob: {:.1} us)",
         total_with_blob.as_nanos() as f64 / 1000.0,
@@ -87,7 +89,7 @@ fn main() {
             });
         }
         let total = start.elapsed() / iterations;
-        let blob = total - parse;
+        let blob = total.checked_sub(parse).unwrap_or_default();
 
         println!(
             "{:<15} {:>6.1} us {:>6.1} us {:>6.1} us",
