@@ -527,7 +527,7 @@ mod format {
     /// catches it.
     #[test]
     fn flags_unhandled_non_ascii_clears_is_ascii() {
-        let blob = blob_bytes("caf\u{00E9} latte");
+        let blob = blob_bytes("café latte");
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, 0);
     }
