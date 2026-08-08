@@ -268,13 +268,13 @@ where
         // In the raw (JNI blob) path, the caller never inspects sourcepos, so
         // we can skip all the sourcepos fix-up tree walks.
         self.needs_sourcepos = postprocess;
-        let stripped = if self.options.parse.strip_invisible {
+        let stripped = if self.options.parse.sanitize_input {
             strings::strip_invisible(s)
         } else {
             Cow::Borrowed(s)
         };
         let mut s: &str = &stripped;
-        if self.options.parse.strip_leading_breaks {
+        if self.options.parse.sanitize_input {
             s = strings::strip_leading_breaks(s);
         }
 

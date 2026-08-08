@@ -1043,40 +1043,29 @@ pub struct Parse<'c> {
     #[cfg_attr(feature = "bon", builder(default))]
     pub sourcepos_chars: bool,
 
-    /// Strip invisible Unicode characters before parsing.
+    /// Sanitize author input before parsing: strips invisible Unicode
+    /// characters (zero-width spaces, bidi controls, variation selectors —
+    /// preserving ZWJ for emoji sequences and VS16 for emoji presentation)
+    /// and any leading run of whitespace + `\<newline>` hard breaks, which
+    /// user content from Lemmy / Reddit sometimes starts with and which would
+    /// otherwise render an empty paragraph above the first real content.
     ///
-    /// Removes zero-width spaces, bidi controls, variation selectors, and other
-    /// invisible characters that have no rendering use in markdown. Preserves
-    /// ZWJ (`\u{200d}`) for emoji sequences and VS16 (`\u{fe0f}`) for emoji
-    /// presentation.
+    /// Both strips must happen before parsing, not at render time: invisible
+    /// characters would otherwise survive into link destinations and mention
+    /// targets.
     ///
     /// ```rust
     /// # use comrak::{markdown_to_html, Options};
     /// let mut options = Options::default();
-    /// options.parse.strip_invisible = true;
+    /// options.parse.sanitize_input = true;
     ///
     /// assert_eq!(markdown_to_html("he\u{200b}llo\n", &options),
     ///            "<p>hello</p>\n");
-    /// ```
-    #[cfg_attr(feature = "bon", builder(default))]
-    pub strip_invisible: bool,
-
-    /// Strip leading hard line breaks (`\` + newline) before parsing.
-    ///
-    /// User content from Lemmy / Reddit sometimes starts with a stray hard
-    /// line break that produces an empty paragraph above the first real
-    /// content. Strips any leading run of whitespace + `\<newline>` sequences.
-    ///
-    /// ```rust
-    /// # use comrak::{markdown_to_html, Options};
-    /// let mut options = Options::default();
-    /// options.parse.strip_leading_breaks = true;
-    ///
     /// assert_eq!(markdown_to_html("\\\n![alt](url)\n", &options),
     ///            "<p><img src=\"url\" alt=\"alt\" /></p>\n");
     /// ```
     #[cfg_attr(feature = "bon", builder(default))]
-    pub strip_leading_breaks: bool,
+    pub sanitize_input: bool,
 }
 
 /// The type of the callback used when a reference link is encountered with no

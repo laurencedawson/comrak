@@ -29,7 +29,8 @@ fn test_opts() -> Options<'static> {
     opts.extension.footnotes = true;
     opts.extension.lemmy_mention = true;
     opts.extension.lemmy_spoiler = true;
-    opts.parse.strip_invisible = true;
+    opts.parse.sanitize_input = true;
+    opts.parse.smart = false; // deliberately off: rendering policy lives in the blob writer (src/text.rs)
     opts
 }
 
@@ -1571,8 +1572,8 @@ mod production {
         opts.extension.footnotes = true;
         opts.extension.lemmy_mention = true;
         opts.extension.lemmy_spoiler = true;
-        opts.parse.strip_invisible = true;
-        opts.parse.strip_leading_breaks = true;
+        opts.parse.sanitize_input = true;
+        opts.parse.smart = false; // deliberately off: rendering policy lives in the blob writer (src/text.rs)
         opts
     }
 

@@ -123,7 +123,7 @@ pub fn typographic_symbols(s: &str) -> Cow<'_, str> {
     }
 }
 
-/// True if `s` contains a character `parse.strip_invisible` would remove.
+/// True if `s` contains a character `parse.sanitize_input` would remove.
 /// Callers that gate parsing on content (a needs-parse fast path) must admit
 /// such input, or the strip never runs on exactly the text it exists for.
 #[inline]

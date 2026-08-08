@@ -6,13 +6,14 @@ markdown renderer. Highlights:
 
 | Area | What |
 |---|---|
-| [Extensions](#extensions) | Lemmy mentions + spoiler directive, invisible-character stripping, smart-punctuation additions (`©`, `®`, `™`, `±`, cap-repetition) |
+| [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
 | [URL resolution](#url-resolution) | `resolve_url()` — proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
+| [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
-| [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, `collapse_whitespace` — public, zero-copy on common paths |
-| [Benchmarking](#benchmarking) | `profile_parse` + `alloc_bench` + shared corpus for tracking throughput and allocation pressure |
-| Alloc / throughput (throughout) | Zero-copy text nodes via a pooled string arena, `SmallVec` line offsets, `Ast` 128 → 88 bytes, static smart-punct tables, `Cow::to_mut` avoidance, `memchr` fast paths, custom `UnsafeCell` arena with `#[cold]` grow path |
+| [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
+| [Benchmarking](#benchmarking) | `profile_parse` + `alloc_bench` + shared corpus (including contraction-dense `prose`) for tracking throughput and allocation pressure |
+| Alloc / throughput (throughout) | Zero-copy text nodes via a pooled string arena, `SmallVec` line offsets, slimmed `Ast`, `Cow::to_mut` avoidance, `memchr` fast paths, custom `UnsafeCell` arena with `#[cold]` grow path |
 
 ## Extensions
 
@@ -38,9 +39,14 @@ Hidden content with **markdown** support
 
 Renders as `<details>/<summary>` in HTML. In the blob it emits a title/content pair — `LEMMY_SPOILER_TITLE` over the title line (alongside `BOLD` and `LINK_SIZE` for a generous touch target) and `LEMMY_SPOILER_CONTENT` over the body. The two sort adjacently so the consumer pairs them via `cache[i±1]` with no extra plumbing; the blob's `has_spoiler_body` flag ([ea8f274]) lets the consumer detect spoiler bodies without scanning spans. The inline `>!…!<` / `||…||` spoiler span was retired ([f753071]).
 
-### `strip_invisible` ([f0bf9d9])
+### `sanitize_input` ([f0bf9d9], [24cd0cc])
 
-Strips invisible Unicode characters before parsing. Zero-copy when input is clean. Preserves ZWJ and VS16 for emoji.
+Pre-parse author-input hygiene, one flag. Formerly two (`strip_invisible` +
+`strip_leading_breaks`), merged because both are unconditional hygiene and
+always enabled together. Both strips must run before parsing — invisible
+characters would otherwise survive into link destinations and mention targets.
+
+**Invisible-character strip.** Zero-copy when input is clean. Preserves ZWJ and VS16 for emoji.
 
 | Character | Code | Why |
 |-----------|------|-----|
@@ -64,26 +70,34 @@ Strips invisible Unicode characters before parsing. Zero-copy when input is clea
 
 Preserves ZWJ (`U+200D`) for emoji sequences and VS16 (`U+FE0F`) for emoji presentation.
 
-### `parse.smart` additions ([f0bf9d9])
+**Leading-break strip** ([24cd0cc]). Strips a leading run of whitespace +
+hard line breaks (`\` + newline). User content from Lemmy / Reddit sometimes
+starts with a stray hard break that would otherwise render as blank space at
+the top of the post. Zero-copy when the input has no leading break.
 
-Symbol replacements and punctuation capping added to the existing smart punctuation feature.
+### Retired: `parse.smart` and the fork's smart additions ([eb5580e], [0bb0a38])
 
-| Input | Output | Description |
-|-------|--------|-------------|
-| `(c)` | &copy; | Copyright (case-insensitive) |
-| `(r)` | &reg; | Registered (case-insensitive) |
-| `(tm)` | &trade; | Trademark (case-insensitive) |
-| `+-` | &plusmn; | Plus-minus |
-| `????` | `???` | Cap repeated `?` at 3 |
-| `!!!!` | `!!!` | Cap repeated `!` at 3 |
-| `,,` | `,` | Cap repeated `,` at 1 |
+The fork once enabled smartypants and extended it with symbol replacements
+(`(c)`→©, capping of `????`→`???`, etc. — [f0bf9d9]). Measurement showed the
+feature cost 7% (docs-style) to 55% (contraction-dense prose) of total
+preprocess: every smart transform splits text into extra AST nodes (4.2x on
+prose), and the blob's `prefer_ascii` then allocated again to revert
+quotes/dashes/ellipsis to ASCII — work done and undone per contraction.
 
-### `strip_leading_breaks` ([24cd0cc])
+The retirement contract (pinned by `src/tests/smart_parity.rs`):
 
-Strips a leading run of whitespace + hard line breaks (`\` + newline) before
-parsing. User content from Lemmy / Reddit sometimes starts with a stray hard
-break that would otherwise render as blank space at the top of the post.
-Zero-copy when the input has no leading break.
+| Transform | Fate |
+|---|---|
+| Smart quotes, ellipsis | Deleted — provably invisible end to end (always reverted) |
+| Dashes (`--` squash), guillemets, punctuation capping | Deleted — the reader sees exactly what the author typed (`x >> 2` no longer corrupts to `x » 2`; runs adjacent to mentions no longer silently unlink) |
+| `(c)/(r)/(tm)/+-` → ©®™± | Kept — relocated to the blob writer's [text normalization](#text-normalization) |
+
+Upstream's smart code is intact and dormant behind the flag; the fork's own
+handlers and lookahead tables are deleted ([0bb0a38]), returning `inlines.rs`
+toward upstream. Every fork option set carries an explicit
+`parse.smart = false` with a same-line rationale. Measured on the prose
+corpus: preprocess 2.27x faster, blob allocations 686 → 6, AST nodes
+1,521 → 361.
 
 ## URL resolution
 
@@ -108,7 +122,7 @@ It does three things:
 | Lemmy v3 proxy | `<instance>/api/v3/image_proxy?url=<url>` | unwrapped URL |
 | Lemmy v4 proxy | `<instance>/api/v4/image/proxy?url=<url>` | unwrapped URL |
 
-**2. pict-rs thumbnail rewrite** ([7c60125]). Lemmy pict-rs image URLs gain a `thumbnail=250&format=webp` query so the body shows a server-rendered preview instead of the full-size original (thumbnailing is the only processing Lemmy honors on image URLs; crop/resize are ignored). The full-size original is one tap away because the host's image viewer strips the query. Non-static formats (gif and video) are left untouched.
+**2. pict-rs thumbnail rewrite** ([7c60125]). Lemmy pict-rs image URLs gain a `thumbnail=400&format=webp` query so the body shows a server-rendered preview instead of the full-size original (thumbnailing is the only processing Lemmy honors on image URLs; crop/resize are ignored). The full-size original is one tap away because the host's image viewer strips the query. Non-static formats (gif and video) are left untouched.
 
 **3. Video exclusion** ([7c60125], [79f72b4]). Video extensions on image hosts and pict-rs paths (`mp4`, `webm`, `gifv`, …) are kept out of image handling via a shared `path_ext` check:
 
@@ -152,6 +166,24 @@ callers can reuse the same logic elsewhere.
 | `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. |
 | `comrak::image_url::is_image_url(&str)` | `bool` | Heuristic URL → image detection (by known host, path pattern, or file extension). |
 | `comrak::text::collapse_whitespace(&str)` | `Cow<'_, str>` | Collapses runs of spaces to a single space. Zero-copy when the input has no double-space. |
+| `comrak::text::prefer_ascii(&str)` | `Cow<'_, str>` | Typed typographic Unicode (curly quotes, en/em dashes, ellipsis) → ASCII. Zero-copy when none present. |
+| `comrak::text::typographic_symbols(&str)` | `Cow<'_, str>` | `(c)/(r)/(tm)/+-` → ©®™±. Zero-copy when nothing matches; an `Owned` return always carries non-ASCII (used for the writer's in-place fast-path downgrade). |
+
+### Text normalization
+
+The blob writer's rendering policy, stated once in `src/text.rs`'s module doc
+and applied unconditionally to author prose (`Text` nodes) via
+`BlobWriter::write_prose` — deliberately not options: rendering opinions never
+live in flags. Author text renders as typed, with exactly three exceptions:
+runs of spaces collapse to one, typed typographic Unicode normalizes to ASCII
+(keeping the consumer's zero-copy `byte[]` path wide), and the four symbol
+codes render as their glyphs. The last two act on disjoint character sets, so
+the passes commute and the pipeline is idempotent — pinned by a tripwire test
+in `smart_parity`. Code spans, code blocks, and raw HTML blocks bypass the
+policy structurally (their visit arms call `write_text` directly). When a
+symbol substitution introduces non-ASCII into an ASCII-fast-path render, the
+writer downgrades its accounting in place rather than re-rendering — prior
+offsets remain exact because everything before the substitution was ASCII.
 
 ### Render entry point
 
@@ -176,10 +208,9 @@ let blob = comrak::blob::render_blob(root, md);          // identical bytes to t
 [`parse_document_zerocopy`](#parse-entry-point) and the 27 allocation/throughput
 commits only change how fast the AST is produced and how much it allocates — the
 tree handed to `render_blob` is structurally identical and the emitted bytes are
-the same. `strip_invisible`, `strip_leading_breaks`, the smart-punctuation
-additions, and `lemmy_mention` are likewise optional: drop them and the renderer
-still works (mentions just render as ordinary text/links rather than being
-linkified).
+the same. `sanitize_input` and `lemmy_mention` are likewise optional: drop them
+and the renderer still works (mentions just render as ordinary text/links rather
+than being linkified).
 
 Lifting `blob.rs` onto a clean comrak needs only:
 
@@ -188,7 +219,7 @@ Lifting `blob.rs` onto a clean comrak needs only:
 - **Three self-contained helper modules** it calls, none of which touch the
   parser: [`image_url`](#utility-modules-used-by-the-renderer)
   (`is_image_url`/`is_video_url`), `parser::url` (`resolve_url`/`extract_domain`),
-  and `text` (`collapse_whitespace`/`prefer_ascii`).
+  and `text` (`collapse_whitespace`/`prefer_ascii`/`typographic_symbols`).
 
 The one genuine coupling is the `lemmy_spoiler` extension: `blob.rs` has a match
 arm for the fork's `NodeValue::LemmySpoiler`, so compiling it requires that
@@ -348,9 +379,13 @@ allocation pressure across changes.
 
 Public module exposing a range of synthetic inputs: `PLAIN`, `SIMPLE`,
 `MEDIUM`, plus generators `deep_nesting()`, `heavy_inline()`, `complex()`,
-and `long_doc()` (a realistic ~13 KB post). Both examples below consume
-this module, so adding a new input shape lands in both reports at once.
-Also fed to a `bench_all` smoke test that runs under `cargo test`.
+`long_doc()` (a realistic ~13 KB post), and `prose_doc()` (~13 KB of
+contraction-dense comment prose — the shape the other corpora under-weight,
+which let smartypants' fragmentation cost stay invisible for two full
+optimization passes; weight it for any change touching text-node handling).
+Both examples below consume this module, so adding a new input shape lands
+in both reports at once. Also fed to a `bench_all` smoke test that runs
+under `cargo test`.
 
 ### `cargo run --release --example profile_parse`
 
@@ -360,13 +395,18 @@ iterations after warmup. Catches regressions in either stage independently.
 ```
 test               parse     blob    total
 -------------------------------------------
-plain              0.6 us    0.1 us    0.8 us
-simple             0.9 us    0.3 us    1.2 us
-medium             4.9 us    1.4 us    6.3 us
-heavy-inline      17.7 us    4.2 us   21.9 us
-complex           23.8 us    8.7 us   32.5 us
-long-doc          85.2 us   40.3 us  125.5 us
+plain              0.5 us    0.1 us    0.6 us
+simple             0.8 us    0.3 us    1.1 us
+medium             4.3 us    1.1 us    5.5 us
+heavy-inline      15.6 us    4.9 us   20.5 us
+complex           21.2 us    7.1 us   28.2 us
+long-doc          75.0 us   24.9 us  100.0 us
+prose             43.7 us   10.8 us   54.5 us
 ```
+
+Note prose vs long-doc: same size, and prose is now roughly half the cost —
+conversational text is the cheap case since the smartypants retirement, with
+feature-heavy markdown correctly the expensive one.
 
 (Apple Silicon M-series, release profile. Indicative; exact figures vary run to run.)
 
@@ -379,10 +419,10 @@ histogram for the largest inputs. Confirms a change actually cut
 allocations without reaching for an external profiler.
 
 ```
-AstNode: 136 bytes, NodeValue: 40 bytes, Ast: 88 bytes
-long-doc  13060 chars | 362 allocs  384 KB (30.1x input) | parse 355 blob 7 | 1436 nodes
+AstNode: 144 bytes, NodeValue: 40 bytes, Ast: 96 bytes
+long-doc  13060 chars | 362 allocs  399 KB (31.4x input) | parse 355 blob   7 | 1058 nodes
+prose     12938 chars | 138 allocs  174 KB (13.8x input) | parse 132 blob   6 |  361 nodes
   buckets: tiny(1-32)=93 small(33-128)=200 medium(129-1K)=56 large(1K+)=13
-  histogram: 9-16=10 17-32=53 33-64=30 65-128=51 129-256=149 257-512=52 …
 ```
 
 Buckets are the regression canary — a jump in `tiny` almost always means a
@@ -400,19 +440,21 @@ src/
 │                                cold-path grow, documented soundness invariants
 ├── blob.rs                    ← binary blob renderer: BlobWriter + visit + render_blob
 ├── image_url.rs               ← is_image_url heuristic (used by blob autolink-to-image)
-├── text.rs                    ← collapse_whitespace + prefer_ascii helpers
+├── text.rs                    ← the blob text-normalization policy: collapse_whitespace,
+│                                prefer_ascii, typographic_symbols
 ├── benchmarks.rs              ← shared bench corpus + bench_all smoke test
 ├── parser/
 │   └── url.rs                 ← resolve_url (proxy unwrap, short URL expansion, pict-rs thumbnail,
 │                                video exclusion) + extract_domain + path_ext
 └── tests/
-    ├── blob.rs                ← blob renderer tests (105 across format/inline/links/images/
-    │                            block/footnotes/edge sub-modules)
+    ├── blob.rs                ← blob renderer tests (format/inline/links/images/block/
+    │                            footnotes/edge/production sub-modules)
     ├── image_url.rs           ← is_image_url tests
     ├── lemmy.rs               ← lemmy_mention + lemmy_spoiler tests
-    ├── strip_invisible.rs     ← strip_invisible tests
-    ├── strip_leading_breaks.rs ← strip_leading_breaks tests
-    ├── typographic.rs         ← smart-punctuation symbol / capping tests
+    ├── smart_parity.rs        ← the smartypants-retirement contract: invariants that must
+    │                            never break + the verbatim rules for retired transforms
+    ├── strip_invisible.rs     ← sanitize_input invisible-char tests
+    ├── strip_leading_breaks.rs ← sanitize_input leading-break tests
     └── url.rs                 ← resolve_url tests
 
 examples/
@@ -436,14 +478,14 @@ src/
 ├── html.rs                    ← render_lemmy_spoiler emits <details>/<summary>
 ├── strings.rs                 ← strip_invisible() + zero-copy trim/normalize Cow variants
 └── parser/
-    ├── mod.rs                 ← fork extensions wired in (lemmy_spoiler handler, strip_invisible
+    ├── mod.rs                 ← fork extensions wired in (lemmy_spoiler handler, sanitize_input
     │                            preprocess pass) + optimisations (fast-path block dispatch, shared
     │                            delimiter arena, skip process_footnotes / fix_zero_end_columns when
     │                            unused, pre-sized arenas)
-    ├── inlines.rs             ← zero-copy text via StringArena, static-string smart punctuation,
-    │                            Cow::to_mut() avoidance on emphasis delimiters, memchr fast paths
-    ├── options.rs             ← new flags: lemmy_mention, lemmy_spoiler, strip_invisible,
-    │                            strip_leading_breaks, smart-punctuation symbol replacements
+    ├── inlines.rs             ← zero-copy text via StringArena, Cow::to_mut() avoidance on emphasis
+    │                            delimiters, memchr fast paths (the fork's smart-punctuation additions
+    │                            were removed with the smartypants retirement)
+    ├── options.rs             ← new flags: lemmy_mention, lemmy_spoiler, sanitize_input
     └── autolink.rs            ← Lemmy user / community mention parsing
 ```
 
@@ -453,14 +495,19 @@ The fork's throughput and allocation work, grouped by theme. Each change was
 benchmarked against the shared corpus before landing; the figures are from the
 commit messages (device wins measured on a Pixel 9 Pro XL).
 
+- **Smartypants retirement** — precompiled `resolve_url` gate searchers ([463834a], blob render -18% on link-heavy docs), retire `parse.smart` with symbols relocated to the blob writer ([eb5580e], prose preprocess 2.27x, blob allocs 686 → 6, AST nodes 4.2x fewer), delete the fork's smart handlers and lookahead tables ([0bb0a38], -129 lines of divergence; ends the hyphenated-word fragmentation the [18276c3] union tables caused), saturating profile_parse subtraction ([836a992]).
 - **Zero-copy / fewer allocations** — pooled zero-copy text nodes ([e3d01ef], 51% fewer allocs), `Cow` for `NodeCode.literal` + `NodeLink.url`/`.title` with lazy cleaning ([32fbb41]), `Cow::to_mut()` avoidance on emphasis delimiters ([14cb107], 30% fewer allocs), static strings for smart-punct runs ([b0d366d]), lazy `unescape_html` ([0d89195]), reused per-text `VecDeque` ([8538bfa], 34% fewer allocs), pre-sized join buffer ([9dda1aa]), zero-copy `extract_domain` ([cb91390]).
 - **Node & struct layout** — `Ast` 128 → 88 bytes via `Option<Box<BlockContent>>` ([8879b6f]), `SmallVec<[usize; 4]>` line offsets ([fdb9711]).
 - **Arena** — input-sized presizing ([9d7fbf5], [6e9d38a]), right-sized then shared per-paragraph delimiter arenas ([86dcf06], [e55712e]), custom arena with doubling-then-linear growth ([a9f62c0], 19% less memory), `UnsafeCell` over `RefCell` ([78b4480]), detach-free `append_new` ([be8cd6a]).
-- **Parse hot path** — smart-punct lookahead in `find_special_char` ([18276c3]), cached character lookup tables ([3f2090d]), `memchr` for backtick/line scanning ([e84ccaa]) and inline detectors ([312d49c]), fast-path block dispatch + early-out reference resolution ([1a59dfb]).
+- **Parse hot path** — smart-punct lookahead in `find_special_char` ([18276c3], since removed with the retirement), cached character lookup tables ([3f2090d]), `memchr` for backtick/line scanning ([e84ccaa]) and inline detectors ([312d49c]), fast-path block dispatch + early-out reference resolution ([1a59dfb]).
 - **Skipping whole subsystems** — `parse_document_raw` to skip postprocessing ([a2680c9], since folded into the scoped entry), skip `process_footnotes` when none present ([86bbe90], up to 50%), skip / reuse the `fix_zero_end_columns` pass ([4fa2f0c], [c3eda59]).
 - **Blob renderer** — packed u64 span sort key ([6cfb246]), pre-sized span/url buffers ([cec39b5], 63% fewer blob allocs), pure-ASCII fast path ([308f3d0]), flags packed into header byte 7 ([021dc48]), typographic-to-ASCII normalization ([bef9d53]), `0x01` replacement-span anchor ([ce4d33a]), no leading newline for a top-of-doc image ([d4d8d85]), faster blob parse path ([f13f7fe]), resolve each emitted URL exactly once via a `ResolvedUrl` newtype ([b0b8def]).
 
 <!-- Commit links — fork is github.com/laurencedawson/comrak -->
+[463834a]: https://github.com/laurencedawson/comrak/commit/463834a
+[836a992]: https://github.com/laurencedawson/comrak/commit/836a992
+[eb5580e]: https://github.com/laurencedawson/comrak/commit/eb5580e
+[0bb0a38]: https://github.com/laurencedawson/comrak/commit/0bb0a38
 [f0bf9d9]: https://github.com/laurencedawson/comrak/commit/f0bf9d9
 [a676324]: https://github.com/laurencedawson/comrak/commit/a676324
 [82663af]: https://github.com/laurencedawson/comrak/commit/82663af

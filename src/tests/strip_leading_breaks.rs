@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn strip_leading_breaks_basic() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "\\\n![alt](url)\n",
         "<p><img src=\"url\" alt=\"alt\" /></p>\n",
         no_roundtrip,
@@ -13,7 +13,7 @@ fn strip_leading_breaks_basic() {
 #[test]
 fn strip_leading_breaks_multiple() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "\\\n\\\n![alt](url)\n",
         "<p><img src=\"url\" alt=\"alt\" /></p>\n",
         no_roundtrip,
@@ -23,7 +23,7 @@ fn strip_leading_breaks_multiple() {
 #[test]
 fn strip_leading_breaks_with_whitespace() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "  \\\n  ![alt](url)\n",
         "<p><img src=\"url\" alt=\"alt\" /></p>\n",
         no_roundtrip,
@@ -33,7 +33,7 @@ fn strip_leading_breaks_with_whitespace() {
 #[test]
 fn strip_leading_breaks_crlf() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "\\\r\nfoo\n",
         "<p>foo</p>\n",
         no_roundtrip,
@@ -43,7 +43,7 @@ fn strip_leading_breaks_crlf() {
 #[test]
 fn strip_leading_breaks_preserves_inner() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "foo\\\nbar\n",
         "<p>foo<br />\nbar</p>\n",
     );
@@ -52,7 +52,7 @@ fn strip_leading_breaks_preserves_inner() {
 #[test]
 fn strip_leading_breaks_preserves_escape() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "\\*not italic\\*\n",
         "<p>*not italic*</p>\n",
     );
@@ -61,7 +61,7 @@ fn strip_leading_breaks_preserves_escape() {
 #[test]
 fn strip_leading_breaks_disabled() {
     html_opts!(
-        [parse.strip_leading_breaks = false],
+        [parse.sanitize_input = false],
         "\\\nfoo\n",
         "<p><br />\nfoo</p>\n",
     );
@@ -70,7 +70,7 @@ fn strip_leading_breaks_disabled() {
 #[test]
 fn strip_leading_breaks_clean_input() {
     html_opts!(
-        [parse.strip_leading_breaks],
+        [parse.sanitize_input],
         "hello world\n",
         "<p>hello world</p>\n",
     );
