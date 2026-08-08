@@ -85,10 +85,11 @@ impl CharTables {
             for &b in b"\"'" {
                 t.special_char_bytes[b as usize] = true;
             }
-            for &b in b"-.>+(?," {
+            // Upstream smart pairs only: -- (dashes), .. (ellipsis), >> (close
+            // guillemet). The fork's symbol/capping pairs were retired with
+            // parse.smart; see tests/smart_parity.rs for the contract.
+            for &b in b"-.>" {
                 t.smart_pair_bytes[b as usize] = true;
-            }
-            for &b in b"-.>cCrRtT?," {
                 t.smart_follower_bytes[b as usize] = true;
             }
         }
@@ -420,27 +421,6 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             b'*' | b'_' | b'\'' | b'"' => Some(self.handle_delim(b)),
             b'-' => Some(self.handle_hyphen()),
             b'.' => self.handle_period(node),
-            b'(' if self.options.parse.smart => Some(self.handle_open_paren()),
-            b'+' if self.options.parse.smart => {
-                if self.peek_byte_n(1) == Some(b'-') {
-                    self.scanner.pos += 2;
-                    Some(self.make_inline(
-                        NodeValue::Text("\u{b1}".into()),
-                        self.scanner.pos - 2,
-                        self.scanner.pos - 1,
-                    ))
-                } else if self.options.extension.insert {
-                    Some(self.handle_delim(b'+'))
-                } else {
-                    self.scanner.pos += 1;
-                    Some(self.make_inline(
-                        NodeValue::Text("+".into()),
-                        self.scanner.pos - 1,
-                        self.scanner.pos - 1,
-                    ))
-                }
-            }
-            b'?' if self.options.parse.smart => Some(self.handle_punctuation_cap(b'?', 3)),
             b'[' => {
                 self.scanner.pos += 1;
 
@@ -483,8 +463,6 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     self.push_bracket(true, inl);
                     self.within_brackets = true;
                     Some(inl)
-                } else if self.options.parse.smart && self.peek_byte() == Some(b'!') {
-                    Some(self.handle_punctuation_cap_from(b'!', 3, self.scanner.pos - 1))
                 } else {
                     self.probe_text(node, "!", self.scanner.pos - 1)
                 }
@@ -514,7 +492,6 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             }
             b'$' => Some(self.handle_dollars(ast.line_offsets())),
             b'>' if self.options.parse.smart => Some(self.handle_guillemet_close()),
-            b',' if self.options.parse.smart => Some(self.handle_punctuation_cap(b',', 1)),
             b'|' if self.options.extension.spoiler => Some(self.handle_delim(b'|')),
             _ => {
                 let mut endpos = self.find_special_char();
@@ -1097,74 +1074,6 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         } else {
             self.probe_text(node, ".", self.scanner.pos - 1)
         }
-    }
-
-    fn handle_open_paren(&mut self) -> Node<'a> {
-        let start = self.scanner.pos;
-        self.scanner.pos += 1;
-
-        let replacement = match self.peek_byte() {
-            Some(b'c' | b'C') if self.peek_byte_n(1) == Some(b')') => {
-                self.scanner.pos += 2;
-                Some("\u{a9}")
-            }
-            Some(b'r' | b'R') if self.peek_byte_n(1) == Some(b')') => {
-                self.scanner.pos += 2;
-                Some("\u{ae}")
-            }
-            Some(b't')
-                if self.peek_byte_n(1) == Some(b'm') && self.peek_byte_n(2) == Some(b')') =>
-            {
-                self.scanner.pos += 3;
-                Some("\u{2122}")
-            }
-            Some(b'T')
-                if self.peek_byte_n(1) == Some(b'M') && self.peek_byte_n(2) == Some(b')') =>
-            {
-                self.scanner.pos += 3;
-                Some("\u{2122}")
-            }
-            _ => None,
-        };
-
-        if let Some(r) = replacement {
-            self.make_inline(NodeValue::Text(r.into()), start, self.scanner.pos - 1)
-        } else {
-            self.make_inline(NodeValue::Text("(".into()), start, start)
-        }
-    }
-
-    fn handle_punctuation_cap(&mut self, ch: u8, max: usize) -> Node<'a> {
-        let start = self.scanner.pos;
-        self.scanner.pos += 1;
-        self.handle_punctuation_cap_from(ch, max, start)
-    }
-
-    fn handle_punctuation_cap_from(&mut self, ch: u8, max: usize, start: usize) -> Node<'a> {
-        let mut count = self.scanner.pos - start;
-        while self.peek_byte() == Some(ch) {
-            self.scanner.pos += 1;
-            count += 1;
-        }
-        let capped = count.min(max);
-        // Static table lookup avoids allocating a String for every run of smart
-        // punctuation (?, !, ,). Callers only pass max in {1,3}, so capped is in 0..=3.
-        #[rustfmt::skip]
-        let text: &'static str = match (ch, capped) {
-            (b'?', 1) => "?", (b'?', 2) => "??", (b'?', 3) => "???",
-            (b'!', 1) => "!", (b'!', 2) => "!!", (b'!', 3) => "!!!",
-            (b',', 1) => ",",
-            _ => {
-                // Fallback for unexpected ch/capped combos; extremely rare.
-                let s: String = std::iter::repeat_n(ch as char, capped).collect();
-                return self.make_inline(
-                    NodeValue::Text(s.into()),
-                    start,
-                    self.scanner.pos - 1,
-                );
-            }
-        };
-        self.make_inline(NodeValue::Text(text.into()), start, self.scanner.pos - 1)
     }
 
     fn handle_guillemet_close(&mut self) -> Node<'a> {
