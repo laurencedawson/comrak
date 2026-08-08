@@ -8,13 +8,14 @@
 //! Unlike HTML rendering, this walks the AST once and writes text + span metadata
 //! into a single contiguous buffer with zero intermediate allocations.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 
 use crate::arena_tree::Node;
 use crate::image_url::{is_image_url, is_video_url};
 use crate::nodes::{Ast, ListType, NodeValue::*};
 use crate::parser::url::{ResolvedUrl, extract_domain};
-use crate::text::{collapse_whitespace, prefer_ascii};
+use crate::text::{collapse_whitespace, prefer_ascii, typographic_symbols};
 
 /// Span type constants, generated at build time from `library/span_types.toml`
 /// by the Gradle `generateSpanTypes` task. File is gitignored - first-time
@@ -175,6 +176,21 @@ impl BlobWriter {
 
     pub(crate) fn nl(&mut self, n: usize) {
         self.p = self.p.max(n);
+    }
+
+    /// `write_text` for author prose (Text nodes): applies the typographic
+    /// symbol substitution. A substitution always introduces non-ASCII, so it
+    /// also drops the ASCII fast path in place — every byte written so far was
+    /// ASCII, meaning the accumulated UTF-16 length is still exact and the
+    /// scanning path keeps it exact from here; no re-render needed.
+    fn write_prose(&mut self, s: &str) {
+        match typographic_symbols(s) {
+            Cow::Borrowed(_) => self.write_text(s),
+            Cow::Owned(sym) => {
+                self.fast_path_ascii = false;
+                self.write_text(&sym);
+            }
+        }
     }
 
     /// True if the next byte written would land at the start of a line.
@@ -479,7 +495,7 @@ pub(crate) fn visit<'a>(
             out.footnotes.push(tmp.text().trim().to_string());
         }
 
-        Text(t) => out.write_text(&prefer_ascii(&collapse_whitespace(t))),
+        Text(t) => out.write_prose(&prefer_ascii(&collapse_whitespace(t))),
         #[cfg(feature = "shortcodes")]
         ShortCode(sc) => out.write_text(&sc.emoji),
         Code(c) => {

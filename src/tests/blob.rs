@@ -30,7 +30,6 @@ fn test_opts() -> Options<'static> {
     opts.extension.lemmy_mention = true;
     opts.extension.lemmy_spoiler = true;
     opts.parse.strip_invisible = true;
-    opts.parse.smart = true;
     opts
 }
 
@@ -1574,7 +1573,6 @@ mod production {
         opts.extension.lemmy_spoiler = true;
         opts.parse.strip_invisible = true;
         opts.parse.strip_leading_breaks = true;
-        opts.parse.smart = true;
         opts
     }
 
@@ -1669,7 +1667,7 @@ mod production {
     }
 
     #[test]
-    fn mention_after_smart_punctuation_cap_links() {
+    fn mention_after_punctuation_run_links() {
         let urls = link_urls(&render_prod("wow!!!! !comm@lemmy.world"));
         assert!(
             urls.iter().any(|u| u.contains("lemmy.world/c/comm")),
@@ -1677,12 +1675,16 @@ mod production {
         );
     }
 
-    /// The zerocopy path isolates the capped "!!!" in its own node (P0's
-    /// merge skips transforms), so this shape yields no link there — the
-    /// full-parse path links it. Pinned: must never panic.
+    /// Under retired smart this shape sits in one text node, so the mention
+    /// links on the zerocopy path too — the smart-era P0 (a capped "!!!"
+    /// node isolating the mention, silently dropping the link) can't recur.
     #[test]
-    fn mention_starting_inside_smart_cap_no_panic() {
-        let result = render_prod("wow!!!!abc@y.com");
-        assert!(result.text().contains("abc@y.com"));
+    fn mention_starting_inside_punctuation_run_links() {
+        let w = render_prod("wow!!!!abc@y.com");
+        assert!(w.text().contains("abc@y.com"));
+        assert!(
+            w.span_iter().any(|s| s.typ == LINK),
+            "mention adjacent to a punctuation run must link"
+        );
     }
 }

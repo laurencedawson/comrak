@@ -105,6 +105,25 @@ pub fn long_doc() -> String {
     s
 }
 
+/// ~13K chars of contraction-dense comment prose. The other corpora are
+/// markdown-feature soup with almost no apostrophes, quotes, or dashes, which
+/// let smartypants' fragmentation cost (4x node count on text like this) stay
+/// invisible across two optimization passes. Weight this corpus whenever a
+/// change touches text-node handling.
+pub fn prose_doc() -> String {
+    let mut s = String::new();
+    for i in 0..40 {
+        s.push_str(&format!(
+            "I don't think that's what they're saying -- it's more that you can't \
+             just \"quote the docs\" and call it done... The author's point in \
+             section {i} wasn't about performance, it's about correctness. \
+             Here's the [relevant thread](https://example.com/thread/{i}) which \
+             shouldn't be ignored -- and yes, it's been discussed before...\n\n"
+        ));
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,7 +143,6 @@ mod tests {
             opts.extension.shortcodes = true;
         }
         opts.extension.footnotes = true;
-        opts.parse.smart = true;
         opts
     }
 
@@ -192,6 +210,7 @@ mod tests {
             ("heavy-inline", heavy_inline()),
             ("complex", complex()),
             ("long-doc", long_doc()),
+            ("prose", prose_doc()),
         ];
 
         for (name, input) in &inputs {

@@ -135,7 +135,6 @@ fn main() {
         opts.extension.shortcodes = true;
     }
     opts.extension.footnotes = true;
-    opts.parse.smart = true;
 
     let inputs: Vec<(&str, String)> = vec![
         ("plain", comrak::benchmarks::PLAIN.to_string()),
@@ -145,6 +144,7 @@ fn main() {
         ("heavy-inline", comrak::benchmarks::heavy_inline()),
         ("complex", comrak::benchmarks::complex()),
         ("long-doc", comrak::benchmarks::long_doc()),
+        ("prose", comrak::benchmarks::prose_doc()),
     ];
 
     // Warmup

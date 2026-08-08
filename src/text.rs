@@ -1,4 +1,18 @@
-//! Small text-normalization helpers used by the blob renderer.
+//! Text normalization for the blob renderer — the whole policy, in one place.
+//!
+//! Author prose renders as typed, with exactly three exceptions:
+//! - runs of spaces collapse to one ([`collapse_whitespace`])
+//! - typed typographic Unicode (curly quotes, en/em dashes, ellipsis)
+//!   normalizes to ASCII, keeping the zero-copy path wide ([`prefer_ascii`])
+//! - the four symbol codes `(c)` `(r)` `(tm)` `+-` render as ©®™±
+//!   ([`typographic_symbols`])
+//!
+//! The last two point in opposite directions but act on disjoint character
+//! sets, so they cannot fight: the passes commute and the pipeline is
+//! idempotent (pinned by `tests::smart_parity`). `parse.smart` is
+//! deliberately off in production — its parser-side transforms either
+//! duplicated this policy at 4x the AST cost or contradicted it; see the
+//! smart_parity suite for the retirement contract.
 
 use std::borrow::Cow;
 
@@ -68,6 +82,45 @@ pub fn prefer_ascii(s: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(out)
+}
+
+/// Substitute the typographic symbols production keeps after retiring
+/// `parse.smart`: `(c)`/`(C)` → ©, `(r)`/`(R)` → ®, `(tm)`/`(TM)` → ™,
+/// `+-` → ±. Matches the retired parser handler exactly: the all-lower and
+/// all-upper pairs only (`(Tm)` stays literal), anywhere in the text, no
+/// word-boundary requirement. Zero-copy when nothing matches (the common
+/// case); the memchr iterator SIMD-skips between candidate bytes.
+///
+/// A `Cow::Owned` return always contains non-ASCII — callers on the blob's
+/// ASCII fast path use that to downgrade the writer instead of re-rendering.
+#[inline]
+pub fn typographic_symbols(s: &str) -> Cow<'_, str> {
+    let bytes = s.as_bytes();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    for i in memchr::memchr2_iter(b'(', b'+', bytes) {
+        if i < copied {
+            continue; // candidate byte inside an already-replaced region
+        }
+        let (rep, len) = match &bytes[i..] {
+            [b'(', b'c' | b'C', b')', ..] => ("\u{a9}", 3),
+            [b'(', b'r' | b'R', b')', ..] => ("\u{ae}", 3),
+            [b'(', b't', b'm', b')', ..] | [b'(', b'T', b'M', b')', ..] => ("\u{2122}", 4),
+            [b'+', b'-', ..] => ("\u{b1}", 2),
+            _ => continue,
+        };
+        let out = out.get_or_insert_with(|| String::with_capacity(s.len()));
+        out.push_str(&s[copied..i]);
+        out.push_str(rep);
+        copied = i + len;
+    }
+    match out {
+        Some(mut out) => {
+            out.push_str(&s[copied..]);
+            Cow::Owned(out)
+        }
+        None => Cow::Borrowed(s),
+    }
 }
 
 /// True if `s` contains a character `parse.strip_invisible` would remove.
