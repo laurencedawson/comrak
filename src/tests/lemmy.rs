@@ -438,3 +438,23 @@ fn lemmy_mention_email_sourcepos() {
         ]
     );
 }
+
+#[test]
+fn lemmy_mention_after_smart_punctuation_cap() {
+    html_opts!(
+        [parse.smart, extension.lemmy_mention],
+        "wow!!!! !comm@lemmy.world\n",
+        "<p>wow!!! <a href=\"https://lemmy.world/c/comm\">!comm@lemmy.world</a></p>\n",
+        no_roundtrip,
+    );
+}
+
+#[test]
+fn lemmy_mention_starting_inside_smart_cap() {
+    html_opts!(
+        [parse.smart, extension.lemmy_mention],
+        "wow!!!!abc@y.com\n",
+        "<p>wow!!<a href=\"https://y.com/c/abc\">!abc@y.com</a></p>\n",
+        no_roundtrip,
+    );
+}

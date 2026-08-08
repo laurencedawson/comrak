@@ -3196,28 +3196,26 @@ pub enum AutolinkType {
 pub(crate) struct Spx<'q>(pub(crate) &'q VecDeque<(Sourcepos, usize)>);
 
 impl Spx<'_> {
-    // Sourcepos end column of the first `rem` bytes of the node run, resolved
-    // by walking `spx` without consuming it. Callers address the run by
-    // absolute byte offset, so matchers may run in any order.
+    // Sourcepos end column of the first `rem` bytes of the node run, walking
+    // `spx` without consuming it — callers address the run by absolute byte
+    // offset, so matchers may run in any order.
     //
-    // For each element `(sp, x)`: `rem > x` skips the entry; `rem == x` ends
-    // at `sp.end.column`; `rem < x` ends at `sp.start.column + rem - 1` after
-    // asserting `sp.end.column - sp.start.column + 1 == x || rem == 0` (1).
-    //
-    // (1) If `x` doesn't equal the range covered between the start and end column,
-    //     there's no way to determine sourcepos within the range. This is a bug if
-    //     it happens; it suggests we've matched an email autolink with some smart
-    //     punctuation in it, or worse. The exception is `rem == 0`, where
-    //     `sp.start.column - 1` (the end of whatever precedes the entry) is
-    //     correct regardless.
+    // Entries can be length-mismatched (byte len != column span): entities
+    // ("&#65;" -> "A") and smart transforms (the cap's "!!!!" -> "!!!").
+    // `rem == 0` means the position is the boundary before the entry, so the
+    // answer is start - 1 regardless (tests::fuzz::echaw7: an email whose
+    // rewind crosses a decoded entity at the start of the run). A position
+    // strictly inside a mismatched entry can only be a match overlapping its
+    // tail, whose emitted bytes map to the source run's tail columns —
+    // end-aligned; for faithful entries that equals start + rem - 1 exactly.
     pub(crate) fn col_at(&self, mut rem: usize) -> usize {
         for &(sp, x) in self.0.iter() {
             match rem.cmp(&x) {
                 Ordering::Greater => rem -= x,
                 Ordering::Equal => return sp.end.column,
+                Ordering::Less if rem == 0 => return sp.start.column - 1,
                 Ordering::Less => {
-                    assert!((sp.end.column - sp.start.column + 1 == x) || rem == 0);
-                    return sp.start.column + rem - 1;
+                    return (sp.end.column + rem).saturating_sub(x).max(sp.start.column);
                 }
             }
         }

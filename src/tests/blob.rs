@@ -1667,4 +1667,22 @@ mod production {
             "{urls:?}"
         );
     }
+
+    #[test]
+    fn mention_after_smart_punctuation_cap_links() {
+        let urls = link_urls(&render_prod("wow!!!! !comm@lemmy.world"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.world/c/comm")),
+            "{urls:?}"
+        );
+    }
+
+    /// The zerocopy path isolates the capped "!!!" in its own node (P0's
+    /// merge skips transforms), so this shape yields no link there — the
+    /// full-parse path links it. Pinned: must never panic.
+    #[test]
+    fn mention_starting_inside_smart_cap_no_panic() {
+        let result = render_prod("wow!!!!abc@y.com");
+        assert!(result.text().contains("abc@y.com"));
+    }
 }
