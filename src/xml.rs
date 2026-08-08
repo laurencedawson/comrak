@@ -92,8 +92,7 @@ impl<'o, 'c> XmlFormatter<'o, 'c> {
                             NodeValue::Code(NodeCode { ref literal, .. }) => {
                                 self.escape(literal)?;
                             }
-                            NodeValue::HtmlInline(ref literal)
-                            | NodeValue::Raw(ref literal) => {
+                            NodeValue::HtmlInline(ref literal) | NodeValue::Raw(ref literal) => {
                                 self.escape(literal)?;
                             }
                             NodeValue::LineBreak | NodeValue::SoftBreak => {

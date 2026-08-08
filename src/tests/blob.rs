@@ -10,7 +10,7 @@
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
 use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, TABLE, visit};
-use crate::{parse_document, parse_document_zerocopy, Arena, Options};
+use crate::{Arena, Options, parse_document, parse_document_zerocopy};
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -96,8 +96,12 @@ struct SpanView {
 }
 
 impl SpanView {
-    fn indent(&self) -> i32 { self.data >> 16 }
-    fn number(&self) -> i32 { self.data & 0xFFFF }
+    fn indent(&self) -> i32 {
+        self.data >> 16
+    }
+    fn number(&self) -> i32 {
+        self.data & 0xFFFF
+    }
 }
 
 struct SpanIter<'a> {
@@ -110,7 +114,9 @@ impl<'a> Iterator for SpanIter<'a> {
     type Item = SpanView;
     fn next(&mut self) -> Option<Self::Item> {
         let base = self.idx * 4;
-        if base + 3 >= self.spans.len() { return None; }
+        if base + 3 >= self.spans.len() {
+            return None;
+        }
         self.idx += 1;
         let typ = self.spans[base + 2];
         let raw_data = self.spans[base + 3];
@@ -119,9 +125,16 @@ impl<'a> Iterator for SpanIter<'a> {
         // LEMMY_SPOILER_TITLE reuses it for the title byte length.
         let url_len = (raw_data & 0xFFF) as usize;
         let offset = (raw_data >> 12) as usize;
-        let url = if url_len > 0 && typ != LIST_ITEM && typ != QUOTE && typ != LEMMY_SPOILER_TITLE && typ != TABLE {
+        let url = if url_len > 0
+            && typ != LIST_ITEM
+            && typ != QUOTE
+            && typ != LEMMY_SPOILER_TITLE
+            && typ != TABLE
+        {
             Some(String::from_utf8_lossy(&self.url_data[offset..offset + url_len]).into_owned())
-        } else { None };
+        } else {
+            None
+        };
         Some(SpanView {
             start: self.spans[base] as usize,
             end: self.spans[base + 1] as usize,
@@ -138,7 +151,11 @@ trait BlobWriterExt {
 
 impl BlobWriterExt for BlobWriter {
     fn span_iter(&self) -> SpanIter<'_> {
-        SpanIter { spans: &self.spans, url_data: &self.url_data, idx: 0 }
+        SpanIter {
+            spans: &self.spans,
+            url_data: &self.url_data,
+            idx: 0,
+        }
     }
 }
 
@@ -276,8 +293,16 @@ mod format {
         let mut prev_start = -1i32;
         for i in 0..span_count {
             let offset = span_start + i * 16;
-            let start = i32::from_le_bytes([blob[offset], blob[offset + 1], blob[offset + 2], blob[offset + 3]]);
-            assert!(start >= prev_start, "spans out of order: {start} after {prev_start}");
+            let start = i32::from_le_bytes([
+                blob[offset],
+                blob[offset + 1],
+                blob[offset + 2],
+                blob[offset + 3],
+            ]);
+            assert!(
+                start >= prev_start,
+                "spans out of order: {start} after {prev_start}"
+            );
             prev_start = start;
         }
         assert!(span_count >= 2);
@@ -347,7 +372,12 @@ mod format {
     /// between nesting levels are preserved.
     #[test]
     fn blockquote_blob_newlines() {
-        let text = String::from_utf8(blob_text(&blob_bytes("> A\n>> B\n>>> C\n\nAfter")).as_bytes().to_vec()).unwrap();
+        let text = String::from_utf8(
+            blob_text(&blob_bytes("> A\n>> B\n>>> C\n\nAfter"))
+                .as_bytes()
+                .to_vec(),
+        )
+        .unwrap();
         assert!(text.contains("A\n\nB"), "missing newline A→B: {text:?}");
         assert!(text.contains("B\n\nC"), "missing newline B→C: {text:?}");
         assert!(text.contains("C\n\n") && text.contains("After"));
@@ -368,8 +398,18 @@ mod format {
         let span_start = 8 + text_len + (4 - text_len % 4) % 4;
         for i in 0..span_count {
             let offset = span_start + i * 16;
-            let start = i32::from_le_bytes([blob[offset], blob[offset+1], blob[offset+2], blob[offset+3]]);
-            let end = i32::from_le_bytes([blob[offset+4], blob[offset+5], blob[offset+6], blob[offset+7]]);
+            let start = i32::from_le_bytes([
+                blob[offset],
+                blob[offset + 1],
+                blob[offset + 2],
+                blob[offset + 3],
+            ]);
+            let end = i32::from_le_bytes([
+                blob[offset + 4],
+                blob[offset + 5],
+                blob[offset + 6],
+                blob[offset + 7],
+            ]);
             assert!(start >= 0 && start <= text_utf16_len);
             assert!(end >= 0 && end <= text_utf16_len);
             assert!(start <= end);
@@ -450,7 +490,11 @@ mod format {
         }
         let blob = blob_bytes(&md);
         let flags = blob_flags(&blob);
-        assert_eq!(flags & FLAG_IS_ASCII, 0, "single non-ASCII char must clear is_ascii");
+        assert_eq!(
+            flags & FLAG_IS_ASCII,
+            0,
+            "single non-ASCII char must clear is_ascii"
+        );
     }
 
     /// Typographic chars that `prefer_ascii` converts (curly quotes, em-dash,
@@ -462,9 +506,14 @@ mod format {
         // Curly quotes, em-dash, ellipsis — all in prefer_ascii's conversion set.
         let blob = blob_bytes("he said \u{201C}hello\u{201D} \u{2014} then left\u{2026}");
         let flags = blob_flags(&blob);
-        let text = std::str::from_utf8(&blob[8..8 + i32::from_le_bytes(
-            [blob[0], blob[1], blob[2], blob[3]]) as usize]).unwrap();
-        assert!(text.is_ascii(), "prefer_ascii should have converted to ASCII: {text:?}");
+        let text = std::str::from_utf8(
+            &blob[8..8 + i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize],
+        )
+        .unwrap();
+        assert!(
+            text.is_ascii(),
+            "prefer_ascii should have converted to ASCII: {text:?}"
+        );
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
     }
 
@@ -748,8 +797,11 @@ mod links {
     #[test]
     fn non_image_url_stays_link() {
         let result = render_test("https://example.com/page");
-        assert!(result.span_iter().any(|s| s.typ == LINK
-            && s.url.as_deref() == Some("https://example.com/page")));
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == LINK && s.url.as_deref() == Some("https://example.com/page"))
+        );
         assert!(!result.span_iter().any(|s| s.typ == IMAGE));
     }
 }
@@ -764,7 +816,11 @@ mod images {
     #[test]
     fn markdown_image() {
         let result = render_test("![alt](https://example.com/img.png)");
-        assert!(result.span_iter().any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://example.com/img.png")));
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://example.com/img.png"))
+        );
         assert_eq!(result.text(), "\u{0001}");
     }
 
@@ -779,7 +835,9 @@ mod images {
     /// DDG-proxied image URL (with query that looks like an image) becomes IMAGE.
     #[test]
     fn ddg_proxied_image_becomes_image() {
-        let result = render_test("https://external-content.duckduckgo.com/iu/?u=http%3A%2F%2Fwiki.example.com%2Fimg%2FLink.png%2Frev%2Flatest%3Fcb%3D20090331010533&f=1");
+        let result = render_test(
+            "https://external-content.duckduckgo.com/iu/?u=http%3A%2F%2Fwiki.example.com%2Fimg%2FLink.png%2Frev%2Flatest%3Fcb%3D20090331010533&f=1",
+        );
         assert!(result.span_iter().any(|s| s.typ == IMAGE));
         assert!(!result.span_iter().any(|s| s.typ == LINK));
     }
@@ -796,15 +854,19 @@ mod images {
     #[test]
     fn link_wrapping_image_becomes_image() {
         let result = render_test("[![alt](https://i.imgur.com/abc.jpg)](https://example.com)");
-        assert!(result.span_iter().any(|s| s.typ == IMAGE
-            && s.url.as_deref() == Some("https://i.imgur.com/abc.jpg")));
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://i.imgur.com/abc.jpg"))
+        );
         assert!(!result.span_iter().any(|s| s.typ == LINK));
     }
 
     /// Link wrapping an image must not append a domain suffix.
     #[test]
     fn link_wrapping_image_no_domain_suffix() {
-        let result = render_test("[![](https://lemmy.ca/pictrs/image/abc.png)](https://lemmy.ca/post/123)");
+        let result =
+            render_test("[![](https://lemmy.ca/pictrs/image/abc.png)](https://lemmy.ca/post/123)");
         assert!(!result.text().contains("(lemmy.ca)"));
         assert!(result.span_iter().any(|s| s.typ == IMAGE));
     }
@@ -839,7 +901,11 @@ mod images {
     #[test]
     fn video_in_image_syntax_no_alt_uses_url() {
         let result = render_test("![](https://lemmy.world/pictrs/image/abc.mp4)");
-        assert!(result.text().contains("https://lemmy.world/pictrs/image/abc.mp4"));
+        assert!(
+            result
+                .text()
+                .contains("https://lemmy.world/pictrs/image/abc.mp4")
+        );
         assert!(result.span_iter().any(|s| s.typ == LINK));
         assert!(!result.span_iter().any(|s| s.typ == IMAGE));
     }
@@ -847,7 +913,9 @@ mod images {
     /// Inline image proxy URLs are unwrapped (matching the link path), not left proxied.
     #[test]
     fn image_proxy_url_unwrapped() {
-        let result = render_test("![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fwww.explainxkcd.com%2Fwiki%2Fimages%2F1%2F1c%2Ftv_problems.png)");
+        let result = render_test(
+            "![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fwww.explainxkcd.com%2Fwiki%2Fimages%2F1%2F1c%2Ftv_problems.png)",
+        );
         assert!(result.span_iter().any(|s| s.typ == IMAGE
             && s.url.as_deref()
                 == Some("https://www.explainxkcd.com/wiki/images/1/1c/tv_problems.png")));
@@ -856,7 +924,9 @@ mod images {
     /// A proxied cross-instance pict-rs image is unwrapped first, then thumbnailed.
     #[test]
     fn proxied_pictrs_unwrapped_then_thumbnailed() {
-        let result = render_test("![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg)");
+        let result = render_test(
+            "![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg)",
+        );
         assert!(result.span_iter().any(|s| s.typ == IMAGE
             && s.url.as_deref()
                 == Some("https://other.tld/pictrs/image/abc.jpeg?thumbnail=400&format=webp")));
@@ -872,7 +942,10 @@ mod images {
             "https://example.com/img.jpg#ref",
         ] {
             let result = render_test(input);
-            assert!(result.span_iter().any(|s| s.typ == IMAGE), "failed for {input}");
+            assert!(
+                result.span_iter().any(|s| s.typ == IMAGE),
+                "failed for {input}"
+            );
         }
     }
 
@@ -884,8 +957,14 @@ mod images {
             "https://i.imgur.com/gallery/abc123",
         ] {
             let result = render_test(input);
-            assert!(result.span_iter().any(|s| s.typ == LINK), "failed for {input}");
-            assert!(!result.span_iter().any(|s| s.typ == IMAGE), "unexpected IMAGE for {input}");
+            assert!(
+                result.span_iter().any(|s| s.typ == LINK),
+                "failed for {input}"
+            );
+            assert!(
+                !result.span_iter().any(|s| s.typ == IMAGE),
+                "unexpected IMAGE for {input}"
+            );
         }
     }
 
@@ -899,7 +978,8 @@ mod images {
     /// Images separated by a blank line → still no triple newline.
     #[test]
     fn consecutive_images_separate_paragraphs() {
-        let result = render_test("![](https://example.com/a.png)\n\n![](https://example.com/b.png)");
+        let result =
+            render_test("![](https://example.com/a.png)\n\n![](https://example.com/b.png)");
         assert!(!result.text().contains("\n\n\n"));
     }
 
@@ -922,11 +1002,20 @@ mod block {
     /// All 6 heading levels produce their span type; H1 also bold.
     #[test]
     fn headings_all_levels() {
-        let levels = [("# H1", HEADING_1), ("## H2", HEADING_2), ("### H3", HEADING_3),
-                      ("#### H4", HEADING_4), ("##### H5", HEADING_5), ("###### H6", HEADING_6)];
+        let levels = [
+            ("# H1", HEADING_1),
+            ("## H2", HEADING_2),
+            ("### H3", HEADING_3),
+            ("#### H4", HEADING_4),
+            ("##### H5", HEADING_5),
+            ("###### H6", HEADING_6),
+        ];
         for (md, expected) in levels {
             let result = render_test(md);
-            assert!(result.span_iter().any(|s| s.typ == expected), "missing {expected} for {md}");
+            assert!(
+                result.span_iter().any(|s| s.typ == expected),
+                "missing {expected} for {md}"
+            );
         }
         let h1 = render_test("# H1");
         assert!(h1.span_iter().any(|s| s.typ == BOLD));
@@ -1039,8 +1128,14 @@ mod block {
 
     #[test]
     fn task_list_markers_stripped() {
-        assert_eq!(render_test_full_parse("- [ ] todo item").text(), "todo item");
-        assert_eq!(render_test_full_parse("- [x] done item").text(), "done item");
+        assert_eq!(
+            render_test_full_parse("- [ ] todo item").text(),
+            "todo item"
+        );
+        assert_eq!(
+            render_test_full_parse("- [x] done item").text(),
+            "done item"
+        );
     }
 
     #[test]
@@ -1069,7 +1164,7 @@ mod block {
         let result = render_test(
             "> one\n\
              >> two\n\
-             > > > three"
+             > > > three",
         );
         let quotes: Vec<_> = result.span_iter().filter(|s| s.typ == QUOTE).collect();
         assert_eq!(quotes.len(), 3);
@@ -1095,7 +1190,7 @@ mod block {
         let blob = blob_bytes("> - item 1\n> - item 2");
         let tlen = i32::from_le_bytes(blob[0..4].try_into().unwrap()) as usize;
         let base = 8 + tlen + (4 - tlen % 4) % 4;
-        let first_type = i32::from_le_bytes(blob[base+8..base+12].try_into().unwrap());
+        let first_type = i32::from_le_bytes(blob[base + 8..base + 12].try_into().unwrap());
         assert_eq!(first_type, QUOTE);
     }
 
@@ -1127,7 +1222,12 @@ mod block {
     /// length-prefixed cell markdown, row-major.
     fn decode_table(url_data: &[u8], data: i32) -> (usize, usize, Vec<String>) {
         let mut p = (data - 1) as usize;
-        let packed = u32::from_le_bytes([url_data[p], url_data[p + 1], url_data[p + 2], url_data[p + 3]]);
+        let packed = u32::from_le_bytes([
+            url_data[p],
+            url_data[p + 1],
+            url_data[p + 2],
+            url_data[p + 3],
+        ]);
         p += 4;
         let (rows, cols) = ((packed >> 16) as usize, (packed & 0xFFFF) as usize);
         let mut cells = Vec::new();
@@ -1236,14 +1336,32 @@ mod block {
     #[test]
     fn lemmy_spoiler_two_spans() {
         let result = render_test("::: spoiler tap me\nhidden body\n:::");
-        let title = result.span_iter().find(|s| s.typ == LEMMY_SPOILER_TITLE).unwrap();
-        let body = result.span_iter().find(|s| s.typ == LEMMY_SPOILER_CONTENT).unwrap();
+        let title = result
+            .span_iter()
+            .find(|s| s.typ == LEMMY_SPOILER_TITLE)
+            .unwrap();
+        let body = result
+            .span_iter()
+            .find(|s| s.typ == LEMMY_SPOILER_CONTENT)
+            .unwrap();
         assert_eq!(&result.text()[title.start..title.end], "tap me");
-        assert_eq!(body.start, title.end + 1, "body must start one byte past title end");
+        assert_eq!(
+            body.start,
+            title.end + 1,
+            "body must start one byte past title end"
+        );
         assert!(result.text()[body.start..body.end].contains("hidden body"));
         // Title also gets BOLD + LINK_SIZE for styling.
-        assert!(result.span_iter().any(|s| s.typ == BOLD && s.start == title.start && s.end == title.end));
-        assert!(result.span_iter().any(|s| s.typ == LINK_SIZE && s.start == title.start && s.end == title.end));
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == BOLD && s.start == title.start && s.end == title.end)
+        );
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == LINK_SIZE && s.start == title.start && s.end == title.end)
+        );
     }
 
     /// Empty-body spoilers are dropped by the parser (no toggle target), so the
@@ -1268,7 +1386,10 @@ mod footnotes {
     #[test]
     fn refs_and_definitions() {
         let out = render_test("Hello[^1] world[^2].\n\n[^1]: First note.\n[^2]: Second note.");
-        assert_eq!(out.text(), "Hello1 world2.\n\n\u{0001}\n\n1 First note.\n2 Second note.");
+        assert_eq!(
+            out.text(),
+            "Hello1 world2.\n\n\u{0001}\n\n1 First note.\n2 Second note."
+        );
         let spans: Vec<_> = out.span_iter().collect();
         assert_eq!(spans.iter().filter(|s| s.typ == HRULE).count(), 1);
         assert_eq!(spans.iter().filter(|s| s.typ == SUPERSCRIPT).count(), 4);

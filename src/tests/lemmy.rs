@@ -107,11 +107,7 @@ fn lemmy_mention_name_length() {
 
 #[test]
 fn lemmy_mention_invalid_domain() {
-    html_opts!(
-        [extension.lemmy_mention],
-        "@user\n",
-        "<p>@user</p>\n",
-    );
+    html_opts!([extension.lemmy_mention], "@user\n", "<p>@user</p>\n",);
 
     html_opts!(
         [extension.lemmy_mention],
@@ -221,11 +217,7 @@ fn lemmy_mention_disabled() {
 fn lemmy_spoiler() {
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            ":::spoiler Click to reveal\n",
-            "Hidden content\n",
-            ":::\n",
-        ),
+        concat!(":::spoiler Click to reveal\n", "Hidden content\n", ":::\n",),
         concat!(
             "<details>\n",
             "<summary>Click to reveal</summary>\n",
@@ -290,11 +282,7 @@ fn lemmy_spoiler_not_in_code_block() {
 fn lemmy_spoiler_space_after_colons() {
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            "::: spoiler Click me\n",
-            "Hidden\n",
-            ":::\n",
-        ),
+        concat!("::: spoiler Click me\n", "Hidden\n", ":::\n",),
         concat!(
             "<details>\n",
             "<summary>Click me</summary>\n",
@@ -311,16 +299,8 @@ fn lemmy_spoiler_no_title_rejected() {
     // opener falls through and the lines render as plain text.
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            ":::spoiler\n",
-            "Hidden\n",
-            ":::\n",
-        ),
-        concat!(
-            "<p>:::spoiler\n",
-            "Hidden\n",
-            ":::</p>\n",
-        ),
+        concat!(":::spoiler\n", "Hidden\n", ":::\n",),
+        concat!("<p>:::spoiler\n", "Hidden\n", ":::</p>\n",),
         no_roundtrip,
     );
 }
@@ -331,16 +311,8 @@ fn lemmy_spoiler_keyword_must_have_whitespace_boundary() {
     // whitespace boundary after the keyword Lemmy rejects it.
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            "::: spoilers something\n",
-            "Hidden\n",
-            ":::\n",
-        ),
-        concat!(
-            "<p>::: spoilers something\n",
-            "Hidden\n",
-            ":::</p>\n",
-        ),
+        concat!("::: spoilers something\n", "Hidden\n", ":::\n",),
+        concat!("<p>::: spoilers something\n", "Hidden\n", ":::</p>\n",),
         no_roundtrip,
     );
 }
@@ -351,16 +323,8 @@ fn lemmy_spoiler_whitespace_only_title_rejected() {
     // (The trailing run of spaces becomes a markdown hard break.)
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            "::: spoiler   \n",
-            "Hidden\n",
-            ":::\n",
-        ),
-        concat!(
-            "<p>::: spoiler<br />\n",
-            "Hidden\n",
-            ":::</p>\n",
-        ),
+        concat!("::: spoiler   \n", "Hidden\n", ":::\n",),
+        concat!("<p>::: spoiler<br />\n", "Hidden\n", ":::</p>\n",),
         no_roundtrip,
     );
 }
@@ -369,11 +333,7 @@ fn lemmy_spoiler_whitespace_only_title_rejected() {
 fn lemmy_spoiler_title_with_trailing_colon() {
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            "::: spoiler twitter bio now:\n",
-            "Hidden\n",
-            ":::\n",
-        ),
+        concat!("::: spoiler twitter bio now:\n", "Hidden\n", ":::\n",),
         concat!(
             "<details>\n",
             "<summary>twitter bio now:</summary>\n",
@@ -388,11 +348,7 @@ fn lemmy_spoiler_title_with_trailing_colon() {
 fn lemmy_spoiler_title_with_internal_colon() {
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            "::: spoiler about: stuff\n",
-            "Hidden\n",
-            ":::\n",
-        ),
+        concat!("::: spoiler about: stuff\n", "Hidden\n", ":::\n",),
         concat!(
             "<details>\n",
             "<summary>about: stuff</summary>\n",
@@ -431,15 +387,7 @@ fn lemmy_spoiler_realworld_trailing_colon_with_multiline_image() {
 fn lemmy_spoiler_not_other_directives() {
     html_opts!(
         [extension.lemmy_spoiler],
-        concat!(
-            ":::warning\n",
-            "Not a spoiler\n",
-            ":::\n",
-        ),
-        concat!(
-            "<p>:::warning\n",
-            "Not a spoiler\n",
-            ":::</p>\n",
-        ),
+        concat!(":::warning\n", "Not a spoiler\n", ":::\n",),
+        concat!("<p>:::warning\n", "Not a spoiler\n", ":::</p>\n",),
     );
 }

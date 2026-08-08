@@ -6,7 +6,8 @@
 
 /// Strip `http://` / `https://`, returning the rest of the URL.
 fn strip_scheme(url: &str) -> Option<&str> {
-    url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
+    url.strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
 }
 
 /// Returns `true` if the URL points to an image (by known host, path pattern,
@@ -71,10 +72,7 @@ const IMAGE_HOSTS: &[&str] = &[
     "cdn.bsky.app/img/",
 ];
 
-const IMAGE_HOST_EXCLUDED: &[&str] = &[
-    "i.imgur.com/a/",
-    "i.imgur.com/gallery/",
-];
+const IMAGE_HOST_EXCLUDED: &[&str] = &["i.imgur.com/a/", "i.imgur.com/gallery/"];
 
 const IMAGE_PATHS: &[&str] = &[
     "/pictrs/image/",
@@ -83,12 +81,11 @@ const IMAGE_PATHS: &[&str] = &[
 ];
 
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
-    "svg", "ico", "tif", "tiff", "heic", "heif", "jfif",
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "svg", "ico", "tif", "tiff", "heic",
+    "heif", "jfif",
 ];
 
 /// Video extensions that can appear on image hosts / pict-rs paths. Used to keep
 /// videos from being detected as images or thumbnailed into a still frame.
-pub(crate) const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "webm", "mov", "m4v", "mkv", "avi", "gifv", "ogv",
-];
+pub(crate) const VIDEO_EXTENSIONS: &[&str] =
+    &["mp4", "webm", "mov", "m4v", "mkv", "avi", "gifv", "ogv"];

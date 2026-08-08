@@ -206,9 +206,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     /// so we must clone.
     fn into_static_cow(&self, c: Cow<'_, str>) -> Cow<'static, str> {
         match c {
-            Cow::Borrowed(s) if self.is_zerocopy() => {
-                Cow::Borrowed(unsafe { extend_lifetime(s) })
-            }
+            Cow::Borrowed(s) if self.is_zerocopy() => Cow::Borrowed(unsafe { extend_lifetime(s) }),
             Cow::Borrowed(s) => Cow::Owned(s.to_string()),
             Cow::Owned(s) => Cow::Owned(s),
         }
@@ -264,11 +262,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         } else {
             unescaped.into_owned().into()
         };
-        inl.append_new(self.make_inline(
-            NodeValue::Text(text),
-            start_column + 1,
-            end_column - 1,
-        ));
+        inl.append_new(self.make_inline(NodeValue::Text(text), start_column + 1, end_column - 1));
         inl
     }
 
@@ -478,11 +472,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     } else {
                         contents.into_owned().into()
                     };
-                    Some(self.make_inline(
-                        NodeValue::Text(text),
-                        startpos,
-                        endpos - 1,
-                    ))
+                    Some(self.make_inline(NodeValue::Text(text), startpos, endpos - 1))
                 } else {
                     None
                 }
@@ -954,8 +944,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
         // Longer runs: build once without intermediate String::repeat allocations.
         let mut buf = String::with_capacity(3 * (ems + ens));
-        for _ in 0..ems { buf.push_str("—"); }
-        for _ in 0..ens { buf.push_str("–"); }
+        for _ in 0..ems {
+            buf.push_str("—");
+        }
+        for _ in 0..ens {
+            buf.push_str("–");
+        }
         self.make_inline(NodeValue::Text(buf.into()), start, self.scanner.pos - 1)
     }
 
@@ -991,28 +985,22 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         self.scanner.pos += 1;
 
         let replacement = match self.peek_byte() {
-            Some(b'c' | b'C')
-                if self.peek_byte_n(1) == Some(b')') =>
-            {
+            Some(b'c' | b'C') if self.peek_byte_n(1) == Some(b')') => {
                 self.scanner.pos += 2;
                 Some("\u{a9}")
             }
-            Some(b'r' | b'R')
-                if self.peek_byte_n(1) == Some(b')') =>
-            {
+            Some(b'r' | b'R') if self.peek_byte_n(1) == Some(b')') => {
                 self.scanner.pos += 2;
                 Some("\u{ae}")
             }
             Some(b't')
-                if self.peek_byte_n(1) == Some(b'm')
-                    && self.peek_byte_n(2) == Some(b')') =>
+                if self.peek_byte_n(1) == Some(b'm') && self.peek_byte_n(2) == Some(b')') =>
             {
                 self.scanner.pos += 3;
                 Some("\u{2122}")
             }
             Some(b'T')
-                if self.peek_byte_n(1) == Some(b'M')
-                    && self.peek_byte_n(2) == Some(b')') =>
+                if self.peek_byte_n(1) == Some(b'M') && self.peek_byte_n(2) == Some(b')') =>
             {
                 self.scanner.pos += 3;
                 Some("\u{2122}")
@@ -1021,17 +1009,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         };
 
         if let Some(r) = replacement {
-            self.make_inline(
-                NodeValue::Text(r.into()),
-                start,
-                self.scanner.pos - 1,
-            )
+            self.make_inline(NodeValue::Text(r.into()), start, self.scanner.pos - 1)
         } else {
-            self.make_inline(
-                NodeValue::Text("(".into()),
-                start,
-                start,
-            )
+            self.make_inline(NodeValue::Text("(".into()), start, start)
         }
     }
 
@@ -1050,6 +1030,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         let capped = count.min(max);
         // Static table lookup avoids allocating a String for every run of smart
         // punctuation (?, !, ,). Callers only pass max in {1,3}, so capped is in 0..=3.
+        #[rustfmt::skip]
         let text: &'static str = match (ch, capped) {
             (b'?', 1) => "?", (b'?', 2) => "??", (b'?', 3) => "???",
             (b'!', 1) => "!", (b'!', 2) => "!!", (b'!', 3) => "!!!",
@@ -1064,11 +1045,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 );
             }
         };
-        self.make_inline(
-            NodeValue::Text(text.into()),
-            start,
-            self.scanner.pos - 1,
-        )
+        self.make_inline(NodeValue::Text(text.into()), start, self.scanner.pos - 1)
     }
 
     fn handle_guillemet_close(&mut self) -> Node<'a> {
@@ -1965,12 +1942,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                         let title = strings::clean_title(&self.input[starttitle..endtitle]);
                         let url = self.into_static_cow(url);
                         let title = self.into_static_cow(title);
-                        self.close_bracket_match(
-                            is_image,
-                            url,
-                            title,
-                            source_end_pos,
-                        );
+                        self.close_bracket_match(is_image, url, title, source_end_pos);
                         return None;
                     } else {
                         self.scanner.pos = after_link_text_pos;
@@ -2359,7 +2331,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         let mut before_char_pos = pos - 1;
         while before_char_pos > 0
             && (self.input.as_bytes()[before_char_pos] >> 6 == 2
-                || self.char_tables.skip_char_bytes[self.input.as_bytes()[before_char_pos] as usize])
+                || self.char_tables.skip_char_bytes
+                    [self.input.as_bytes()[before_char_pos] as usize])
         {
             before_char_pos -= 1;
         }

@@ -36,8 +36,12 @@ const MAX_URL_LEN: usize = 4095;
 fn utf16_len(s: &str) -> usize {
     let mut len = 0;
     for &b in s.as_bytes() {
-        if (b & 0b1100_0000) != 0b1000_0000 { len += 1; }
-        if (b & 0b1111_1000) == 0b1111_0000 { len += 1; }
+        if (b & 0b1100_0000) != 0b1000_0000 {
+            len += 1;
+        }
+        if (b & 0b1111_1000) == 0b1111_0000 {
+            len += 1;
+        }
     }
     len
 }
@@ -67,7 +71,11 @@ pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
         visit(root, &mut b, 0, 0, 0);
         b.append_footnotes();
     }
-    if b.spans.is_empty() && b.text() == input { None } else { Some(b.into_blob()) }
+    if b.spans.is_empty() && b.text() == input {
+        None
+    } else {
+        Some(b.into_blob())
+    }
 }
 
 pub(crate) struct BlobWriter {
@@ -141,7 +149,9 @@ impl BlobWriter {
     }
 
     #[inline]
-    pub(crate) fn pos(&self) -> usize { self.len + self.p }
+    pub(crate) fn pos(&self) -> usize {
+        self.len + self.p
+    }
 
     #[inline]
     pub(crate) fn write_text(&mut self, s: &str) {
@@ -163,7 +173,9 @@ impl BlobWriter {
         self.len += if ascii { s.len() } else { utf16_len(s) };
     }
 
-    pub(crate) fn nl(&mut self, n: usize) { self.p = self.p.max(n); }
+    pub(crate) fn nl(&mut self, n: usize) {
+        self.p = self.p.max(n);
+    }
 
     /// True if the next byte written would land at the start of a line.
     /// Either nothing has been written, the last byte is a newline, or
@@ -174,33 +186,46 @@ impl BlobWriter {
 
     /// Drop pending (unflushed) newlines. Test-only.
     #[cfg(test)]
-    pub(crate) fn clear_pending(&mut self) { self.p = 0; }
+    pub(crate) fn clear_pending(&mut self) {
+        self.p = 0;
+    }
 
     /// Rendered text bytes so far (excluding header). Used during render and by tests.
     pub(crate) fn text(&self) -> &str {
         std::str::from_utf8(&self.blob[HEADER_SIZE..]).unwrap_or("")
     }
 
-    pub(crate) fn span(&mut self, t: i32, start: usize) { self.span_data(t, start, 0); }
+    pub(crate) fn span(&mut self, t: i32, start: usize) {
+        self.span_data(t, start, 0);
+    }
 
     pub(crate) fn span_data(&mut self, t: i32, start: usize, data: i32) {
         if start < self.len {
-            self.spans.extend_from_slice(&[start as i32, self.len as i32, t, data]);
+            self.spans
+                .extend_from_slice(&[start as i32, self.len as i32, t, data]);
             self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
             self.has_spoiler_body |= t == LEMMY_SPOILER_CONTENT;
         }
     }
 
     pub(crate) fn span_url(&mut self, t: i32, start: usize, url: &ResolvedUrl) {
-        if start >= self.len { return; }
+        if start >= self.len {
+            return;
+        }
         // Takes only a ResolvedUrl, so no caller can emit a raw URL and none is resolved twice.
         let offset = self.url_data.len();
         // Back a capped cut off to a char boundary; the host decodes this slice as UTF-8.
         let mut url_len = url.len().min(MAX_URL_LEN);
-        while !url.is_char_boundary(url_len) { url_len -= 1; }
+        while !url.is_char_boundary(url_len) {
+            url_len -= 1;
+        }
         self.url_data.extend_from_slice(&url.as_bytes()[..url_len]);
-        self.spans.extend_from_slice(&[start as i32, self.len as i32, t,
-            ((offset as i32) << 12) | (url_len as i32)]);
+        self.spans.extend_from_slice(&[
+            start as i32,
+            self.len as i32,
+            t,
+            ((offset as i32) << 12) | (url_len as i32),
+        ]);
         self.needs_reflow |= t == IMAGE || t == LEMMY_SPOILER_TITLE;
     }
 
@@ -210,7 +235,9 @@ impl BlobWriter {
     /// row-major as inline markdown for the UI to re-parse. Self-delimiting, so no
     /// length cap.
     pub(crate) fn span_table<'a>(&mut self, start: usize, node: &'a AstNode<'a>) {
-        if start >= self.len { return; }
+        if start >= self.len {
+            return;
+        }
         let cols = match &node.data.borrow().value {
             Table(nt) => nt.num_columns.min(0xFFFF),
             _ => return,
@@ -222,28 +249,35 @@ impl BlobWriter {
         self.url_data.extend_from_slice(&packed.to_le_bytes());
         for row in node.children().take(rows as usize) {
             // Each row writes exactly `cols` cells: its own, padded with empties.
-            let cells = row.children()
+            let cells = row
+                .children()
                 .map(|c| crate::cm::format_table_cell_content(c, &opts))
                 .chain(std::iter::repeat_with(String::new))
                 .take(cols);
             for s in cells {
                 // Same char-boundary contract as span_url: cells decode as UTF-8.
                 let mut len = s.len().min(u16::MAX as usize);
-                while !s.is_char_boundary(len) { len -= 1; }
+                while !s.is_char_boundary(len) {
+                    len -= 1;
+                }
                 self.url_data.extend_from_slice(&(len as u16).to_le_bytes());
                 self.url_data.extend_from_slice(&s.as_bytes()[..len]);
             }
         }
-        self.spans.extend_from_slice(&[start as i32, self.len as i32, TABLE, (offset as i32) + 1]);
+        self.spans
+            .extend_from_slice(&[start as i32, self.len as i32, TABLE, (offset as i32) + 1]);
     }
 
     fn emit_image(&mut self, url: &ResolvedUrl) {
         if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
             // existing trailing `\n` (past any trailing spaces/tabs) count.
-            let existing = self.blob[HEADER_SIZE..].iter().rev()
+            let existing = self.blob[HEADER_SIZE..]
+                .iter()
+                .rev()
                 .skip_while(|&&b| matches!(b, b' ' | b'\t'))
-                .take_while(|&&b| b == b'\n').count();
+                .take_while(|&&b| b == b'\n')
+                .count();
             self.nl(2_usize.saturating_sub(existing));
         }
         let start = self.pos();
@@ -253,9 +287,14 @@ impl BlobWriter {
     }
 
     fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
-        let Some(domain) = extract_domain(url) else { return };
+        let Some(domain) = extract_domain(url) else {
+            return;
+        };
         let needle = domain.as_bytes();
-        if self.blob[text_start..].windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle)) {
+        if self.blob[text_start..]
+            .windows(needle.len())
+            .any(|w| w.eq_ignore_ascii_case(needle))
+        {
             return;
         }
         self.write_text(" (");
@@ -265,7 +304,9 @@ impl BlobWriter {
 
     pub(crate) fn append_footnotes(&mut self) {
         let notes = std::mem::take(&mut self.footnotes);
-        if notes.is_empty() { return; }
+        if notes.is_empty() {
+            return;
+        }
         self.nl(2);
         let start = self.pos();
         self.write_text("\u{0001}");
@@ -329,18 +370,31 @@ impl BlobWriter {
     }
 }
 
-pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth: usize, quote_depth: usize, ordinal: i32) {
+pub(crate) fn visit<'a>(
+    node: &'a AstNode<'a>,
+    out: &mut BlobWriter,
+    list_depth: usize,
+    quote_depth: usize,
+    ordinal: i32,
+) {
     let val = &node.data.borrow().value;
     let start = out.pos();
 
     match val {
         List(l) => {
-            let mut num = match l.list_type { ListType::Ordered => l.start as i32, ListType::Bullet => 0 };
+            let mut num = match l.list_type {
+                ListType::Ordered => l.start as i32,
+                ListType::Bullet => 0,
+            };
             for c in node.children() {
                 visit(c, out, list_depth + 1, quote_depth, num);
-                if num > 0 { num += 1; }
+                if num > 0 {
+                    num += 1;
+                }
             }
-            if list_depth == 0 { out.nl(2); }
+            if list_depth == 0 {
+                out.nl(2);
+            }
         }
 
         Item(_) | TaskItem(_) => {
@@ -366,18 +420,22 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
 
         BlockQuote => {
             for (i, c) in node.children().enumerate() {
-                if i > 0 { out.nl(2); }
+                if i > 0 {
+                    out.nl(2);
+                }
                 visit(c, out, list_depth, quote_depth + 1, 0);
             }
             out.span_data(QUOTE, start, quote_depth as i32);
-            if quote_depth == 0 { out.nl(2); }
+            if quote_depth == 0 {
+                out.nl(2);
+            }
         }
 
         Paragraph => {
             visit_children(node, out, list_depth, quote_depth);
-            if !node.parent().is_some_and(|p|
+            if !node.parent().is_some_and(|p| {
                 matches!(p.data.borrow().value, BlockQuote | Item(_) | TaskItem(_))
-            ) {
+            }) {
                 out.nl(2);
             }
         }
@@ -415,7 +473,9 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
 
         FootnoteDefinition(_) => {
             let mut tmp = BlobWriter::new(64);
-            for c in node.children() { visit(c, &mut tmp, 0, 0, 0); }
+            for c in node.children() {
+                visit(c, &mut tmp, 0, 0, 0);
+            }
             out.footnotes.push(tmp.text().trim().to_string());
         }
 
@@ -440,7 +500,9 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
                 // link instead: the alt text, or the URL itself when there is no alt.
                 let text_start = out.blob.len();
                 visit_children(node, out, list_depth, quote_depth);
-                if out.blob.len() == text_start { out.write_text(&url); }
+                if out.blob.len() == text_start {
+                    out.write_text(&url);
+                }
                 out.span_url(LINK, start, &url);
                 out.span(LINK_SIZE, start);
                 out.append_domain_suffix(text_start, &url);
@@ -450,20 +512,34 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
         }
 
         LineBreak => out.nl(1),
-        SoftBreak => if quote_depth > 0 { out.nl(1) } else if !out.at_line_start() { out.write_text(" ") },
+        SoftBreak => {
+            if quote_depth > 0 {
+                out.nl(1)
+            } else if !out.at_line_start() {
+                out.write_text(" ")
+            }
+        }
 
         Strong | Emph | Strikethrough => {
             visit_children(node, out, list_depth, quote_depth);
-            out.span(match val {
-                Strong => BOLD, Emph => ITALIC, Strikethrough => STRIKETHROUGH,
-                _ => unreachable!(),
-            }, start);
+            out.span(
+                match val {
+                    Strong => BOLD,
+                    Emph => ITALIC,
+                    Strikethrough => STRIKETHROUGH,
+                    _ => unreachable!(),
+                },
+                start,
+            );
         }
 
         Superscript | Subscript => {
             visit_children(node, out, list_depth, quote_depth);
-            let (t, size) = if matches!(val, Superscript)
-                { (SUPERSCRIPT, SUPERSCRIPT_SIZE) } else { (SUBSCRIPT, SUBSCRIPT_SIZE) };
+            let (t, size) = if matches!(val, Superscript) {
+                (SUPERSCRIPT, SUPERSCRIPT_SIZE)
+            } else {
+                (SUBSCRIPT, SUBSCRIPT_SIZE)
+            };
             out.span(t, start);
             out.span(size, start);
         }
@@ -472,8 +548,10 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
             let url = crate::parser::url::resolve_url(&l.url);
             let only = node.first_child().filter(|c| c.next_sibling().is_none());
             let wraps_image = only.is_some_and(|c| matches!(&c.data.borrow().value, Image(_)));
-            let autolink = only.is_some_and(|c| matches!(&c.data.borrow().value,
-                Text(t) if t.starts_with("http://") || t.starts_with("https://")));
+            let autolink = only.is_some_and(|c| {
+                matches!(&c.data.borrow().value,
+                Text(t) if t.starts_with("http://") || t.starts_with("https://"))
+            });
             if wraps_image {
                 visit_children(node, out, list_depth, quote_depth);
             } else if autolink && is_image_url(&url) {
@@ -509,5 +587,7 @@ pub(crate) fn visit<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, list_depth:
 }
 
 fn visit_children<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, ld: usize, qd: usize) {
-    for c in node.children() { visit(c, out, ld, qd, 0); }
+    for c in node.children() {
+        visit(c, out, ld, qd, 0);
+    }
 }

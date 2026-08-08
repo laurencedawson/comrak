@@ -29,7 +29,9 @@ Some **bold** text with *italic* and `inline code`.\n\n\
 pub fn complex() -> String {
     let mut s = String::new();
     for i in 1..=6 {
-        for _ in 0..i { s.push('#'); }
+        for _ in 0..i {
+            s.push('#');
+        }
         s.push_str(&format!(" Heading {}\n\n", i));
     }
     for i in 0..10 {
@@ -65,7 +67,9 @@ pub fn heavy_inline() -> String {
 pub fn deep_nesting() -> String {
     let mut s = String::from("> level 1\n");
     for i in 2..=10 {
-        for _ in 0..i { s.push_str("> "); }
+        for _ in 0..i {
+            s.push_str("> ");
+        }
         s.push_str(&format!("level {}\n", i));
     }
     s
@@ -104,7 +108,7 @@ pub fn long_doc() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{blob, parse_document_zerocopy, Options};
+    use crate::{Options, blob, parse_document_zerocopy};
 
     fn default_opts() -> Options<'static> {
         let mut opts = Options::default();
@@ -122,12 +126,17 @@ mod tests {
     }
 
     fn parse_and_render(input: &str) -> Option<Vec<u8>> {
-        parse_document_zerocopy(input, &default_opts(), |root| blob::render_blob(root, input))
+        parse_document_zerocopy(input, &default_opts(), |root| {
+            blob::render_blob(root, input)
+        })
     }
 
     #[test]
     fn plain_returns_none() {
-        assert!(parse_and_render(PLAIN).is_none(), "plain text should return None");
+        assert!(
+            parse_and_render(PLAIN).is_none(),
+            "plain text should return None"
+        );
     }
 
     #[test]
@@ -187,19 +196,25 @@ mod tests {
 
             // Warmup
             for _ in 0..100 {
-                let _ = parse_document_zerocopy(trimmed, &opts, |root| blob::render_blob(root, trimmed));
+                let _ = parse_document_zerocopy(trimmed, &opts, |root| {
+                    blob::render_blob(root, trimmed)
+                });
             }
 
             let iterations = 500;
             let start = std::time::Instant::now();
             for _ in 0..iterations {
-                let _ = parse_document_zerocopy(trimmed, &opts, |root| blob::render_blob(root, trimmed));
+                let _ = parse_document_zerocopy(trimmed, &opts, |root| {
+                    blob::render_blob(root, trimmed)
+                });
             }
             let elapsed = start.elapsed() / iterations;
-            eprintln!("{} ({} chars): {:.1} us",
-                name, trimmed.len(),
-                elapsed.as_nanos() as f64 / 1000.0);
+            eprintln!(
+                "{} ({} chars): {:.1} us",
+                name,
+                trimmed.len(),
+                elapsed.as_nanos() as f64 / 1000.0
+            );
         }
     }
-
 }

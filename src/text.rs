@@ -23,7 +23,9 @@ pub fn collapse_whitespace(s: &str) -> Cow<'_, str> {
     let mut prev_space = false;
     for c in s.chars() {
         if c == ' ' {
-            if !prev_space { out.push(' '); }
+            if !prev_space {
+                out.push(' ');
+            }
             prev_space = true;
         } else {
             out.push(c);
@@ -48,9 +50,11 @@ pub fn prefer_ascii(s: &str) -> Cow<'_, str> {
     if memchr::memchr(0xE2, s.as_bytes()).is_none() {
         return Cow::Borrowed(s);
     }
-    if !s.as_bytes().windows(3).any(|w|
-        w[0] == 0xE2 && w[1] == 0x80 && matches!(w[2], 0x93 | 0x94 | 0x98 | 0x99 | 0x9C | 0x9D | 0xA6))
-    {
+    if !s.as_bytes().windows(3).any(|w| {
+        w[0] == 0xE2
+            && w[1] == 0x80
+            && matches!(w[2], 0x93 | 0x94 | 0x98 | 0x99 | 0x9C | 0x9D | 0xA6)
+    }) {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len());

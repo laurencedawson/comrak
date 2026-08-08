@@ -12,11 +12,15 @@ pub struct ResolvedUrl<'a>(Cow<'a, str>);
 
 impl Deref for ResolvedUrl<'_> {
     type Target = str;
-    fn deref(&self) -> &str { &self.0 }
+    fn deref(&self) -> &str {
+        &self.0
+    }
 }
 
 impl AsRef<str> for ResolvedUrl<'_> {
-    fn as_ref(&self) -> &str { &self.0 }
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Finalize a URL for display: resolve it to its real target (unwrap proxies/redirects,
@@ -102,13 +106,19 @@ fn pictrs_preview(url: &str) -> Cow<'_, str> {
     if !url.contains("/pictrs/image/") {
         return Cow::Borrowed(url);
     }
-    let non_static = path_ext(url).is_some_and(|e| e.eq_ignore_ascii_case("gif")
-        || crate::image_url::VIDEO_EXTENSIONS.iter().any(|v| e.eq_ignore_ascii_case(v)));
+    let non_static = path_ext(url).is_some_and(|e| {
+        e.eq_ignore_ascii_case("gif")
+            || crate::image_url::VIDEO_EXTENSIONS
+                .iter()
+                .any(|v| e.eq_ignore_ascii_case(v))
+    });
     if non_static {
         return Cow::Borrowed(url);
     }
     let path = url.split(['?', '#']).next().unwrap_or(url);
-    Cow::Owned(format!("{path}?thumbnail={PICTRS_PREVIEW_WIDTH}&format=webp"))
+    Cow::Owned(format!(
+        "{path}?thumbnail={PICTRS_PREVIEW_WIDTH}&format=webp"
+    ))
 }
 
 fn unwrap_redirect(url: &str, prefix: &str, param: &str) -> Option<String> {
@@ -196,7 +206,8 @@ fn normalize_mobile_youtube(url: &str) -> Option<String> {
 }
 
 fn strip_scheme(url: &str) -> Option<&str> {
-    url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))
+    url.strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
 }
 
 /// The extension of a URL's last path segment, with any query/fragment stripped.
@@ -204,7 +215,10 @@ fn strip_scheme(url: &str) -> Option<&str> {
 /// case-insensitively.
 pub(crate) fn path_ext(url: &str) -> Option<&str> {
     let path = url.split(['?', '#']).next().unwrap_or(url);
-    path.rsplit('/').next()?.rsplit_once('.').map(|(_, ext)| ext)
+    path.rsplit('/')
+        .next()?
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
 }
 
 /// Extract and percent-decode a query parameter. Decodes per RFC 3986, not
@@ -214,14 +228,18 @@ pub(crate) fn path_ext(url: &str) -> Option<&str> {
 /// URL, and callers keep the wrapped URL instead, which still serves.
 fn query_param(url: &str, param: &str) -> Option<String> {
     let parsed = url::Url::parse(url).ok()?;
-    let raw = parsed
-        .query()?
-        .split('&')
-        .find_map(|kv| kv.split_once('=').filter(|(k, _)| *k == param).map(|(_, v)| v))?;
+    let raw = parsed.query()?.split('&').find_map(|kv| {
+        kv.split_once('=')
+            .filter(|(k, _)| *k == param)
+            .map(|(_, v)| v)
+    })?;
     if raw.is_empty() {
         return None;
     }
-    let value = percent_encoding_rfc3986::percent_decode_str(raw).ok()?.decode_utf8().ok()?;
+    let value = percent_encoding_rfc3986::percent_decode_str(raw)
+        .ok()?
+        .decode_utf8()
+        .ok()?;
     if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return None;
     }
@@ -239,8 +257,12 @@ pub fn extract_domain(url: &str) -> Option<Cow<'_, str>> {
         .or_else(|| url[start..].find('?'))
         .map_or(url.len(), |i| start + i);
     let mut host = &url[start..end];
-    if host.starts_with("www.") { host = &host[4..]; }
-    if host.is_empty() { return None; }
+    if host.starts_with("www.") {
+        host = &host[4..];
+    }
+    if host.is_empty() {
+        return None;
+    }
     if host.bytes().all(|b| !b.is_ascii_uppercase()) {
         Some(Cow::Borrowed(host))
     } else {

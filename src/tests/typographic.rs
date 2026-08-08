@@ -32,12 +32,7 @@ fn smart_trademark() {
 
 #[test]
 fn smart_plus_minus() {
-    html_opts!(
-        [parse.smart],
-        "5+-2\n",
-        "<p>5\u{b1}2</p>\n",
-        no_roundtrip,
-    );
+    html_opts!([parse.smart], "5+-2\n", "<p>5\u{b1}2</p>\n", no_roundtrip,);
 }
 
 #[test]
@@ -52,12 +47,7 @@ fn smart_cap_question_marks() {
 
 #[test]
 fn smart_cap_exclamation_marks() {
-    html_opts!(
-        [parse.smart],
-        "wow!!!!\n",
-        "<p>wow!!!</p>\n",
-        no_roundtrip,
-    );
+    html_opts!([parse.smart], "wow!!!!\n", "<p>wow!!!</p>\n", no_roundtrip,);
 }
 
 #[test]

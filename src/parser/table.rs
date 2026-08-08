@@ -308,7 +308,9 @@ fn try_inserting_table_header_paragraph<'a>(
     paragraph.sourcepos.end.line = start.line + newlines - 1;
 
     for n in 0..newlines {
-        paragraph.line_offsets_mut().push(container_ast.line_offsets()[n]);
+        paragraph
+            .line_offsets_mut()
+            .push(container_ast.line_offsets()[n]);
     }
 
     let last_line_offset = *paragraph.line_offsets().last().unwrap_or(&0);

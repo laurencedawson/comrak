@@ -1,5 +1,4 @@
 mod autolink;
-pub mod url;
 mod inlines;
 pub mod options;
 #[cfg(feature = "phoenix_heex")]
@@ -7,6 +6,7 @@ pub mod phoenix_heex;
 #[cfg(feature = "shortcodes")]
 pub mod shortcodes;
 mod table;
+pub mod url;
 
 use std::borrow::Cow;
 use std::cmp::{Ordering, min};
@@ -842,10 +842,26 @@ where
             // Letters, digits, and most punctuation cannot start block structures,
             // so skip all 15 handlers for continuation lines.
             let first_byte = line.as_bytes().get(self.first_nonspace).copied();
-            let could_be_block = !indented && matches!(first_byte,
-                Some(b'>' | b'#' | b'`' | b'~' | b'<' | b'-' | b'_' | b'*' | b'+' |
-                     b'=' | b'[' | b':' | b'|' | b'{' | b'0'..=b'9')
-            );
+            let could_be_block = !indented
+                && matches!(
+                    first_byte,
+                    Some(
+                        b'>' | b'#'
+                            | b'`'
+                            | b'~'
+                            | b'<'
+                            | b'-'
+                            | b'_'
+                            | b'*'
+                            | b'+'
+                            | b'='
+                            | b'['
+                            | b':'
+                            | b'|'
+                            | b'{'
+                            | b'0'..=b'9'
+                    )
+                );
 
             if !((could_be_block
                 && (self.handle_lemmy_spoiler(container, line)
@@ -949,7 +965,9 @@ where
         let title = match info.strip_prefix("spoiler") {
             Some(rest) if rest.starts_with(char::is_whitespace) => {
                 let trimmed = rest.trim();
-                if trimmed.is_empty() { return false; }
+                if trimmed.is_empty() {
+                    return false;
+                }
                 trimmed.to_string()
             }
             _ => return false,
@@ -2355,7 +2373,10 @@ where
                 let end_line = ast.sourcepos.start.line + num_lines;
                 ast.sourcepos.end = (end_line, end_col).into();
 
-                mem::swap(&mut nhb.literal, &mut ast.block.get_or_insert_with(Default::default).content);
+                mem::swap(
+                    &mut nhb.literal,
+                    &mut ast.block.get_or_insert_with(Default::default).content,
+                );
             }
             #[cfg(feature = "phoenix_heex")]
             NodeValue::HeexBlock(ref mut nhb) => {
@@ -2368,7 +2389,10 @@ where
                 let end_line = ast.sourcepos.start.line + num_lines;
                 ast.sourcepos.end = (end_line, end_col).into();
 
-                mem::swap(&mut nhb.literal, &mut ast.block.get_or_insert_with(Default::default).content);
+                mem::swap(
+                    &mut nhb.literal,
+                    &mut ast.block.get_or_insert_with(Default::default).content,
+                );
             }
             NodeValue::List(ref mut nl) => {
                 if let Some(candidate_end) = self.fix_zero_end_columns(node) {
@@ -2787,13 +2811,7 @@ where
         }
 
         if self.options.extension.lemmy_mention && !in_bracket_context {
-            autolink::process_lemmy_mentions(
-                self.arena,
-                node,
-                text,
-                sourcepos,
-                &mut spx,
-            );
+            autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &mut spx);
         }
 
         if self.options.extension.autolink && !in_bracket_context {

@@ -2,7 +2,7 @@
 //! Run with: cargo run --release --example profile_parse
 
 fn main() {
-    use comrak::{blob, parse_document_zerocopy, Options};
+    use comrak::{Options, blob, parse_document_zerocopy};
     use std::time::Instant;
 
     let mut opts = Options::default();
@@ -32,7 +32,10 @@ fn main() {
         parse_document_zerocopy(trimmed, &opts, |_| {});
     }
     let total = start.elapsed() / iterations;
-    println!("long-doc total parse: {:.1} us", total.as_nanos() as f64 / 1000.0);
+    println!(
+        "long-doc total parse: {:.1} us",
+        total.as_nanos() as f64 / 1000.0
+    );
 
     // Now with blob rendering
     let start = Instant::now();
@@ -43,9 +46,11 @@ fn main() {
     }
     let total_with_blob = start.elapsed() / iterations;
     let blob_time = total_with_blob - total;
-    println!("long-doc parse+blob: {:.1} us (blob: {:.1} us)",
+    println!(
+        "long-doc parse+blob: {:.1} us (blob: {:.1} us)",
         total_with_blob.as_nanos() as f64 / 1000.0,
-        blob_time.as_nanos() as f64 / 1000.0);
+        blob_time.as_nanos() as f64 / 1000.0
+    );
 
     // Profile each test
     let inputs = vec![
@@ -57,7 +62,10 @@ fn main() {
         ("long-doc", comrak::benchmarks::long_doc()),
     ];
 
-    println!("\n{:<15} {:>8} {:>8} {:>8}", "test", "parse", "blob", "total");
+    println!(
+        "\n{:<15} {:>8} {:>8} {:>8}",
+        "test", "parse", "blob", "total"
+    );
     println!("{:-<43}", "");
     for (name, input) in &inputs {
         let trimmed = input.trim();
@@ -78,10 +86,12 @@ fn main() {
         let total = start.elapsed() / iterations;
         let blob = total - parse;
 
-        println!("{:<15} {:>6.1} us {:>6.1} us {:>6.1} us",
+        println!(
+            "{:<15} {:>6.1} us {:>6.1} us {:>6.1} us",
             name,
             parse.as_nanos() as f64 / 1000.0,
             blob.as_nanos() as f64 / 1000.0,
-            total.as_nanos() as f64 / 1000.0);
+            total.as_nanos() as f64 / 1000.0
+        );
     }
 }
