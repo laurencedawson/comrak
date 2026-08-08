@@ -2858,20 +2858,25 @@ where
             base += self.process_tasklist(node, text, sourcepos, &spx);
         }
 
-        if self.options.extension.lemmy_mention && !in_bracket_context {
-            autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &spx, base);
-        }
+        // Every construct these detectors can produce contains '@' (mentions
+        // are @user@host / !comm@host, emails are addr@host), so one scan
+        // gates both passes and @-free nodes skip them entirely.
+        if !in_bracket_context && memchr::memchr(b'@', text.as_bytes()).is_some() {
+            if self.options.extension.lemmy_mention {
+                autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &spx, base);
+            }
 
-        if self.options.extension.autolink && !in_bracket_context {
-            autolink::process_email_autolinks(
-                self.arena,
-                node,
-                text,
-                self.options.parse.relaxed_autolinks,
-                sourcepos,
-                &spx,
-                base,
-            );
+            if self.options.extension.autolink {
+                autolink::process_email_autolinks(
+                    self.arena,
+                    node,
+                    text,
+                    self.options.parse.relaxed_autolinks,
+                    sourcepos,
+                    &spx,
+                    base,
+                );
+            }
         }
     }
 

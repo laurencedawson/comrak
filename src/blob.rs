@@ -188,8 +188,15 @@ impl BlobWriter {
     /// `render_blob` re-renders with exact accounting, as it did before
     /// symbols moved here.
     fn write_prose(&mut self, s: &str) {
-        match typographic_symbols(s) {
-            Cow::Borrowed(_) => self.write_text(s),
+        // One gate for both character passes: prefer_ascii only acts on
+        // 0xE2-lead sequences, typographic_symbols only on '(' or '+'.
+        // The common clean node takes a single scan and writes as-is.
+        if memchr::memchr3(0xE2, b'(', b'+', s.as_bytes()).is_none() {
+            return self.write_text(s);
+        }
+        let s = prefer_ascii(s);
+        match typographic_symbols(&s) {
+            Cow::Borrowed(_) => self.write_text(&s),
             Cow::Owned(sym) => {
                 if !self.fast_path_ascii || self.text().is_ascii() {
                     self.fast_path_ascii = false;
@@ -501,7 +508,7 @@ pub(crate) fn visit<'a>(
             out.footnotes.push(tmp.text().trim().to_string());
         }
 
-        Text(t) => out.write_prose(&prefer_ascii(&collapse_whitespace(t))),
+        Text(t) => out.write_prose(&collapse_whitespace(t)),
         #[cfg(feature = "shortcodes")]
         ShortCode(sc) => out.write_text(&sc.emoji),
         Code(c) => {
