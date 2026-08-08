@@ -52,6 +52,8 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     no_link_openers: bool,
     char_tables: &'o CharTables,
     string_arena: Option<&'a typed_arena::Arena<String>>,
+    /// Last plain Text node appended; sole merge target for `try_widen_last_text`.
+    last_plain_text: Option<Node<'a>>,
 }
 
 /// Extend a borrowed `&'a str` from a string_arena to `'static` for NodeValue::Text.
@@ -186,6 +188,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             no_link_openers: true,
             char_tables,
             string_arena,
+            last_plain_text: None,
         }
     }
 
@@ -240,6 +243,65 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             table_visited: false,
         };
         self.arena.alloc(ast.into())
+    }
+
+    /// Widen the previous plain Text node to also cover `input[startpos..endpos)`,
+    /// when it was the last inline appended and the slices are contiguous.
+    /// Zerocopy only; the full-parse path coalesces in postprocess instead.
+    fn try_widen_last_text(&self, parent: Node<'a>, startpos: usize, endpos: usize) -> bool {
+        let prev = match self.last_plain_text {
+            Some(p)
+                if self.is_zerocopy()
+                    && parent.last_child().is_some_and(|lc| std::ptr::eq(lc, p)) =>
+            {
+                p
+            }
+            _ => return false,
+        };
+        let new = &self.input[startpos..endpos];
+        let mut ast = prev.data_mut();
+        let NodeValue::Text(Cow::Borrowed(s)) = &ast.value else {
+            return false;
+        };
+        if s.as_bytes().as_ptr_range().end != new.as_ptr() {
+            return false;
+        }
+        // SAFETY: contiguous byte ranges of the same input buffer, joined on
+        // char boundaries; same arena lifetime `extend_lifetime` already relies on.
+        let widened = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                s.as_ptr(),
+                s.len() + new.len(),
+            ))
+        };
+        ast.value = NodeValue::Text(Cow::Borrowed(unsafe { extend_lifetime(widened) }));
+        ast.sourcepos.end.column =
+            usize::try_from(endpos as isize + self.column_offset + self.line_offset as isize)
+                .unwrap();
+        true
+    }
+
+    /// Text for a failed special-char probe (`fallback` equals the input at
+    /// `startpos`): merge into the previous plain Text node, or append and
+    /// remember as the next merge target.
+    fn probe_text(
+        &mut self,
+        parent: Node<'a>,
+        fallback: &'static str,
+        startpos: usize,
+    ) -> Option<Node<'a>> {
+        let endpos = startpos + fallback.len();
+        if self.try_widen_last_text(parent, startpos, endpos) {
+            return None;
+        }
+        let text: Cow<'static, str> = if self.is_zerocopy() {
+            Cow::Borrowed(unsafe { extend_lifetime(&self.input[startpos..endpos]) })
+        } else {
+            fallback.into()
+        };
+        let inl = self.make_inline(NodeValue::Text(text), startpos, endpos - 1);
+        self.last_plain_text = Some(inl);
+        Some(inl)
     }
 
     fn make_autolink(
@@ -323,11 +385,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
                 if res.is_none() {
                     self.scanner.pos += 1;
-                    res = Some(self.make_inline(
-                        NodeValue::Text(":".into()),
-                        self.scanner.pos - 1,
-                        self.scanner.pos - 1,
-                    ));
+                    res = self.probe_text(node, ":", self.scanner.pos - 1);
                 }
 
                 res
@@ -337,17 +395,13 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     Some(inl) => Some(inl),
                     None => {
                         self.scanner.pos += 1;
-                        Some(self.make_inline(
-                            NodeValue::Text("w".into()),
-                            self.scanner.pos - 1,
-                            self.scanner.pos - 1,
-                        ))
+                        self.probe_text(node, "w", self.scanner.pos - 1)
                     }
                 }
             }
             b'*' | b'_' | b'\'' | b'"' => Some(self.handle_delim(b)),
             b'-' => Some(self.handle_hyphen()),
-            b'.' => Some(self.handle_period()),
+            b'.' => self.handle_period(node),
             b'(' if self.options.parse.smart => Some(self.handle_open_paren()),
             b'+' if self.options.parse.smart => {
                 if self.peek_byte_n(1) == Some(b'-') {
@@ -414,11 +468,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 } else if self.options.parse.smart && self.peek_byte() == Some(b'!') {
                     Some(self.handle_punctuation_cap_from(b'!', 3, self.scanner.pos - 1))
                 } else {
-                    Some(self.make_inline(
-                        NodeValue::Text("!".into()),
-                        self.scanner.pos - 1,
-                        self.scanner.pos - 1,
-                    ))
+                    self.probe_text(node, "!", self.scanner.pos - 1)
                 }
             }
             b'~' if self.options.extension.strikethrough || self.options.extension.subscript => {
@@ -453,7 +503,10 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 let startpos = self.scanner.pos;
                 self.scanner.pos = endpos;
 
-                let mut contents: Cow<str> = if !self.is_zerocopy() && endpos == self.input.len() {
+                // The `mem::take` below resets `input` and makes `is_zerocopy` lie.
+                let zerocopy = self.is_zerocopy();
+
+                let mut contents: Cow<str> = if !zerocopy && endpos == self.input.len() {
                     let mut contents = mem::take(&mut self.input).into_owned();
                     strings::remove_from_start(&mut contents, startpos);
                     contents.into()
@@ -467,8 +520,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     endpos -= size_before - contents.len();
                 }
 
-                if !contents.is_empty() {
-                    let text: Cow<'static, str> = if self.is_zerocopy() {
+                if contents.is_empty()
+                    || (zerocopy && self.try_widen_last_text(node, startpos, endpos))
+                {
+                    None
+                } else {
+                    let text: Cow<'static, str> = if zerocopy {
                         match contents {
                             Cow::Borrowed(s) => Cow::Borrowed(unsafe { extend_lifetime(s) }),
                             Cow::Owned(s) => s.into(),
@@ -476,9 +533,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     } else {
                         contents.into_owned().into()
                     };
-                    Some(self.make_inline(NodeValue::Text(text), startpos, endpos - 1))
-                } else {
-                    None
+                    let inl = self.make_inline(NodeValue::Text(text), startpos, endpos - 1);
+                    self.last_plain_text = Some(inl);
+                    Some(inl)
                 }
             }
         };
@@ -999,30 +1056,26 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         self.make_inline(NodeValue::Text(buf.into()), start, self.scanner.pos - 1)
     }
 
-    fn handle_period(&mut self) -> Node<'a> {
+    fn handle_period(&mut self, node: Node<'a>) -> Option<Node<'a>> {
         self.scanner.pos += 1;
         if self.options.parse.smart && (self.peek_byte() == Some(b'.')) {
             self.scanner.pos += 1;
             if self.peek_byte() == Some(b'.') {
                 self.scanner.pos += 1;
-                self.make_inline(
+                Some(self.make_inline(
                     NodeValue::Text("…".into()),
                     self.scanner.pos - 3,
                     self.scanner.pos - 1,
-                )
+                ))
             } else {
-                self.make_inline(
+                Some(self.make_inline(
                     NodeValue::Text("..".into()),
                     self.scanner.pos - 2,
                     self.scanner.pos - 1,
-                )
+                ))
             }
         } else {
-            self.make_inline(
-                NodeValue::Text(".".into()),
-                self.scanner.pos - 1,
-                self.scanner.pos - 1,
-            )
+            self.probe_text(node, ".", self.scanner.pos - 1)
         }
     }
 

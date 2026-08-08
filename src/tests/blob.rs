@@ -734,11 +734,17 @@ mod links {
         assert!(result.span_iter().any(|s| s.typ == LINK));
     }
 
-    /// Lemmy community mentions become LINK spans.
+    /// Lemmy community mentions become LINK spans pointing at the community
+    /// (not, e.g., a mailto link for the `name@instance` tail).
     #[test]
     fn lemmy_community_mention() {
         let result = render_test("!linux@lemmy.ml");
-        assert!(result.span_iter().any(|s| s.typ == LINK));
+        assert!(result.span_iter().any(|s| {
+            s.typ == LINK
+                && s.url
+                    .as_deref()
+                    .is_some_and(|u| u.contains("lemmy.ml/c/linux"))
+        }));
     }
 
     /// Lemmy user mentions don't append a domain suffix (text already contains it).
@@ -746,6 +752,12 @@ mod links {
     fn lemmy_user_mention_no_suffix() {
         let result = render_test("@user@lemmy.ml");
         assert_eq!(result.text(), "@user@lemmy.ml");
+        assert!(result.span_iter().any(|s| {
+            s.typ == LINK
+                && s.url
+                    .as_deref()
+                    .is_some_and(|u| u.contains("lemmy.ml/u/user"))
+        }));
     }
 
     /// Explicit link to an image URL still gets domain suffix and stays LINK.
@@ -1531,5 +1543,108 @@ mod edge {
         let result = render_test("``");
         assert_eq!(result.text(), "``");
         assert_eq!(result.span_iter().count(), 0);
+    }
+}
+
+// ── production config ────────────────────────────────────────────────────
+// Regression tests for the exact option set the app ships (P0: mentions and
+// email autolinks silently failing to link on the zerocopy path when
+// parse.smart is enabled).
+
+mod production {
+    use super::*;
+    use crate::blob::*;
+
+    /// Mirrors `production_options()` in the JNI shim
+    /// (library/src/main/rust/src/lib.rs). Keep in sync: the shim's own tests
+    /// only cover `needs_parse`, so span-level behavior is pinned here.
+    fn production_opts() -> Options<'static> {
+        let mut opts = Options::default();
+        opts.extension.strikethrough = true;
+        opts.extension.table = true;
+        opts.extension.autolink = true;
+        opts.extension.superscript = true;
+        opts.extension.subscript = true;
+        #[cfg(feature = "shortcodes")]
+        {
+            opts.extension.shortcodes = true;
+        }
+        opts.extension.footnotes = true;
+        opts.extension.lemmy_mention = true;
+        opts.extension.lemmy_spoiler = true;
+        opts.parse.strip_invisible = true;
+        opts.parse.strip_leading_breaks = true;
+        opts.parse.smart = true;
+        opts
+    }
+
+    /// `render_test`, but with the production option set.
+    fn render_prod(markdown: &str) -> BlobWriter {
+        let opts = production_opts();
+        parse_document_zerocopy(markdown.trim(), &opts, |root| {
+            let mut out = BlobWriter::new(256);
+            visit(root, &mut out, 0, 0, 0);
+            out.append_footnotes();
+            out.clear_pending();
+            out
+        })
+    }
+
+    fn link_urls(w: &BlobWriter) -> Vec<String> {
+        w.span_iter()
+            .filter(|s| s.typ == LINK)
+            .filter_map(|s| s.url)
+            .collect()
+    }
+
+    #[test]
+    fn user_mention_links_on_lemmy_ml() {
+        let urls = link_urls(&render_prod("@user@lemmy.ml"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.ml/u/user")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn user_mention_links_on_lemmy_world() {
+        let urls = link_urls(&render_prod("@user@lemmy.world"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.world/u/user")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn user_mention_links_on_dot_com_instance() {
+        let urls = link_urls(&render_prod("@user@example.com"));
+        assert!(
+            urls.iter().any(|u| u.contains("example.com/u/user")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn community_mention_links() {
+        let urls = link_urls(&render_prod("!linux@lemmy.ml"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.ml/c/linux")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn email_autolink_links() {
+        let urls = link_urls(&render_prod("mail user@x.com now"));
+        assert!(urls.iter().any(|u| u.starts_with("mailto:")), "{urls:?}");
+    }
+
+    #[test]
+    fn url_autolink_links() {
+        let urls = link_urls(&render_prod("see https://example.com/page ok"));
+        assert!(
+            urls.iter().any(|u| u.contains("example.com/page")),
+            "{urls:?}"
+        );
     }
 }
