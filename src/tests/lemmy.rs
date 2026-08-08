@@ -391,3 +391,50 @@ fn lemmy_spoiler_not_other_directives() {
         concat!("<p>:::warning\n", "Not a spoiler\n", ":::</p>\n",),
     );
 }
+
+#[test]
+fn lemmy_mention_after_email_autolink() {
+    html_opts!(
+        [extension.autolink, extension.lemmy_mention],
+        "Contact user@x.com or @foo@bar.com\n",
+        "<p>Contact <a href=\"mailto:user@x.com\">user@x.com</a> or <a href=\"https://bar.com/u/foo\">@foo@bar.com</a></p>\n",
+        no_roundtrip,
+    );
+}
+
+#[test]
+fn lemmy_mention_between_emails() {
+    html_opts!(
+        [extension.autolink, extension.lemmy_mention],
+        "a user@x.com b @foo@bar.com c other@y.org d\n",
+        "<p>a <a href=\"mailto:user@x.com\">user@x.com</a> b <a href=\"https://bar.com/u/foo\">@foo@bar.com</a> c <a href=\"mailto:other@y.org\">other@y.org</a> d</p>\n",
+        no_roundtrip,
+    );
+}
+
+#[test]
+fn lemmy_mention_email_sourcepos() {
+    let arena = Arena::new();
+    let mut options = Options::default();
+    options.extension.autolink = true;
+    options.extension.lemmy_mention = true;
+    let root = parse_document(
+        &arena,
+        "a user@x.com b @foo@bar.com c other@y.org d\n",
+        &options,
+    );
+    let mut got = vec![];
+    for node in root.descendants() {
+        if let NodeValue::Link(ref nl) = node.data().value {
+            got.push((nl.url.to_string(), node.data().sourcepos));
+        }
+    }
+    self::assert_eq!(
+        got,
+        vec![
+            ("mailto:user@x.com".to_string(), (1, 3, 1, 12).into()),
+            ("https://bar.com/u/foo".to_string(), (1, 16, 1, 27).into()),
+            ("mailto:other@y.org".to_string(), (1, 31, 1, 41).into()),
+        ]
+    );
+}

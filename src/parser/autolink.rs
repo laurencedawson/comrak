@@ -95,7 +95,8 @@ pub(crate) fn process_lemmy_mentions<'a>(
     node: Node<'a>,
     contents: &mut Cow<'static, str>,
     sourcepos: &mut Sourcepos,
-    spx: &mut Spx,
+    spx: &Spx,
+    base: usize,
 ) {
     // Fast path: mentions trigger on `@` or `!`. Without one, no match is
     // possible — skip the per-byte scan entirely.
@@ -131,9 +132,9 @@ pub(crate) fn process_lemmy_mentions<'a>(
             };
             let initial_end_col = sourcepos.end.column;
 
-            sourcepos.end.column = spx.consume(i);
+            sourcepos.end.column = spx.col_at(base + i);
 
-            let nsp_end_col = spx.consume(skip);
+            let nsp_end_col = spx.col_at(base + i + skip);
 
             contents.to_mut().truncate(i);
 
@@ -163,7 +164,7 @@ pub(crate) fn process_lemmy_mentions<'a>(
                     unreachable!();
                 };
                 let mut after_sp = asp;
-                process_lemmy_mentions(arena, after, text, &mut after_sp, spx);
+                process_lemmy_mentions(arena, after, text, &mut after_sp, spx, base + i + skip);
                 after_ast.sourcepos = after_sp;
             }
 
@@ -178,7 +179,8 @@ pub(crate) fn process_email_autolinks<'a>(
     contents: &mut Cow<'static, str>,
     relaxed_autolinks: bool,
     sourcepos: &mut Sourcepos,
-    spx: &mut Spx,
+    spx: &Spx,
+    base: usize,
 ) {
     // Fast path: emails always contain `@`. Without one in the buffer, no
     // match is possible and we can skip the per-byte bracket-tracking loop.
@@ -234,9 +236,9 @@ pub(crate) fn process_email_autolinks<'a>(
             };
             let initial_end_col = sourcepos.end.column;
 
-            sourcepos.end.column = spx.consume(i);
+            sourcepos.end.column = spx.col_at(base + i);
 
-            let nsp_end_col = spx.consume(skip);
+            let nsp_end_col = spx.col_at(base + i + skip);
 
             contents.to_mut().truncate(i);
 
@@ -267,7 +269,15 @@ pub(crate) fn process_email_autolinks<'a>(
                 let NodeValue::Text(ref mut text) = after_ast.value else {
                     unreachable!();
                 };
-                process_email_autolinks(arena, after, text, relaxed_autolinks, &mut asp, spx);
+                process_email_autolinks(
+                    arena,
+                    after,
+                    text,
+                    relaxed_autolinks,
+                    &mut asp,
+                    spx,
+                    base + i + skip,
+                );
                 after_ast.sourcepos = asp;
             }
 

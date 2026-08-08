@@ -2601,7 +2601,7 @@ where
                         // we can reliably subset them both), or that we're
                         // consuming a whole span.  Trying to consume part of a
                         // span without a matching length is undefined, and we
-                        // will crash; see Spx::consume.
+                        // will crash; see Spx::col_at.
                         //
                         // See HACK comment in
                         // `inlines::Subject::handle_close_bracket` for the
@@ -2826,13 +2826,16 @@ where
         spxv: &mut VecDeque<(Sourcepos, usize)>,
         in_bracket_context: bool,
     ) {
-        let mut spx = Spx(spxv);
+        let spx = Spx(spxv);
+        // Byte offset of `text`'s current start within the run `spx` covers;
+        // advances when a processor strips a prefix.
+        let mut base = 0;
         if self.options.extension.tasklist {
-            self.process_tasklist(node, text, sourcepos, &mut spx);
+            base += self.process_tasklist(node, text, sourcepos, &spx);
         }
 
         if self.options.extension.lemmy_mention && !in_bracket_context {
-            autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &mut spx);
+            autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &spx, base);
         }
 
         if self.options.extension.autolink && !in_bracket_context {
@@ -2842,7 +2845,8 @@ where
                 text,
                 self.options.parse.relaxed_autolinks,
                 sourcepos,
-                &mut spx,
+                &spx,
+                base,
             );
         }
     }
@@ -2854,36 +2858,39 @@ where
     //
     // `text` is the mutably borrowed textual content of `node`.  If it is empty
     // after the call to `process_tasklist`, it will be properly cleaned up.
+    //
+    // Returns the byte count stripped from the front of `text`, for the
+    // caller to carry as the `Spx` base offset of later processors.
     fn process_tasklist(
         &mut self,
         node: Node<'a>,
         text: &mut Cow<'static, str>,
         sourcepos: &mut Sourcepos,
-        spx: &mut Spx,
-    ) {
+        spx: &Spx,
+    ) -> usize {
         // Fast path: tasklist syntax is `[ ]` / `[x]` at the start of the
         // text. If the first byte isn't `[`, the re2c scanner can't match.
         if text.as_bytes().first() != Some(&b'[') {
-            return;
+            return 0;
         }
         let (end, matched, symbol_range) = match scanners::tasklist(text) {
             Some(p) => p,
-            None => return,
+            None => return 0,
         };
 
         let mut chars = matched.chars();
         let Some(symbol) = chars.next() else {
-            return;
+            return 0;
         };
 
         // There must be at most one `char`'s worth of content in `matched`,
         // otherwise we ignore it.
         if chars.next().is_some() {
-            return;
+            return 0;
         }
 
         if !self.options.parse.relaxed_tasklist_matching && !matches!(symbol, ' ' | 'x' | 'X') {
-            return;
+            return 0;
         }
 
         let symbol_sourcepos: Sourcepos = (
@@ -2897,17 +2904,17 @@ where
 
         if node_matches!(parent, NodeValue::TableCell) {
             if !self.options.parse.tasklist_in_table {
-                return;
+                return 0;
             }
 
             if node.previous_sibling().is_some() || node.next_sibling().is_some() {
-                return;
+                return 0;
             }
 
             // For now, require the task item is the only content of the table cell.
             // If we want to relax this later, we can.
             if end != text.len() {
-                return;
+                return 0;
             }
 
             strings::remove_from_start(text.to_mut(), end);
@@ -2923,19 +2930,20 @@ where
                     .into(),
                 ),
             );
+            return end;
         } else if node_matches!(parent, NodeValue::Paragraph) {
             if node.previous_sibling().is_some() || parent.previous_sibling().is_some() {
-                return;
+                return 0;
             }
 
             let grandparent = parent.parent().unwrap();
             if !node_matches!(grandparent, NodeValue::Item(..)) {
-                return;
+                return 0;
             }
 
             let great_grandparent = grandparent.parent().unwrap();
             if !node_matches!(great_grandparent, NodeValue::List(..)) {
-                return;
+                return 0;
             }
 
             // These are sound only because the exact text that we've matched and
@@ -2943,7 +2951,7 @@ where
             // the source document.
             strings::remove_from_start(text.to_mut(), end);
 
-            let adjust = spx.consume(end) + 1;
+            let adjust = spx.col_at(end) + 1;
             assert_eq!(sourcepos.start.column, parent.data().sourcepos.start.column);
 
             // See tests::fuzz::echaw9. The paragraph doesn't exist in the source,
@@ -2963,7 +2971,9 @@ where
             if let NodeValue::List(list) = &mut great_grandparent.data_mut().value {
                 list.is_task_list = true;
             }
+            return end;
         }
+        0
     }
 
     fn parse_reference_inline(
@@ -3183,46 +3193,30 @@ pub enum AutolinkType {
     Email,
 }
 
-pub(crate) struct Spx<'q>(pub(crate) &'q mut VecDeque<(Sourcepos, usize)>);
+pub(crate) struct Spx<'q>(pub(crate) &'q VecDeque<(Sourcepos, usize)>);
 
 impl Spx<'_> {
-    // Sourcepos end column `e` of a node determined by advancing through `spx`
-    // until `i` bytes of input are seen.
+    // Sourcepos end column of the first `rem` bytes of the node run, resolved
+    // by walking `spx` without consuming it. Callers address the run by
+    // absolute byte offset, so matchers may run in any order.
     //
-    // For each element `(sp, x)` in `spx`:
-    // - if remaining `i` is greater than the byte count `x`,
-    //     set `i -= x` and continue.
-    // - if remaining `i` is equal to the byte count `x`,
-    //     set `e = sp.end.column` and finish.
-    // - if remaining `i` is less than the byte count `x`,
-    //     assert `sp.end.column - sp.start.column + 1 == x || i == 0` (1),
-    //     set `e = sp.start.column + i - 1` and finish.
+    // For each element `(sp, x)`: `rem > x` skips the entry; `rem == x` ends
+    // at `sp.end.column`; `rem < x` ends at `sp.start.column + rem - 1` after
+    // asserting `sp.end.column - sp.start.column + 1 == x || rem == 0` (1).
     //
     // (1) If `x` doesn't equal the range covered between the start and end column,
     //     there's no way to determine sourcepos within the range. This is a bug if
     //     it happens; it suggests we've matched an email autolink with some smart
-    //     punctuation in it, or worse.
-    //
-    //     The one exception is if `i == 0`. Given nothing to consume, we can
-    //     happily restore what we popped, returning `sp.start.column - 1` for the
-    //     end column of the original node.
-    pub(crate) fn consume(&mut self, mut rem: usize) -> usize {
-        while let Some((sp, x)) = self.0.pop_front() {
+    //     punctuation in it, or worse. The exception is `rem == 0`, where
+    //     `sp.start.column - 1` (the end of whatever precedes the entry) is
+    //     correct regardless.
+    pub(crate) fn col_at(&self, mut rem: usize) -> usize {
+        for &(sp, x) in self.0.iter() {
             match rem.cmp(&x) {
                 Ordering::Greater => rem -= x,
                 Ordering::Equal => return sp.end.column,
                 Ordering::Less => {
                     assert!((sp.end.column - sp.start.column + 1 == x) || rem == 0);
-                    self.0.push_front((
-                        (
-                            sp.start.line,
-                            sp.start.column + rem,
-                            sp.end.line,
-                            sp.end.column,
-                        )
-                            .into(),
-                        x - rem,
-                    ));
                     return sp.start.column + rem - 1;
                 }
             }

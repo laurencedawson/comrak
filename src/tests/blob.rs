@@ -1647,4 +1647,24 @@ mod production {
             "{urls:?}"
         );
     }
+
+    #[test]
+    fn email_then_mention_both_link() {
+        let urls = link_urls(&render_prod("Contact user@x.com or @foo@bar.com"));
+        assert!(
+            urls.iter().any(|u| u.starts_with("mailto:user@x.com")),
+            "{urls:?}"
+        );
+        assert!(urls.iter().any(|u| u.contains("bar.com/u/foo")), "{urls:?}");
+    }
+
+    #[test]
+    fn mention_mid_text_email_after_both_link() {
+        let urls = link_urls(&render_prod("see @foo@bar.com then mail user@x.com now"));
+        assert!(urls.iter().any(|u| u.contains("bar.com/u/foo")), "{urls:?}");
+        assert!(
+            urls.iter().any(|u| u.starts_with("mailto:user@x.com")),
+            "{urls:?}"
+        );
+    }
 }
