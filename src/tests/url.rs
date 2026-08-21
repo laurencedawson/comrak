@@ -132,6 +132,32 @@ fn image_proxy_undecodable_inner_url_kept_wrapped() {
     unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%2Gb.png");
     // Decodes to invalid UTF-8.
     unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%FFb.png");
+    // Percent sequence truncated by end of string.
+    unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%2");
+}
+
+#[test]
+fn query_inside_fragment_is_not_a_query() {
+    // The fragment starts at the first '#'; a '?' after it is fragment text,
+    // not a query. Url::parse agreed, and the hand-rolled extractor must too.
+    unchanged("https://lemmy.ml/api/v3/image_proxy#section?url=https%3A%2F%2Fx.com%2Fa.png");
+}
+
+#[test]
+fn image_proxy_fragment_after_query_excluded() {
+    // The unwrapped value ends where the fragment begins.
+    check(
+        "https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa.png#thumb",
+        "https://x.com/a.png",
+    );
+}
+
+#[test]
+fn image_proxy_decodes_lowercase_hex() {
+    check(
+        "https://lemmy.ml/api/v3/image_proxy?url=https%3a%2f%2fexample.com%2fimg.png",
+        "https://example.com/img.png",
+    );
 }
 
 #[test]

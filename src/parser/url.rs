@@ -233,8 +233,14 @@ pub(crate) fn path_ext(url: &str) -> Option<&str> {
 /// value containing whitespace/control chars — such a value can't be a usable
 /// URL, and callers keep the wrapped URL instead, which still serves.
 fn query_param(url: &str, param: &str) -> Option<String> {
-    let parsed = url::Url::parse(url).ok()?;
-    let raw = parsed.query()?.split('&').find_map(|kv| {
+    // Query = between the first '?' after the scheme separator and the first
+    // '#': a '?' inside the fragment is not a query. Requiring the scheme
+    // keeps the old Url::parse behaviour of rejecting scheme-less strings;
+    // every caller feeds absolute http(s) URLs.
+    let scheme_end = SCHEME_SEP.find(url.as_bytes())? + 3;
+    let pre_fragment = url[scheme_end..].split('#').next().unwrap_or("");
+    let query = &pre_fragment[pre_fragment.find('?')? + 1..];
+    let raw = query.split('&').find_map(|kv| {
         kv.split_once('=')
             .filter(|(k, _)| *k == param)
             .map(|(_, v)| v)
@@ -242,14 +248,33 @@ fn query_param(url: &str, param: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
-    let value = percent_encoding_rfc3986::percent_decode_str(raw)
-        .ok()?
-        .decode_utf8()
-        .ok()?;
+    let value = percent_decode(raw)?;
     if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return None;
     }
-    Some(value.into_owned())
+    Some(value)
+}
+
+/// RFC 3986 percent-decoding: `%XX` becomes a byte, everything else (including
+/// `+`) passes through literally. `None` on a malformed sequence or invalid
+/// UTF-8, matching the percent-encoding-rfc3986 crate this replaced.
+pub(crate) fn percent_decode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3)?;
+            let hi = (hex[0] as char).to_digit(16)?;
+            let lo = (hex[1] as char).to_digit(16)?;
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Extract the host component from a URL for display-suffix deduplication.

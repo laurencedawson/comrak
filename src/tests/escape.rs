@@ -62,10 +62,7 @@ fn escape_link_target() {
     );
     assert_eq!(
         decoded,
-        percent_encoding_rfc3986::percent_decode_str(&html)
-            .unwrap()
-            .decode_utf8()
-            .unwrap()
+        crate::parser::url::percent_decode(&html).unwrap()
     );
 }
 
