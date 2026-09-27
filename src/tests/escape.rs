@@ -60,10 +60,7 @@ fn escape_link_target() {
         "rabbits)%20%3Ccup%0Dcakes%0A%3E%20%5B%7Bhya%25cinth%7d%5D(",
         html
     );
-    assert_eq!(
-        decoded,
-        crate::parser::url::percent_decode(&html).unwrap()
-    );
+    assert_eq!(decoded, crate::parser::url::percent_decode(&html).unwrap());
 }
 
 #[test]
