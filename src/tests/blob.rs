@@ -420,54 +420,40 @@ mod format {
     }
 
     const FLAG_IS_ASCII: u8 = 1 << 0;
-    const FLAG_NEEDS_REFLOW: u8 = 1 << 1;
-    const FLAG_HAS_SPOILER_BODY: u8 = 1 << 2;
+    const FLAG_HAS_SPOILER_BODY: u8 = 1 << 1;
 
-    /// Empty writer: is_ascii vacuously true, no reflow trigger.
+    /// Empty writer: is_ascii vacuously true, no spoiler body.
     #[test]
     fn flags_empty_blob() {
         let blob = BlobWriter::new(0).into_blob();
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
-        assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
         assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
     }
 
-    /// Pure ASCII text with formatting spans sets is_ascii but no reflow flag.
+    /// Pure ASCII text with formatting spans sets is_ascii and nothing else.
     #[test]
-    fn flags_ascii_bold_no_reflow() {
+    fn flags_ascii_bold_only() {
         let blob = blob_bytes("**bold text**");
         let flags = blob_flags(&blob);
-        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
-        assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
-        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
+        assert_eq!(flags, FLAG_IS_ASCII);
     }
 
-    /// Image span sets needs_reflow and is_ascii (text stays ASCII).
+    /// An image sets no flag of its own: the host decides on layout from the spans it
+    /// finds, so nothing in the header speaks for it.
     #[test]
-    fn flags_image_sets_reflow() {
+    fn flags_image_sets_nothing_of_its_own() {
         let blob = blob_bytes("![](https://example.com/x.jpg)");
-        let flags = blob_flags(&blob);
-        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
-        assert_eq!(flags & FLAG_NEEDS_REFLOW, FLAG_NEEDS_REFLOW);
-        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
+        assert_eq!(blob_flags(&blob), FLAG_IS_ASCII);
     }
 
-    /// LEMMY_SPOILER_TITLE sets needs_reflow.
+    /// A spoiler's hidden body is the one span the header speaks for, so the host can
+    /// skip containment checks on every comment that has none.
     #[test]
-    fn flags_lemmy_spoiler_sets_reflow() {
+    fn flags_lemmy_spoiler_sets_spoiler_body() {
         let blob = blob_bytes(":::spoiler the secret\nhidden body\n:::");
         let flags = blob_flags(&blob);
-        assert_eq!(flags & FLAG_NEEDS_REFLOW, FLAG_NEEDS_REFLOW);
         assert_eq!(flags & FLAG_HAS_SPOILER_BODY, FLAG_HAS_SPOILER_BODY);
-    }
-
-    /// HRULE alone does NOT set needs_reflow (only IMAGE / LEMMY_SPOILER_TITLE do).
-    #[test]
-    fn flags_hrule_does_not_set_reflow() {
-        let blob = blob_bytes("text\n\n---\n\nmore text");
-        let flags = blob_flags(&blob);
-        assert_eq!(flags & FLAG_NEEDS_REFLOW, 0);
     }
 
     /// Non-ASCII content (emoji) clears is_ascii.

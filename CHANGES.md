@@ -248,9 +248,8 @@ Byte offsets, in order:
 - `4..7` — `span_count` (low 24 bits; max 16 M spans)
 - `7..8` — `flags` (u8):
   - bit 0: `IS_ASCII` — every byte in the text section is < 0x80
-  - bit 1: `NEEDS_REFLOW` — at least one `IMAGE` or `LEMMY_SPOILER_TITLE` span exists
-  - bit 2: `HAS_SPOILER_BODY` — at least one `LEMMY_SPOILER_CONTENT` span exists ([ea8f274])
-  - bits 3-7: reserved (zero)
+  - bit 1: `HAS_SPOILER_BODY` — at least one `LEMMY_SPOILER_CONTENT` span exists ([ea8f274])
+  - bits 2-7: reserved (zero)
 - `8..8 + text_len` — text bytes (UTF-8)
 - next — zero padding to align to a 4-byte boundary (0..3 bytes)
 - next — `span_count × 16` bytes of packed span records
