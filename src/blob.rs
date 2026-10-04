@@ -451,11 +451,21 @@ pub(crate) fn visit<'a>(
         }
 
         Paragraph => {
-            visit_children(node, out, list_depth, quote_depth);
-            if !node.parent().is_some_and(|p| {
+            let top_level = !node.parent().is_some_and(|p| {
                 matches!(p.data.borrow().value, BlockQuote | Item(_) | TaskItem(_))
-            }) {
-                out.nl(2);
+            });
+            // A paragraph of only &nbsp; is a pending gap like any other, so none trails the text
+            if top_level
+                && node
+                    .children()
+                    .all(|c| matches!(&c.data.borrow().value, Text(t) if t.trim().is_empty()))
+            {
+                out.p += 2;
+            } else {
+                visit_children(node, out, list_depth, quote_depth);
+                if top_level {
+                    out.nl(2);
+                }
             }
         }
 
