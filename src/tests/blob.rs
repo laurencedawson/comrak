@@ -1555,6 +1555,34 @@ mod edge {
         assert_eq!(result.text(), "``");
         assert_eq!(result.span_iter().count(), 0);
     }
+
+    /// A paragraph of only `&nbsp;` shows nothing, so the paragraphs trailing a comment are not
+    /// blank lines under it.
+    #[test]
+    fn trailing_invisible_paragraphs_are_dropped() {
+        assert_eq!(
+            render_test("word\n\n&nbsp;\n\n&nbsp;\n\n&nbsp;").text(),
+            "word"
+        );
+    }
+
+    /// Between paragraphs, an invisible one keeps the height it reads as: the blank lines.
+    #[test]
+    fn invisible_paragraph_between_keeps_its_height() {
+        assert_eq!(render_test("a\n\n&nbsp;\n\nb").text(), "a\n\n\n\nb");
+    }
+
+    /// Only top-level paragraphs: one inside a quote is the quote's content and stays.
+    #[test]
+    fn invisible_paragraph_in_a_quote_stays() {
+        assert!(render_test("> a\n>\n> &nbsp;").text().contains('\u{a0}'));
+    }
+
+    /// A no-break space beside a visible character is part of the text.
+    #[test]
+    fn no_break_space_beside_text_stays() {
+        assert_eq!(render_test("&nbsp;word").text(), "\u{a0}word");
+    }
 }
 
 // ── production config ────────────────────────────────────────────────────
