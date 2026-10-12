@@ -63,20 +63,26 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
 /// Computed once, shared across all Subject instances for the same parse.
 pub(crate) struct CharTables {
     pub special_char_bytes: [bool; 256],
+    /// `special_char_bytes` without `^`, which is plain text inside brackets.
+    pub special_in_brackets: [bool; 256],
     pub smart_pair_bytes: [bool; 256],
     pub smart_follower_bytes: [bool; 256],
     pub skip_char_bytes: [bool; 256],
     pub emph_delim_bytes: [bool; 256],
+    /// True only with `parse.smart`: the pair tables are empty otherwise.
+    pub has_smart_pairs: bool,
 }
 
 impl CharTables {
     pub fn from_options(options: &Options) -> Self {
         let mut t = CharTables {
             special_char_bytes: [false; 256],
+            special_in_brackets: [false; 256],
             smart_pair_bytes: [false; 256],
             smart_follower_bytes: [false; 256],
             skip_char_bytes: [false; 256],
             emph_delim_bytes: [false; 256],
+            has_smart_pairs: options.parse.smart,
         };
         for &b in b"\n\r_*\"`\\&<[]!$" {
             t.special_char_bytes[b as usize] = true;
@@ -137,6 +143,8 @@ impl CharTables {
         for &b in b"*_" {
             t.emph_delim_bytes[b as usize] = true;
         }
+        t.special_in_brackets = t.special_char_bytes;
+        t.special_in_brackets[b'^' as usize] = false;
         t
     }
 }
@@ -2250,14 +2258,16 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     fn find_special_char(&self) -> usize {
         let input = &self.input.as_bytes()[self.scanner.pos..];
         let len = input.len();
+        let t = &self.char_tables;
+        let special = if self.within_brackets { &t.special_in_brackets } else { &t.special_char_bytes };
+        // One table lookup a byte; the smart pair check below is dead without parse.smart
+        if !t.has_smart_pairs {
+            return self.scanner.pos + input.iter().position(|&b| special[b as usize]).unwrap_or(len);
+        }
         let mut i = 0;
         while i < len {
             let b = input[i];
-            if self.char_tables.special_char_bytes[b as usize] {
-                if b == b'^' && self.within_brackets {
-                    i += 1;
-                    continue;
-                }
+            if special[b as usize] {
                 break;
             }
             if self.char_tables.smart_pair_bytes[b as usize]
