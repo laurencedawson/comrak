@@ -216,7 +216,8 @@ impl BlobWriter {
 
     /// Rendered text bytes so far (excluding header). Used during render and by tests.
     pub(crate) fn text(&self) -> &str {
-        std::str::from_utf8(&self.blob[HEADER_SIZE..]).unwrap_or("")
+        // Only `&str` slices and newlines are ever written past the header, so the bytes are UTF-8 by construction
+        unsafe { std::str::from_utf8_unchecked(&self.blob[HEADER_SIZE..]) }
     }
 
     pub(crate) fn span(&mut self, t: i32, start: usize) {
