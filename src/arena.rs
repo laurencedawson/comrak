@@ -46,6 +46,12 @@ struct ChunkList<T> {
     rest: Vec<Vec<T>>,
 }
 
+impl<T> Default for ChunkList<T> {
+    fn default() -> Self {
+        ChunkList { current: Vec::new(), rest: Vec::new() }
+    }
+}
+
 impl<T: fmt::Debug> fmt::Debug for Arena<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Arena").field("len", &self.len()).finish()
@@ -65,6 +71,17 @@ impl<T> Arena<T> {
                 current: Vec::with_capacity(n.max(1)),
                 rest: Vec::new(),
             }),
+        }
+    }
+
+    /// Call `each` on every value, then drop them all, leaving the arena empty. Only once nothing
+    /// borrows it any more, which the parse entry guarantees: every node reference is scoped to
+    /// the closure that has returned.
+    pub(crate) fn drain(&self, mut each: impl FnMut(&mut T)) {
+        // SAFETY: no `&T` or `&mut T` into the arena is live (see above)
+        let mut chunks = unsafe { std::mem::take(&mut *self.chunks.get()) };
+        for chunk in chunks.rest.iter_mut().chain(std::iter::once(&mut chunks.current)) {
+            chunk.iter_mut().for_each(&mut each);
         }
     }
 
