@@ -51,7 +51,7 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub scanned_for_backticks: bool,
     no_link_openers: bool,
     char_tables: &'o CharTables,
-    string_arena: Option<&'a typed_arena::Arena<String>>,
+    string_arena: Option<&'a crate::StringArena>,
     /// `input` at its full `'a` lifetime when borrowed (zerocopy mode);
     /// cached at construction so hot paths avoid re-matching the Cow.
     zerocopy_input: Option<&'a str>,
@@ -168,7 +168,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         delimiter_arena: &'d typed_arena::Arena<Delimiter<'a, 'd>>,
         inline_footnote_depth: usize,
         char_tables: &'o CharTables,
-        string_arena: Option<&'a typed_arena::Arena<String>>,
+        string_arena: Option<&'a crate::StringArena>,
     ) -> Self {
         let input_ref = match input {
             Cow::Borrowed(s) => Some(s),

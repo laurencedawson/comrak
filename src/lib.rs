@@ -103,7 +103,7 @@ pub use parser::{Options, ResolvedReference, parse_document, parse_document_zero
 
 /// Arena for pooling paragraph content strings during zero-copy parsing.
 /// Used internally by `parse_document_zerocopy` to pool paragraph content.
-pub type StringArena = typed_arena::Arena<String>;
+pub type StringArena = arena::Arena<String>;
 pub use xml::format_document as format_xml;
 pub use xml::format_document_with_plugins as format_xml_with_plugins;
 

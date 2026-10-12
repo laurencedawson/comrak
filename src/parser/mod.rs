@@ -93,7 +93,7 @@ where
 {
     let (nc, sc) = crate::arena_capacities(md.len());
     let arena = crate::Arena::with_capacity(nc);
-    let string_arena: typed_arena::Arena<String> = typed_arena::Arena::with_capacity(sc);
+    let string_arena = crate::StringArena::with_capacity(sc);
     let root = parse_document_inner(&arena, md, options, false, Some(&string_arena));
     f(root)
 }
@@ -103,7 +103,7 @@ fn parse_document_inner<'a>(
     md: &str,
     options: &Options,
     postprocess: bool,
-    string_arena: Option<&'a typed_arena::Arena<String>>,
+    string_arena: Option<&'a crate::StringArena>,
 ) -> Node<'a> {
     let root = arena.alloc(
         Ast {
@@ -193,7 +193,7 @@ pub struct Parser<'a, 'o, 'c> {
     curline_end_col: usize,
     last_line_length: usize,
     total_size: usize,
-    string_arena: Option<&'a typed_arena::Arena<String>>,
+    string_arena: Option<&'a crate::StringArena>,
     /// True if any FootnoteDefinition or footnote reference has been added.
     /// When false we can skip the entire post-parse footnote walk + HashMap alloc.
     saw_footnote: bool,
@@ -233,7 +233,7 @@ where
         arena: &'a Arena<'a>,
         root: Node<'a>,
         options: &'o Options<'c>,
-        string_arena: Option<&'a typed_arena::Arena<String>>,
+        string_arena: Option<&'a crate::StringArena>,
     ) -> Self {
         Parser {
             arena,
