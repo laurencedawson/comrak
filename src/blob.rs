@@ -270,20 +270,36 @@ impl BlobWriter {
         let packed = (rows << 16) | cols as u32;
         self.url_data.extend_from_slice(&packed.to_le_bytes());
         for row in node.children().take(rows as usize) {
-            // Each row writes exactly `cols` cells: its own, padded with empties.
-            let cells = row
-                .children()
-                .map(|c| crate::cm::format_table_cell_content(c, &opts))
-                .chain(std::iter::repeat_with(String::new))
-                .take(cols);
-            for s in cells {
+            // Each row writes exactly `cols` cells: its own, padded with empties. A cell's markdown is
+            // written straight after its length slot, trimmed in place, and the slot filled in after
+            let mut written = 0;
+            for cell in row.children().take(cols) {
+                let slot = self.url_data.len();
+                self.url_data.extend_from_slice(&[0, 0]);
+                let start = self.url_data.len();
+                for child in cell.children() {
+                    let _ = crate::cm::format_internal(child, &opts, &mut Utf8Sink(&mut self.url_data));
+                    while self.url_data.last() == Some(&b'\n') {
+                        self.url_data.pop();
+                    }
+                }
+                while self.url_data.len() > start && self.url_data.last().is_some_and(u8::is_ascii_whitespace) {
+                    self.url_data.pop();
+                }
+                let lead = self.url_data[start..].iter().take_while(|b| b.is_ascii_whitespace()).count();
+                self.url_data.copy_within(start + lead.., start);
+                let total = self.url_data.len() - start - lead;
+                let mut len = total.min(u16::MAX as usize);
                 // Same char-boundary contract as span_url: cells decode as UTF-8.
-                let mut len = s.len().min(u16::MAX as usize);
-                while !s.is_char_boundary(len) {
+                while len < total && self.url_data[start + len] & 0xC0 == 0x80 {
                     len -= 1;
                 }
-                self.url_data.extend_from_slice(&(len as u16).to_le_bytes());
-                self.url_data.extend_from_slice(&s.as_bytes()[..len]);
+                self.url_data.truncate(start + len);
+                self.url_data[slot..slot + 2].copy_from_slice(&(len as u16).to_le_bytes());
+                written += 1;
+            }
+            for _ in written..cols {
+                self.url_data.extend_from_slice(&[0, 0]);
             }
         }
         self.spans
@@ -613,6 +629,16 @@ pub(crate) fn visit<'a>(
         }
 
         _ => visit_children(node, out, list_depth, quote_depth),
+    }
+}
+
+/// `fmt::Write` over the url section, so a table cell's markdown lands there without a String
+struct Utf8Sink<'a>(&'a mut Vec<u8>);
+
+impl std::fmt::Write for Utf8Sink<'_> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
     }
 }
 
