@@ -114,7 +114,7 @@ fn stop_tracking() -> (usize, usize) {
 
 fn main() {
     use comrak::nodes::AstNode;
-    use comrak::{Options, blob, parse_document_zerocopy};
+    use comrak::{blob, parse_document_zerocopy};
     println!(
         "AstNode: {} bytes, NodeValue: {} bytes, Ast: {} bytes",
         std::mem::size_of::<AstNode>(),
@@ -122,19 +122,7 @@ fn main() {
         std::mem::size_of::<comrak::nodes::Ast>()
     );
 
-    let mut opts = Options::default();
-    opts.extension.strikethrough = true;
-    opts.extension.table = true;
-    opts.extension.autolink = true;
-    opts.extension.superscript = true;
-    opts.extension.subscript = true;
-    opts.extension.spoiler = true;
-    opts.extension.tasklist = true;
-    #[cfg(feature = "shortcodes")]
-    {
-        opts.extension.shortcodes = true;
-    }
-    opts.extension.footnotes = true;
+    let opts = comrak::benchmarks::production_options();
 
     let inputs: Vec<(&str, String)> = vec![
         ("plain", comrak::benchmarks::PLAIN.to_string()),

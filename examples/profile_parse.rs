@@ -2,22 +2,10 @@
 //! Run with: cargo run --release --example profile_parse
 
 fn main() {
-    use comrak::{Options, blob, parse_document_zerocopy};
+    use comrak::{blob, parse_document_zerocopy};
     use std::time::Instant;
 
-    let mut opts = Options::default();
-    opts.extension.strikethrough = true;
-    opts.extension.table = true;
-    opts.extension.autolink = true;
-    opts.extension.superscript = true;
-    opts.extension.subscript = true;
-    opts.extension.spoiler = true;
-    opts.extension.tasklist = true;
-    #[cfg(feature = "shortcodes")]
-    {
-        opts.extension.shortcodes = true;
-    }
-    opts.extension.footnotes = true;
+    let opts = comrak::benchmarks::production_options();
 
     let input = comrak::benchmarks::long_doc();
     let trimmed = input.trim();

@@ -1,6 +1,23 @@
 //! Benchmark test data and helpers for blob rendering.
 //! Mirrors the Android instrumentation test suite in MarkdownBenchmarkTest.java.
 
+/// The options the host app parses with, so every bench and profile sees production's cost.
+/// Mirrors syncdown's `production_options` in its JNI shim; keep the two in step.
+pub fn production_options() -> crate::Options<'static> {
+    let mut opts = crate::Options::default();
+    opts.extension.strikethrough = true;
+    opts.extension.table = true;
+    opts.extension.autolink = true;
+    opts.extension.superscript = true;
+    opts.extension.subscript = true;
+    opts.extension.footnotes = true;
+    opts.extension.lemmy_mention = true;
+    opts.extension.lemmy_spoiler = true;
+    opts.parse.sanitize_input = true;
+    opts.parse.smart = false; // rendering policy lives in the blob writer (src/text.rs)
+    opts
+}
+
 /// Plain text with no markdown syntax.
 pub const PLAIN: &str = "Just some plain text with no markdown formatting at all.";
 
