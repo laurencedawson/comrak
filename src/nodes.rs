@@ -854,6 +854,51 @@ pub(crate) struct BlockContent {
     pub line_offsets: smallvec::SmallVec<[usize; 4]>,
 }
 
+thread_local! {
+    /// Block contents and paragraph strings from this thread's last parse, so the next parse
+    /// allocates neither: a content comes back with the capacity its last paragraph needed.
+    static SPARE_BLOCKS: std::cell::RefCell<Vec<Box<BlockContent>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SPARE_STRINGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many of each a thread keeps, and the longest string kept: past these a document was unusual.
+const SPARE_MAX: usize = 256;
+const SPARE_STRING_MAX: usize = 4096;
+
+pub(crate) fn take_block() -> Box<BlockContent> {
+    let mut block = SPARE_BLOCKS.with(|p| p.borrow_mut().pop()).unwrap_or_default();
+    if block.content.capacity() == 0 {
+        if let Some(s) = SPARE_STRINGS.with(|p| p.borrow_mut().pop()) {
+            block.content = s;
+        }
+    }
+    block
+}
+
+pub(crate) fn give_block(mut block: Box<BlockContent>) {
+    block.line_offsets.clear();
+    give_string(std::mem::take(&mut block.content));
+    SPARE_BLOCKS.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.len() < SPARE_MAX {
+            p.push(block);
+        }
+    });
+}
+
+pub(crate) fn give_string(mut s: String) {
+    if s.capacity() == 0 || s.capacity() > SPARE_STRING_MAX {
+        return;
+    }
+    s.clear();
+    SPARE_STRINGS.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.len() < SPARE_MAX {
+            p.push(s);
+        }
+    });
+}
+
 impl<'a> Ast<'a> {
     #[cfg(feature = "phoenix_heex")]
     pub(crate) fn content(&self) -> &str {
@@ -864,7 +909,7 @@ impl<'a> Ast<'a> {
     }
 
     pub(crate) fn content_mut(&mut self) -> &mut String {
-        &mut self.block.get_or_insert_with(Default::default).content
+        &mut self.block.get_or_insert_with(take_block).content
     }
 
     pub(crate) fn line_offsets(&self) -> &[usize] {
@@ -883,7 +928,7 @@ impl<'a> Ast<'a> {
     /// in sequence — meaningful on `add_line`, which fires once per line of
     /// every paragraph/heading/code-block.
     pub(crate) fn block_mut(&mut self) -> &mut BlockContent {
-        self.block.get_or_insert_with(Default::default)
+        self.block.get_or_insert_with(take_block)
     }
 
     pub(crate) fn take_content(&mut self) -> String {

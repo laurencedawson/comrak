@@ -95,7 +95,15 @@ where
     let arena = crate::Arena::with_capacity(nc);
     let string_arena = crate::StringArena::with_capacity(sc);
     let root = parse_document_inner(&arena, md, options, false, Some(&string_arena));
-    f(root)
+    let result = f(root);
+    // The block contents and paragraph strings go back to the thread for the next parse
+    string_arena.drain(|s| nodes::give_string(std::mem::take(s)));
+    arena.drain(|node| {
+        if let Some(block) = node.data.get_mut().block.take() {
+            nodes::give_block(block);
+        }
+    });
+    result
 }
 
 fn parse_document_inner<'a>(
