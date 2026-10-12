@@ -572,6 +572,10 @@ pub(crate) fn is_invisible(c: char) -> bool {
 /// Strip invisible Unicode characters. Zero-copy when input is clean.
 /// Preserves ZWJ (\u{200d}) for emoji sequences and VS16 (\u{fe0f}) for emoji presentation.
 pub fn strip_invisible(s: &str) -> Cow<'_, str> {
+    // Every invisible character is non-ASCII, so ASCII input is clean after one SIMD pass
+    if s.is_ascii() {
+        return Cow::Borrowed(s);
+    }
     if let Some(pos) = s.find(is_invisible) {
         let mut out = String::with_capacity(s.len());
         out.push_str(&s[..pos]);
