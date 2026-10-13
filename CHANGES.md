@@ -7,7 +7,7 @@ markdown renderer. Highlights:
 | Area | What |
 |---|---|
 | [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
-| [URL resolution](#url-resolution) | `resolve_url()` — proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint |
+| [URL resolution](#url-resolution) | `resolve_url()` — proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint. [App links](#app-links-1b09a35) (`app-link://`) are exempt from all of it |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
@@ -130,6 +130,37 @@ It does three things:
 - The thumbnail rewrite skips them (no still frame from a video).
 - `![](…/clip.mp4)` image syntax is downgraded to an inline link — the alt text, or the URL when there is no alt — pointing at the original video.
 
+### App links ([1b09a35])
+
+A host app writes links to its own screens under the `app-link://` scheme, for
+example `[>>123](app-link://g/thread/100#p123)` for a quoted post. Such a link
+names a place in the app, not an address, so the fork treats it as opaque:
+
+| Rule | Where | Without it |
+|---|---|---|
+| Never resolved: no proxy unwrap, no redirect unwrap, no pict-rs thumbnail rewrite | `resolve_url` returns the URL borrowed, before any gate runs | A path holding `/pictrs/image/` gained `?thumbnail=400&format=webp`; one holding `/api/v3/image_proxy?url=` was replaced by the address it carried |
+| No domain suffix | `extract_domain` answers `None`, so the blob writer's `append_domain_suffix` writes nothing | The path's first segment was taken for a host: `>>123` rendered as `>>123 (g)` |
+
+What does not change:
+
+- The span is still a `LINK` (with its `LINK_SIZE`), and its `url_data` holds the
+  URL exactly as written, scheme included. The blob format is untouched, so a blob
+  stored before this change decodes as it did.
+- The scheme is matched at the start of the URL, whole and case-sensitively.
+  `app-link:/x`, `APP-LINK://x` and a web URL that carries one in its query are
+  ordinary links.
+- Bare `app-link://...` typed in prose is not autolinked. It becomes a link only
+  through explicit link syntax (`[text](app-link://...)`) or an angle autolink
+  (`<app-link://...>`).
+
+What the host does with one is its own business: it reads the scheme off the
+span's URL and hands its router a typed target in place of a plain link. Since
+anyone who can write markdown can write the scheme, a host treats the path as
+untrusted input.
+
+Pinned by `app_link_*` in `src/tests/url.rs` (resolution) and in the `links`
+module of `src/tests/blob.rs` (suffix, span, an app link beside a web link).
+
 > **Naming note.** The fork's resolver was renamed `clean_url` → `resolve_url` (and the old `NodeLink::cleaned_url()` accessor removed in favour of the `span_url` chokepoint) so it no longer collides with upstream's spec-unescaping `strings::clean_url` ([7c60125]).
 
 ## Blob rendering
@@ -166,7 +197,7 @@ callers can reuse the same logic elsewhere.
 | Function | Returns | Notes |
 |---|---|---|
 | `comrak::resolve_url(&str)` | `ResolvedUrl<'_>` | Re-export of `comrak::parser::url::resolve_url`. URL finalization (proxy unwrap, short-URL expansion, pict-rs thumbnail, video exclusion). Returns a newtype that derefs to `str`; the only way to obtain one, so the blob writer can require it. See [URL resolution](#url-resolution) for the full table. |
-| `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. |
+| `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. `None` for an [app link](#app-links-1b09a35), which has no host. |
 | `comrak::image_url::is_image_url(&str)` | `bool` | Heuristic URL → image detection (by known host, path pattern, or file extension). |
 | `comrak::text::collapse_whitespace(&str)` | `Cow<'_, str>` | Collapses runs of spaces to a single space. Zero-copy when the input has no double-space. |
 | `comrak::text::prefer_ascii(&str)` | `Cow<'_, str>` | Typed typographic Unicode (curly quotes, en/em dashes, ellipsis) → ASCII. Zero-copy when none present. |
@@ -465,7 +496,7 @@ src/
 ├── benchmarks.rs              ← shared bench corpus + bench_all smoke test
 ├── parser/
 │   └── url.rs                 ← resolve_url (proxy unwrap, short URL expansion, pict-rs thumbnail,
-│                                video exclusion) + extract_domain + path_ext
+│                                video exclusion, app-link exemption) + extract_domain + path_ext
 └── tests/
     ├── blob.rs                ← blob renderer tests (format/inline/links/images/block/
     │                            footnotes/edge/production sub-modules)
@@ -585,4 +616,4 @@ commit messages (device wins measured on a Pixel 9 Pro XL).
 [2dc034c]: https://github.com/laurencedawson/comrak/commit/2dc034c
 [7a60416]: https://github.com/laurencedawson/comrak/commit/7a60416
 [61ae442]: https://github.com/laurencedawson/comrak/commit/61ae442
-
+[1b09a35]: https://github.com/laurencedawson/comrak/commit/1b09a35
