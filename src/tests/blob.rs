@@ -822,6 +822,36 @@ mod links {
         assert!(result.span_iter().any(|s| s.typ == LINK));
     }
 
+    /// An app link names a place in the app, not an address: no domain suffix.
+    #[test]
+    fn app_link_no_domain_suffix() {
+        let result = render_test("[>>123](app-link://g/thread/100#p123)");
+        assert_eq!(result.text(), ">>123");
+    }
+
+    /// An app link stays a LINK carrying its url exactly as written, scheme included.
+    #[test]
+    fn app_link_stays_link_with_url_untouched() {
+        let result = render_test("[>>123](app-link://g/thread/100#p123)");
+        let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
+        assert_eq!(span.url.as_deref(), Some("app-link://g/thread/100#p123"));
+        assert!(result.span_iter().any(|s| s.typ == LINK_SIZE));
+    }
+
+    /// The path's first segment is not a host: it is never matched against the link text.
+    #[test]
+    fn app_link_no_suffix_whatever_the_text() {
+        let result = render_test("[g](app-link://g/thread/100) and [x](app-link://boards.example.org/g/)");
+        assert_eq!(result.text(), "g and x");
+    }
+
+    /// An app link beside an ordinary one: only the ordinary link gets its suffix.
+    #[test]
+    fn app_link_beside_web_link_only_web_link_suffixed() {
+        let result = render_test("[>>1](app-link://g/thread/1) [site](https://example.com/a)");
+        assert_eq!(result.text(), ">>1 site (example.com)");
+    }
+
     /// Non-image bare URL stays LINK (not IMAGE).
     #[test]
     fn non_image_url_stays_link() {
