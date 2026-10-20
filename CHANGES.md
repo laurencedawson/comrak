@@ -380,6 +380,10 @@ This guarantees:
 - The sort key is packed into a single `u64` for comparison: `start<<32 |
   (0xFFFFFF - end)<<8 | type` — a plain u64 compare replaces a 3-field
   tuple walk.
+- Spans are emitted after their node's children, so each only has to move
+  back past its own descendants: an insertion sort is linear plus those
+  moves ([718160c]). After 8 moves per span, which only deep nesting
+  reaches, the rest goes to `sort_unstable_by_key` on the same key.
 
 ### Limitations
 
@@ -403,6 +407,10 @@ knowing before you feed the renderer adversarial content.
 - **List item number**: 65 533 max (16-bit), with `0xFFFE` and `0xFFFF`
   reserved as task-list sentinels (unchecked / checked).
 - **List indent**: 65 535 max nesting levels (16-bit).
+- **Nesting depth**: bounded by memory, not the call stack. The walk keeps
+  its own stack of open containers ([443a6fd]); the recursive walk before it
+  aborted the process on a 1 MB thread at about 1,570 nested quotes or 780
+  nested list items.
 
 
 ## Benchmarking
@@ -612,6 +620,33 @@ upstream's pathological-input fixes and the iterative email autolinker
 (GHSA-xg9p-p4jc-c46g). `process_lemmy_mentions` is still recursive in the same
 shape and should follow.
 
+Then the blob renderer, each figure render-only against the commit before it.
+Every commit's blob output is byte-identical to the one before it, on the
+corpus and on 626 generated documents of nested quotes, lists, emphasis,
+links and footnotes:
+
+| Commit | Change | Effect |
+|---|---|---|
+| [77105cf] | `collapse_whitespace` reuses one double-space finder | prose -5%, complex -3% |
+| [45fb812] | Link hosts end at a byte `memchr` | prose -10% |
+| [3ee03e2] | The whitespace-paragraph check stops at the first visible character | prose -4% |
+| [718160c] | Spans sort by insertion, with a budget | long-doc -15%, complex -13%, medium -8% |
+| [443a6fd] | The walk keeps its own stack, so deep nesting no longer aborts | heavy-inline -6%, long-doc +5%, complex +3% |
+
+Old fork, rebase ([1faaa47]) and blob work ([443a6fd]), run back to back,
+median of seven, microseconds:
+
+| Corpus | Parse + render | Render |
+|---|---|---|
+| prose | 42.1 → 35.6 → 34.6 (-18%) | 12.3 → 9.5 → 8.3 (-33%) |
+| long-doc | 99.9 → 104.9 → 101.9 (+2%) | 25.2 → 25.0 → 21.5 (-15%) |
+| complex | 28.2 → 30.1 → 29.5 (+5%) | 7.0 → 6.8 → 6.1 (-13%) |
+| heavy-inline | 23.4 → 25.1 → 25.7 (+10%) | 5.1 → 5.0 → 4.7 (-8%) |
+| medium | 5.7 → 5.9 → 5.9 (+4%) | 1.2 → 1.2 → 1.1 (-8%) |
+
+The blob work adds no allocations. syncdown's device suite passes on
+[443a6fd] (Pixel 9 Pro XL).
+
 ### Before the rebase
 
 The old fork's throughput and allocation work (tagged `pre-rebase-0.56`),
@@ -703,3 +738,9 @@ Pixel 9 Pro XL).
 [ecd63ce]: https://github.com/laurencedawson/comrak/commit/ecd63ce
 [0c2e270]: https://github.com/laurencedawson/comrak/commit/0c2e270
 [c4022c3]: https://github.com/laurencedawson/comrak/commit/c4022c3
+[1faaa47]: https://github.com/laurencedawson/comrak/commit/1faaa47
+[77105cf]: https://github.com/laurencedawson/comrak/commit/77105cf
+[45fb812]: https://github.com/laurencedawson/comrak/commit/45fb812
+[3ee03e2]: https://github.com/laurencedawson/comrak/commit/3ee03e2
+[718160c]: https://github.com/laurencedawson/comrak/commit/718160c
+[443a6fd]: https://github.com/laurencedawson/comrak/commit/443a6fd
