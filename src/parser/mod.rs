@@ -2912,11 +2912,17 @@ where
             self.process_tasklist(node, text, sourcepos, &mut spx);
         }
 
-        if self.options.extension.lemmy_mention && !in_bracket_context {
+        // Every construct the mention and email detectors produce contains '@', so one scan
+        // gates both passes and @-free nodes skip them entirely.
+        if in_bracket_context || memchr::memchr(b'@', text.as_bytes()).is_none() {
+            return;
+        }
+
+        if self.options.extension.lemmy_mention {
             autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &spx, 0);
         }
 
-        if self.options.extension.autolink && !in_bracket_context {
+        if self.options.extension.autolink {
             autolink::process_email_autolinks(
                 self.arena,
                 node,
