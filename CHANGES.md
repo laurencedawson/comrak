@@ -2,7 +2,13 @@
 
 A [comrak](https://github.com/kivikakk/comrak) fork tailored for
 [syncdown](https://github.com/laurencedawson/syncdown), an Android
-markdown renderer. Highlights:
+markdown renderer.
+
+Since October 2026 the fork is upstream main (229fc35, v0.56 and later) with
+this fork's changes on top, rebuilt rather than merged: see [Rebase onto
+upstream 229fc35](#rebase-onto-upstream-229fc35-october-2026). The fork before
+the rebase is tagged `pre-rebase-0.56`, so the commit links below into that
+history still resolve. Highlights:
 
 | Area | What |
 |---|---|
@@ -13,7 +19,7 @@ markdown renderer. Highlights:
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
 | [Benchmarking](#benchmarking) | `profile_parse` + `alloc_bench` + shared corpus (including contraction-dense `prose`) for tracking throughput and allocation pressure |
-| Alloc / throughput (throughout) | Zero-copy text nodes via a pooled string arena, `SmallVec` line offsets, slimmed `Ast`, `Cow::to_mut` avoidance, `memchr` fast paths, custom `UnsafeCell` arena with `#[cold]` grow path |
+| Alloc / throughput (throughout) | Inline text borrows a pooled string arena, contiguous borrowed runs merge in place, per-thread pools for block lines and paragraph strings, `Cow::to_mut` avoidance, custom `UnsafeCell` arena. Upstream now carries the slim `Ast` and per-document delimiter arena itself |
 
 ## Extensions
 
@@ -176,8 +182,10 @@ offsets, UTF-16 positions, sorted spans.
 ### Parse entry point
 
 **`comrak::parse_document_zerocopy(md, opts, f)`** — a scoped parse entry that
-pools paragraph strings and lets text nodes borrow from `md` directly, cutting
-per-node allocations. The closure receives the root; the arenas drop on return
+moves each paragraph's content into a pooled string arena and lets inline text
+borrow it, cutting per-node allocations. Upstream's text coalescing still runs;
+contiguous borrowed runs are merged in place first, so it has nothing to copy.
+It skips the sourcepos fix-up walks, which the blob never reads. The closure receives the root; the arenas drop on return
 so the borrow can't escape. Before they drop, the block contents and paragraph
 strings go back to the calling thread, so the next parse on it allocates neither
 (up to 256 of each, strings under 4 KB): a feature-heavy document parses with a
@@ -239,7 +247,7 @@ let root = comrak::parse_document(&arena, md, &options); // vanilla entry, no ze
 let blob = comrak::blob::render_blob(root, md);          // identical bytes to the zerocopy path
 ```
 
-[`parse_document_zerocopy`](#parse-entry-point) and the 27 allocation/throughput
+[`parse_document_zerocopy`](#parse-entry-point) and the fork's allocation/throughput
 commits only change how fast the AST is produced and how much it allocates — the
 tree handed to `render_blob` is structurally identical and the emitted bytes are
 the same. `sanitize_input` and `lemmy_mention` are likewise optional: drop them
@@ -432,13 +440,13 @@ iterations after warmup. Catches regressions in either stage independently.
 ```
 test               parse     blob    total
 -------------------------------------------
-plain              0.5 us    0.1 us    0.6 us
-simple             0.9 us    0.4 us    1.2 us
+plain              0.4 us    0.1 us    0.5 us
+simple             0.9 us    0.3 us    1.3 us
 medium             4.7 us    1.2 us    5.9 us
-heavy-inline      18.5 us    5.3 us   23.9 us
-complex           21.7 us    7.3 us   29.0 us
-long-doc          76.1 us   25.5 us  101.7 us
-prose             30.1 us   12.2 us   42.4 us
+heavy-inline      19.7 us    5.3 us   25.0 us
+complex           23.3 us    6.9 us   30.2 us
+long-doc          80.1 us   25.3 us  105.5 us
+prose             25.9 us    9.7 us   35.6 us
 ```
 
 Note prose vs long-doc: same size, and prose is well under half the cost —
@@ -465,11 +473,11 @@ histogram for the largest inputs. Confirms a change actually cut
 allocations without reaching for an external profiler.
 
 ```
-AstNode: 144 bytes, NodeValue: 40 bytes, Ast: 96 bytes
-complex    1586 chars |  91 allocs  108 KB (70.4x input) | parse  55 blob  36 |  298 nodes
-long-doc  13060 chars | 134 allocs  385 KB (30.2x input) | parse 127 blob   7 | 1058 nodes
-prose     12938 chars |  98 allocs  174 KB (13.8x input) | parse  92 blob   6 |  361 nodes
-  buckets: tiny(1-32)=19 small(33-128)=67 medium(129-1K)=35 large(1K+)=12
+AstNode: 136 bytes, NodeValue: 40 bytes, Ast: 88 bytes
+complex    1586 chars |  91 allocs  104 KB (67.2x input) | parse  55 blob  36 |  298 nodes
+long-doc  13060 chars | 125 allocs  369 KB (29.0x input) | parse 118 blob   7 | 1058 nodes
+prose     12938 chars |  94 allocs  168 KB (13.4x input) | parse  88 blob   6 |  201 nodes
+  buckets: tiny(1-32)=10 small(33-128)=67 medium(129-1K)=35 large(1K+)=13
 ```
 
 These are a thread's second parse: the first also allocates the block contents
@@ -519,36 +527,97 @@ above) and not tracked in this repo.
 
 ### Modified upstream files
 
+Against upstream 229fc35:
+
 ```
 src/
-├── lib.rs                     ← expose blob/arena/benchmarks/image_url/text,
-│                                parse_document_zerocopy, Arena/StringArena aliases,
-│                                arena_capacities() helper
-├── nodes.rs                   ← Ast 128 → 88 bytes (BlockContent to Option<Box<_>>),
-│                                line_offsets: SmallVec<[usize; 4]>, NodeLink/NodeCode String → Cow,
-│                                per-thread pools of block contents and paragraph strings
-├── entity.rs                  ← unescape_html memchr fast path, lazy allocation
-├── html.rs                    ← render_lemmy_spoiler emits <details>/<summary>
-├── cm.rs                      ← format_internal opened to the blob writer, which writes table cells itself
-├── strings.rs                 ← strip_invisible() (ASCII input passes in one SIMD check) + zero-copy
-│                                trim/normalize Cow variants
+├── lib.rs                     ← expose blob/arena/benchmarks/image_url/text, parse_document_zerocopy,
+│                                resolve_url; Arena is the fork's arena, StringArena alias
+├── arena_tree.rs              ← append_new for freshly created block nodes
+├── nodes.rs                   ← NodeValue/Ast generic over the input lifetime (Text, NodeCode.literal,
+│                                NodeLink.url/.title as Cow<'a, str>), LemmySpoiler node, per-thread
+│                                pools of BlockLines and paragraph strings
+├── entity.rs                  ← unescape_html allocates only when an & is present
+├── strings.rs                 ← is_invisible / strip_invisible / strip_leading_breaks; clean_url and
+│                                clean_title borrow their input; count_newlines no-newline fast path
+├── html.rs, xml.rs, cm.rs     ← LemmySpoiler output; cm::format_internal opened to the blob writer
+├── scanners.re, scanners.rs   ← the open block-directive fence allows ':' in its info string
 └── parser/
-    ├── mod.rs                 ← fork extensions wired in (lemmy_spoiler handler, sanitize_input
-    │                            preprocess pass) + optimisations (fast-path block dispatch, shared
-    │                            delimiter arena, skip process_footnotes / fix_zero_end_columns when
-    │                            unused, pre-sized arenas)
-    ├── inlines.rs             ← zero-copy text via StringArena, Cow::to_mut() avoidance on emphasis
-    │                            delimiters, memchr fast paths (the fork's smart-punctuation additions
-    │                            were removed with the smartypants retirement)
+    ├── mod.rs                 ← lemmy_spoiler handler and finalize, sanitize_input pre-pass, mentions in
+    │                            text postprocessing (Spx::col_at), the blob path (no sourcepos walks,
+    │                            string arena, pools, presized arenas, borrowed-run merge), footnote
+    │                            skip, first-byte block dispatch, reference early-out
+    ├── inlines.rs             ← input borrowed from the string arena: text, delimiter runs, escapes,
+    │                            probe text, code literals, link url/title; static delimiter text on
+    │                            emphasis truncation; the mergeable-fragment flag
     ├── options.rs             ← new flags: lemmy_mention, lemmy_spoiler, sanitize_input
-    └── autolink.rs            ← Lemmy user / community mention parsing
+    └── autolink.rs            ← Lemmy user / community mentions; one '@' scan gates them and emails
 ```
+
+Test-side: the fork's suites registered in `src/tests.rs`, a LemmySpoiler sourcepos
+case, the fuzz option struct, and upstream tests adjusted for `comrak::Arena` and
+the node lifetime.
 
 ## Performance history
 
-The fork's throughput and allocation work, grouped by theme. Each change was
-benchmarked against the shared corpus before landing; the figures are from the
-commit messages (device wins measured on a Pixel 9 Pro XL).
+### Rebase onto upstream 229fc35 (October 2026)
+
+Upstream's v0.55 and v0.56 cycle (106 commits after the old fork's last merge,
+v0.54.0) reworked the internals the fork had optimised, so a merge meant 69
+conflict hunks, most of them two implementations of one idea. The fork was
+rebuilt instead: upstream main, then the blob and its parser hooks ([ed9fedb]),
+then each fork optimisation re-applied only where it still won on top of
+upstream. Every step was measured on the host benches (production options,
+median of seven runs, about 1% noise), with blob output compared byte for byte
+over 1412 documents (CommonMark, GFM and cmark-gfm examples plus progit).
+
+Upstream already has its own version of these, so the fork's is gone:
+
+| Fork | Upstream |
+|---|---|
+| `Option<Box<BlockContent>>`, `Ast` 128 → 88 bytes ([8879b6f], [fdb9711]) | `Option<Box<BlockLines>>`, the same sizes (cb6a554) |
+| Shared delimiter arena, cached character tables ([e55712e], [3f2090d]) | One delimiter arena and `ByteTables` per document (be66bf5) |
+| Reused `spx` buffer ([8538bfa]) | `spx` built only when a detector needs it (0c0b3c0) |
+| One-table `find_special_char` ([1a0bef0]) | Context-aware scan, as fast here (be16fc7) |
+| `memchr` line and backtick scans ([e84ccaa]) | `memchr-n` matchers, as fast or faster here |
+
+Re-applied or new on this base, each figure against the commit before it:
+
+| Commit | Change | Effect |
+|---|---|---|
+| [6961578] | Skip `process_footnotes` when unused ([86bbe90]) | long-doc -10%, spec -11% |
+| [73a4752] | Blob path skips sourcepos walks ([4fa2f0c]) | long-doc -7%, complex -7% |
+| [a36fd6e] | The fork's node arena ([a9f62c0], [78b4480]) | memory -10 to -20% |
+| [70696f8] | Adjacent text joins into an exact-size String ([9dda1aa]) | prose -6% |
+| [5af620c] | First-byte block dispatch, reference early-out ([1a59dfb]) | long-doc -10%, complex -12% |
+| [cfabaed] | `unescape_html` allocates only with an `&` ([0d89195]) | prose -3% |
+| [58507cc], [1568d2d] | Node lifetime; inline text borrows a string arena ([9131489], [e3d01ef]) | heavy-inline -18%, allocations halved |
+| [09f3fd8] | Static delimiter text on emphasis truncation ([14cb107]) | heavy-inline -13% |
+| [397b5c8] | Thread pools, no exact-size copy on the blob path ([2dc034c]) | medium -7%, prose -7% |
+| [ecd63ce] | Borrowed runs merge without a copy; borrowed probe text; pooled block literals; presized arenas | long-doc allocations 255 → 125 |
+| [0c2e270] | `count_newlines` fast path; one `@` gate ([0612fe4]) | -5 to -6% |
+| [c4022c3] | `add_child` appends without detach ([be8cd6a]) | heavy-inline -4% |
+
+Measured and dropped: skipping text coalescing ([a2680c9]) and widening text at
+creation ([03f4511]) are worth about nothing now, and skipping coalescing
+half-linked emails after `_` or `.` (the GFM example `a.b-c_d@a.b` linked only
+`d@a.b`), so coalescing stays and those two documents now render differently
+from the old fork. `memchr` in place of upstream's backtick matcher was slower.
+
+Against the old fork: allocations at or below it on every corpus (long-doc
+125 vs 134, prose 94 vs 98), parse prose -12% and progit -9%, spec examples
+level, long-doc and medium +7%, heavy-inline and complex +10%. The remaining gap
+is upstream's inline parser with no separable item. The rebase also brings
+upstream's pathological-input fixes and the iterative email autolinker
+(GHSA-xg9p-p4jc-c46g). `process_lemmy_mentions` is still recursive in the same
+shape and should follow.
+
+### Before the rebase
+
+The old fork's throughput and allocation work (tagged `pre-rebase-0.56`),
+grouped by theme. Each change was benchmarked against the shared corpus before
+landing; the figures are from the commit messages (device wins measured on a
+Pixel 9 Pro XL).
 
 - **Smartypants retirement** — precompiled `resolve_url` gate searchers ([463834a], blob render -18% on link-heavy docs), retire `parse.smart` with symbols relocated to the blob writer ([eb5580e], prose preprocess 2.27x, blob allocs 686 → 6, AST nodes 4.2x fewer), delete the fork's smart handlers and lookahead tables ([0bb0a38], -129 lines of divergence; ends the hyphenated-word fragmentation the [18276c3] union tables caused), saturating profile_parse subtraction ([836a992]).
 - **Zero-copy / fewer allocations** — pooled zero-copy text nodes ([e3d01ef], 51% fewer allocs), `Cow` for `NodeCode.literal` + `NodeLink.url`/`.title` with lazy cleaning ([32fbb41]), `Cow::to_mut()` avoidance on emphasis delimiters ([14cb107], 30% fewer allocs), static strings for smart-punct runs ([b0d366d]), lazy `unescape_html` ([0d89195]), reused per-text `VecDeque` ([8538bfa], 34% fewer allocs), pre-sized join buffer ([9dda1aa]), zero-copy `extract_domain` ([cb91390]).
@@ -617,3 +686,20 @@ commit messages (device wins measured on a Pixel 9 Pro XL).
 [7a60416]: https://github.com/laurencedawson/comrak/commit/7a60416
 [61ae442]: https://github.com/laurencedawson/comrak/commit/61ae442
 [1b09a35]: https://github.com/laurencedawson/comrak/commit/1b09a35
+[03f4511]: https://github.com/laurencedawson/comrak/commit/03f4511
+[0612fe4]: https://github.com/laurencedawson/comrak/commit/0612fe4
+[9131489]: https://github.com/laurencedawson/comrak/commit/9131489
+[ed9fedb]: https://github.com/laurencedawson/comrak/commit/ed9fedb
+[6961578]: https://github.com/laurencedawson/comrak/commit/6961578
+[73a4752]: https://github.com/laurencedawson/comrak/commit/73a4752
+[a36fd6e]: https://github.com/laurencedawson/comrak/commit/a36fd6e
+[70696f8]: https://github.com/laurencedawson/comrak/commit/70696f8
+[5af620c]: https://github.com/laurencedawson/comrak/commit/5af620c
+[cfabaed]: https://github.com/laurencedawson/comrak/commit/cfabaed
+[58507cc]: https://github.com/laurencedawson/comrak/commit/58507cc
+[1568d2d]: https://github.com/laurencedawson/comrak/commit/1568d2d
+[09f3fd8]: https://github.com/laurencedawson/comrak/commit/09f3fd8
+[397b5c8]: https://github.com/laurencedawson/comrak/commit/397b5c8
+[ecd63ce]: https://github.com/laurencedawson/comrak/commit/ecd63ce
+[0c2e270]: https://github.com/laurencedawson/comrak/commit/0c2e270
+[c4022c3]: https://github.com/laurencedawson/comrak/commit/c4022c3
