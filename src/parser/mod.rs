@@ -826,7 +826,31 @@ where
             self.find_first_nonspace(line);
             let indented = self.indent >= CODE_INDENT;
 
-            if !((!indented
+            // Letters, most punctuation and other leading bytes cannot open any of the block
+            // structures below, so continuation lines skip every handler in that group.
+            let could_be_block = !indented
+                && matches!(
+                    line.as_bytes().get(self.first_nonspace),
+                    Some(
+                        b'>' | b'#'
+                            | b'`'
+                            | b'~'
+                            | b'<'
+                            | b'-'
+                            | b'_'
+                            | b'*'
+                            | b'+'
+                            | b'='
+                            | b'['
+                            | b':'
+                            | b'|'
+                            | b'{'
+                            | b'%'
+                            | b'0'..=b'9'
+                    )
+                );
+
+            if !((could_be_block
                 && (self.handle_lemmy_spoiler(container, line)
                     || self.handle_block_directive(container, line)
                     || self.handle_alert(container, line)
@@ -2263,6 +2287,9 @@ where
     }
 
     fn resolve_reference_link_definitions(&mut self, content: &mut String) -> bool {
+        if !content.starts_with('[') {
+            return !strings::is_blank(content);
+        }
         let mut pos = 0;
         let mut rrs = vec![];
 
