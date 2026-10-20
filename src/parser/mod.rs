@@ -151,6 +151,9 @@ pub struct Parser<'a: 'd, 'o, 'c, 'd> {
     curline_end_col: usize,
     last_line_length: usize,
     total_size: usize,
+    /// True if any FootnoteDefinition has been added. With no reference either, the
+    /// post-parse footnote walk and its HashMap are skipped.
+    saw_footnote: bool,
     #[cfg(feature = "phoenix_heex")]
     heex_block_depth: usize,
 }
@@ -206,6 +209,7 @@ where
             curline_end_col: 0,
             last_line_length: 0,
             total_size: 0,
+            saw_footnote: false,
             #[cfg(feature = "phoenix_heex")]
             heex_block_depth: 0,
         }
@@ -1621,6 +1625,7 @@ where
             }),
             self.first_nonspace + 1,
         );
+        self.saw_footnote = true;
 
         true
     }
@@ -2502,6 +2507,9 @@ where
     }
 
     fn process_footnotes(&mut self) {
+        if !self.saw_footnote && !self.footnote_defs.saw_reference {
+            return;
+        }
         // TODO: combine find_footnote_definitions and find_footnote_references into one pass!
         let mut fd_map = HashMap::new();
         Self::find_footnote_definitions(self.root, &mut fd_map);
