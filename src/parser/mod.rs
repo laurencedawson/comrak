@@ -51,13 +51,22 @@ where
     F: for<'a> FnOnce(Node<'a>) -> R,
 {
     let arena = Arena::new();
-    f(parse_document(&arena, md, options))
+    f(parse_document_inner(&arena, md, options, false))
 }
 
 /// Parse a Markdown document to an AST.
 ///
 /// See the documentation of the crate root for an example.
 pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> Node<'a> {
+    parse_document_inner(arena, md, options, true)
+}
+
+fn parse_document_inner<'a>(
+    arena: &'a Arena<'a>,
+    md: &str,
+    options: &Options,
+    needs_sourcepos: bool,
+) -> Node<'a> {
     let root = arena.alloc(
         Ast {
             value: NodeValue::Document,
@@ -72,7 +81,9 @@ pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> 
         .into(),
     );
     let delimiter_arena = typed_arena::Arena::new();
-    let document = Parser::new(arena, root, options, &delimiter_arena).parse(md);
+    let mut parser = Parser::new(arena, root, options, &delimiter_arena);
+    parser.needs_sourcepos = needs_sourcepos;
+    let document = parser.parse(md);
     if options.parse.sourcepos_chars {
         convert_sourcepos_columns_to_chars(document, md);
     }
@@ -146,6 +157,8 @@ pub struct Parser<'a: 'd, 'o, 'c, 'd> {
     blank: bool,
     partially_consumed_tab: bool,
     saw_list: bool,
+    /// False on the blob path, which never reads sourcepos: its fix-up tree walks are skipped.
+    needs_sourcepos: bool,
     working_content: String,
     curline_len: usize,
     curline_end_col: usize,
@@ -204,6 +217,7 @@ where
             blank: false,
             partially_consumed_tab: false,
             saw_list: false,
+            needs_sourcepos: true,
             working_content: String::new(),
             curline_len: 0,
             curline_end_col: 0,
@@ -740,6 +754,9 @@ where
     // fall back to the node's start position.
     // Returns a candidate end position for `container` if found.
     fn fix_zero_end_columns(&mut self, container: Node<'a>) -> Option<nodes::LineColumn> {
+        if !self.needs_sourcepos {
+            return None;
+        }
         // explicit stack for post-order traversal: (node, visited)
         let mut stack: Vec<(Node<'a>, bool)> = Vec::new();
 
@@ -2217,7 +2234,7 @@ where
     }
 
     fn propagate_list_sourcepos(&mut self, root: Node<'a>) {
-        if !self.saw_list {
+        if !self.saw_list || !self.needs_sourcepos {
             return;
         }
         for node in root.descendants() {
