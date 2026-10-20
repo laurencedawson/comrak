@@ -25,7 +25,7 @@ use crate::entity;
 use crate::matchers::cr_or_lf_matcher;
 use crate::node_matches;
 use crate::nodes::{
-    self, AlertType, Ast, ListDelimType, ListType, Node, NodeAlert, NodeBlockDirective,
+    self, AlertType, Ast, BlockLines, ListDelimType, ListType, Node, NodeAlert, NodeBlockDirective,
     NodeCodeBlock, NodeCommentBlock, NodeDescriptionItem, NodeFootnoteDefinition, NodeHeading,
     NodeHtmlBlock, NodeLemmySpoiler, NodeList, NodeMultilineBlockQuote, NodeTaskItem, NodeValue,
     Sourcepos,
@@ -50,8 +50,9 @@ pub fn parse_document_zerocopy<F, R>(md: &str, options: &Options, f: F) -> R
 where
     F: for<'a> FnOnce(Node<'a>) -> R,
 {
-    let arena = Arena::new();
-    let string_arena = crate::StringArena::new();
+    // Sized from the input so a typical document never grows either arena
+    let arena = Arena::with_capacity(md.len() / 20 + 8);
+    let string_arena = crate::StringArena::with_capacity(md.len() / 40 + 4);
     let result = f(parse_document_inner(
         &arena,
         md,
@@ -62,8 +63,15 @@ where
     // The block lines and paragraph strings go back to the thread for the next parse
     string_arena.drain(|s| nodes::give_string(mem::take(s)));
     arena.drain(|node| {
-        if let Some(lines) = node.data.get_mut().lines.take() {
+        let ast = node.data.get_mut();
+        if let Some(lines) = ast.lines.take() {
             nodes::give_block(lines);
+        }
+        // Block literals were pooled content buffers moved into the node
+        match ast.value {
+            NodeValue::CodeBlock(ref mut ncb) => nodes::give_string(mem::take(&mut ncb.literal)),
+            NodeValue::HtmlBlock(ref mut nhb) => nodes::give_string(mem::take(&mut nhb.literal)),
+            _ => {}
         }
     });
     result
@@ -96,7 +104,12 @@ fn parse_document_inner<'a>(
         }
         .into(),
     );
-    let delimiter_arena = typed_arena::Arena::new();
+    // Blob path: one delimiter per ~80 input bytes covers the bench corpus without growing
+    let delimiter_arena = if string_arena.is_some() {
+        typed_arena::Arena::with_capacity((md.len() / 80).clamp(16, 1024))
+    } else {
+        typed_arena::Arena::new()
+    };
     let mut parser = Parser::new(arena, root, options, &delimiter_arena);
     parser.needs_sourcepos = needs_sourcepos;
     parser.string_arena = string_arena;
@@ -2445,6 +2458,7 @@ where
                     strings::remove_from_start(content, pos);
                 }
                 ncb.literal = self.take_content(content);
+                self.recycle_lines(lines);
             }
             NodeValue::HtmlBlock(ref mut nhb) => {
                 let mut lines = ast.lines.take().unwrap();
@@ -2455,6 +2469,7 @@ where
                 ast.sourcepos.end = (end_line, end_col).into();
 
                 nhb.literal = self.take_content(&mut lines.content);
+                self.recycle_lines(lines);
             }
             #[cfg(feature = "phoenix_heex")]
             NodeValue::HeexBlock(ref mut nhb) => {
@@ -2496,11 +2511,19 @@ where
                 let mut lines = ast.lines.take().unwrap();
                 let content = &mut lines.content;
                 ncb.literal = self.take_content(content);
+                self.recycle_lines(lines);
             }
             _ => (),
         }
 
         parent
+    }
+
+    /// A block's emptied lines go back to the thread pool on the blob path.
+    fn recycle_lines(&self, lines: Box<BlockLines>) {
+        if self.string_arena.is_some() {
+            nodes::give_block(lines);
+        }
     }
 
     fn take_content(&mut self, content: &mut String) -> String {
@@ -2560,6 +2583,10 @@ where
             Some(sa) => Cow::Borrowed(&*sa.alloc(content)),
             None => Cow::Owned(content),
         };
+        let base = match input {
+            Cow::Borrowed(s) => Some(s),
+            Cow::Owned(_) => None,
+        };
 
         let mut subj = inlines::Subject::new(
             self.arena,
@@ -2577,7 +2604,10 @@ where
         while subj.parse_inline(node, line, &lines.offsets) {}
         subj.process_emphasis(0);
         subj.clear_brackets();
-        if self.string_arena.is_some() {
+        if let Some(base) = base {
+            if subj.text_fragments {
+                merge_borrowed_text_runs(node, base);
+            }
             nodes::give_block(lines);
         }
     }
@@ -3228,6 +3258,47 @@ fn reopen_ast_nodes(mut ast: Node<'_>) {
 pub enum AutolinkType {
     Uri,
     Email,
+}
+
+/// Join each run of adjacent Text siblings under `root` that borrow contiguous slices of `base`
+/// into one borrowed Text, so the postprocess join that follows has nothing to copy. Runs only
+/// after emphasis and brackets are resolved, when no delimiter refers to these nodes.
+fn merge_borrowed_text_runs<'a>(parent: Node<'a>, base: &'a str) {
+    let base_start = base.as_ptr() as usize;
+    // Offset of `s` within `base`; None for text that lives elsewhere (static or owned strings)
+    let offset_in_base = |s: &str| {
+        let p = s.as_ptr() as usize;
+        (p >= base_start && p + s.len() <= base_start + base.len()).then(|| p - base_start)
+    };
+    let mut it = parent.first_child();
+    while let Some(node) = it {
+        let start = match node.data().value {
+            NodeValue::Text(Cow::Borrowed(s)) => offset_in_base(s).map(|off| (off, s.len())),
+            _ => None,
+        };
+        if let Some((off, mut len)) = start {
+            let mut end = node.data().sourcepos.end;
+            while let Some(next) = node.next_sibling() {
+                let NodeValue::Text(Cow::Borrowed(t)) = next.data().value else {
+                    break;
+                };
+                if offset_in_base(t) != Some(off + len) {
+                    break;
+                }
+                len += t.len();
+                end = next.data().sourcepos.end;
+                next.detach();
+            }
+            if let Some(joined) = base.get(off..off + len) {
+                let mut ast = node.data_mut();
+                ast.value = NodeValue::Text(Cow::Borrowed(joined));
+                ast.sourcepos.end = end;
+            }
+        } else if node.first_child().is_some() {
+            merge_borrowed_text_runs(node, base);
+        }
+        it = node.next_sibling();
+    }
 }
 
 pub(crate) struct Spx {

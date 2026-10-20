@@ -136,6 +136,9 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     /// `input` at its full `'a` lifetime when borrowed (zerocopy mode);
     /// cached at construction so hot paths avoid re-matching the Cow.
     zerocopy_input: Option<&'a str>,
+    /// Set when a borrowed text fragment that can sit next to other text is created: a probe or
+    /// escape character, or a delimiter run left unmatched. Without one there is nothing to merge.
+    pub(crate) text_fragments: bool,
 }
 
 #[derive(Default)]
@@ -186,6 +189,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             relaxed_autolink_dead_zone_end: 0,
             string_arena,
             zerocopy_input,
+            text_fragments: false,
         }
     }
 
@@ -259,6 +263,20 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             lines: None,
         };
         self.arena.alloc(ast.into())
+    }
+
+    /// Text for a failed special-char probe (`fallback` equals the input at `startpos`),
+    /// borrowed from the input when it can be so later runs merge without a copy.
+    fn probe_text(&mut self, fallback: &'static str, startpos: usize) -> Node<'a> {
+        let endpos = startpos + fallback.len();
+        let text: Cow<'a, str> = match self.input_slice(startpos..endpos) {
+            Some(p) => {
+                self.text_fragments = true;
+                Cow::Borrowed(p)
+            }
+            None => fallback.into(),
+        };
+        self.make_inline(NodeValue::Text(text), startpos, endpos - 1)
     }
 
     fn make_autolink(
@@ -339,11 +357,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
                 if res.is_none() {
                     self.scanner.pos += 1;
-                    res = Some(self.make_inline(
-                        NodeValue::Text(":".into()),
-                        self.scanner.pos - 1,
-                        self.scanner.pos - 1,
-                    ));
+                    res = Some(self.probe_text(":", self.scanner.pos - 1));
                 }
 
                 res
@@ -353,11 +367,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     Some(inl) => Some(inl),
                     None => {
                         self.scanner.pos += 1;
-                        Some(self.make_inline(
-                            NodeValue::Text("w".into()),
-                            self.scanner.pos - 1,
-                            self.scanner.pos - 1,
-                        ))
+                        Some(self.probe_text("w", self.scanner.pos - 1))
                     }
                 }
             }
@@ -414,11 +424,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     self.push_bracket(true, inl);
                     Some(inl)
                 } else {
-                    Some(self.make_inline(
-                        NodeValue::Text("!".into()),
-                        self.scanner.pos - 1,
-                        self.scanner.pos - 1,
-                    ))
+                    Some(self.probe_text("!", self.scanner.pos - 1))
                 }
             }
             b'~' if self.options.extension.strikethrough || self.options.extension.subscript => {
@@ -600,6 +606,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
         if self.peek_byte().is_some_and(ispunct) {
             self.scanner.pos += 1;
+            self.text_fragments |= self.zerocopy_input.is_some();
 
             let inline_text = self.make_inline(
                 NodeValue::Text(
@@ -954,6 +961,9 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             && is_valid_double_delim_if_required
         {
             self.push_delimiter(b, can_open, can_close, inl);
+        } else {
+            // Never on the stack, so it stays as text beside its neighbours
+            self.text_fragments |= self.zerocopy_input.is_some();
         }
 
         inl
@@ -1046,11 +1056,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 )
             }
         } else {
-            self.make_inline(
-                NodeValue::Text(".".into()),
-                self.scanner.pos - 1,
-                self.scanner.pos - 1,
-            )
+            self.probe_text(".", self.scanner.pos - 1)
         }
     }
 
@@ -1661,6 +1667,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     // then we know it's just text - remove it from the
                     // delimiter stack, leaving it in the AST as text
                     if !old_c.can_open {
+                        self.text_fragments = true;
                         self.remove_delimiter(old_c);
                     }
                 }
@@ -1694,6 +1701,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             if last.position < stack_bottom {
                 break;
             }
+            self.text_fragments = true;
             self.remove_delimiter(last);
         }
     }
