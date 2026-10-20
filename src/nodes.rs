@@ -887,6 +887,55 @@ pub(crate) struct BlockLines {
     pub(crate) offsets: smallvec::SmallVec<[usize; 4]>,
 }
 
+thread_local! {
+    /// Block lines and paragraph strings from this thread's last parse, so the next parse
+    /// allocates neither: a content comes back with the capacity its last paragraph needed.
+    // Boxed on purpose: a pooled block hands its Box straight back to an Ast's `lines`
+    #[allow(clippy::vec_box)]
+    static SPARE_BLOCKS: std::cell::RefCell<Vec<Box<BlockLines>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SPARE_STRINGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many of each a thread keeps, and the longest string kept: past these a document was unusual.
+const SPARE_MAX: usize = 256;
+const SPARE_STRING_MAX: usize = 4096;
+
+pub(crate) fn take_block() -> Box<BlockLines> {
+    let mut block = SPARE_BLOCKS
+        .with(|p| p.borrow_mut().pop())
+        .unwrap_or_default();
+    if block.content.capacity() == 0
+        && let Some(s) = SPARE_STRINGS.with(|p| p.borrow_mut().pop())
+    {
+        block.content = s;
+    }
+    block
+}
+
+pub(crate) fn give_block(mut block: Box<BlockLines>) {
+    block.offsets.clear();
+    give_string(std::mem::take(&mut block.content));
+    SPARE_BLOCKS.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.len() < SPARE_MAX {
+            p.push(block);
+        }
+    });
+}
+
+pub(crate) fn give_string(mut s: String) {
+    if s.capacity() == 0 || s.capacity() > SPARE_STRING_MAX {
+        return;
+    }
+    s.clear();
+    SPARE_STRINGS.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.len() < SPARE_MAX {
+            p.push(s);
+        }
+    });
+}
+
 impl Ast<'_> {
     pub(crate) fn lines_mut(&mut self) -> &mut BlockLines {
         self.lines.as_mut().unwrap()

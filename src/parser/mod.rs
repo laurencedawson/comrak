@@ -25,7 +25,7 @@ use crate::entity;
 use crate::matchers::cr_or_lf_matcher;
 use crate::node_matches;
 use crate::nodes::{
-    self, AlertType, Ast, BlockLines, ListDelimType, ListType, Node, NodeAlert, NodeBlockDirective,
+    self, AlertType, Ast, ListDelimType, ListType, Node, NodeAlert, NodeBlockDirective,
     NodeCodeBlock, NodeCommentBlock, NodeDescriptionItem, NodeFootnoteDefinition, NodeHeading,
     NodeHtmlBlock, NodeLemmySpoiler, NodeList, NodeMultilineBlockQuote, NodeTaskItem, NodeValue,
     Sourcepos,
@@ -52,13 +52,21 @@ where
 {
     let arena = Arena::new();
     let string_arena = crate::StringArena::new();
-    f(parse_document_inner(
+    let result = f(parse_document_inner(
         &arena,
         md,
         options,
         false,
         Some(&string_arena),
-    ))
+    ));
+    // The block lines and paragraph strings go back to the thread for the next parse
+    string_arena.drain(|s| nodes::give_string(mem::take(s)));
+    arena.drain(|node| {
+        if let Some(lines) = node.data.get_mut().lines.take() {
+            nodes::give_block(lines);
+        }
+    });
+    result
 }
 
 /// Parse a Markdown document to an AST.
@@ -2006,7 +2014,11 @@ where
 
         let mut child = Ast::new(value, (self.line_number, start_column).into());
         if child.value.has_block_lines() {
-            child.lines = Some(Box::default());
+            child.lines = Some(if self.string_arena.is_some() {
+                nodes::take_block()
+            } else {
+                Box::default()
+            });
         }
         let node = self.arena.alloc(child.into());
         parent.append(node);
@@ -2492,6 +2504,10 @@ where
     }
 
     fn take_content(&mut self, content: &mut String) -> String {
+        // Pooled buffers go back to the thread after the parse, so an exact-size copy buys nothing
+        if self.string_arena.is_some() {
+            return mem::take(content);
+        }
         let exact = content.clone();
         self.working_content = mem::take(content);
         self.working_content.clear();
@@ -2531,17 +2547,14 @@ where
     }
 
     fn parse_inlines(&mut self, node: Node<'a>) {
-        let (lines, line) = {
+        let (mut lines, line) = {
             let mut node_data = node.data_mut();
             (
                 node_data.lines.take().unwrap(),
                 node_data.sourcepos.start.line,
             )
         };
-        let BlockLines {
-            mut content,
-            offsets,
-        } = *lines;
+        let mut content = mem::take(&mut lines.content);
         strings::rtrim(&mut content);
         let input: Cow<'a, str> = match self.string_arena {
             Some(sa) => Cow::Borrowed(&*sa.alloc(content)),
@@ -2561,9 +2574,12 @@ where
             self.string_arena,
         );
 
-        while subj.parse_inline(node, line, &offsets) {}
+        while subj.parse_inline(node, line, &lines.offsets) {}
         subj.process_emphasis(0);
         subj.clear_brackets();
+        if self.string_arena.is_some() {
+            nodes::give_block(lines);
+        }
     }
 
     fn process_footnotes(&mut self) {
