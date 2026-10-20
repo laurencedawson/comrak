@@ -326,6 +326,7 @@ dependencies = [
  "finl_unicode",
  "fmt2io",
  "glob",
+ "memchr",
  "memchr-n",
  "ntest",
  "percent-encoding-rfc3986",
