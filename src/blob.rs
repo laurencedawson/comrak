@@ -481,7 +481,7 @@ pub(crate) fn visit<'a>(
             if top_level
                 && node
                     .children()
-                    .all(|c| matches!(&c.data.borrow().value, Text(t) if t.trim().is_empty()))
+                    .all(|c| matches!(&c.data.borrow().value, Text(t) if t.chars().all(char::is_whitespace)))
             {
                 out.p += 2;
             } else {
