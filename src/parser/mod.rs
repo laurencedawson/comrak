@@ -8,6 +8,7 @@ pub mod phoenix_heex;
 #[cfg(feature = "shortcodes")]
 pub mod shortcodes;
 mod table;
+pub mod url;
 
 use std::borrow::Cow;
 use std::cmp::{Ordering, min};
@@ -26,7 +27,8 @@ use crate::node_matches;
 use crate::nodes::{
     self, AlertType, Ast, BlockLines, ListDelimType, ListType, Node, NodeAlert, NodeBlockDirective,
     NodeCodeBlock, NodeCommentBlock, NodeDescriptionItem, NodeFootnoteDefinition, NodeHeading,
-    NodeHtmlBlock, NodeList, NodeMultilineBlockQuote, NodeTaskItem, NodeValue, Sourcepos,
+    NodeHtmlBlock, NodeLemmySpoiler, NodeList, NodeMultilineBlockQuote, NodeTaskItem, NodeValue,
+    Sourcepos,
 };
 use crate::parser::inlines::RefMap;
 pub use crate::parser::options::Options;
@@ -41,6 +43,16 @@ const CODE_INDENT: usize = 4;
 // depth. It is unlikely that a non-contrived markdown document will
 // be nested this deeply.
 const MAX_LIST_DEPTH: usize = 100;
+
+/// Parse markdown and hand the root to `f`; the arena lives only for the call, so `f` returns owned
+/// data. On this base it is plain [`parse_document`]: the entry point the blob and its host call.
+pub fn parse_document_zerocopy<F, R>(md: &str, options: &Options, f: F) -> R
+where
+    F: for<'a> FnOnce(Node<'a>) -> R,
+{
+    let arena = Arena::new();
+    f(parse_document(&arena, md, options))
+}
 
 /// Parse a Markdown document to an AST.
 ///
@@ -199,7 +211,16 @@ where
         }
     }
 
-    fn parse(mut self, mut s: &str) -> Node<'a> {
+    fn parse(mut self, s: &str) -> Node<'a> {
+        let stripped = if self.options.parse.sanitize_input {
+            strings::strip_invisible(s)
+        } else {
+            Cow::Borrowed(s)
+        };
+        let mut s: &str = &stripped;
+        if self.options.parse.sanitize_input {
+            s = strings::strip_leading_breaks(s);
+        }
         if let Some(delimiter) = &self.options.extension.front_matter_delimiter
             && let Some((front_matter, rest)) = split_off_front_matter(s, delimiter)
         {
@@ -396,7 +417,7 @@ where
                         break;
                     }
                 }
-                NodeValue::BlockDirective(..) => {
+                NodeValue::BlockDirective(..) | NodeValue::LemmySpoiler(..) => {
                     self.parse_block_directive_prefix(line, container, ast)?;
                 }
                 _ => {}
@@ -640,6 +661,7 @@ where
     ) -> Option<()> {
         let (fence_length, fence_offset) = match ast.value {
             NodeValue::BlockDirective(ref nbd) => (nbd.fence_length, nbd.fence_offset),
+            NodeValue::LemmySpoiler(ref nls) => (nls.fence_length, nls.fence_offset),
             _ => unreachable!(),
         };
 
@@ -784,7 +806,8 @@ where
             let indented = self.indent >= CODE_INDENT;
 
             if !((!indented
-                && (self.handle_block_directive(container, line)
+                && (self.handle_lemmy_spoiler(container, line)
+                    || self.handle_block_directive(container, line)
                     || self.handle_alert(container, line)
                     || self.handle_multiline_blockquote(container, line)
                     || self.handle_blockquote(container, line)
@@ -854,6 +877,65 @@ where
 
     fn detect_block_directive(&self, line: &str) -> Option<usize> {
         if self.options.extension.block_directive {
+            scanners::open_block_directive_fence(&line[self.first_nonspace..])
+        } else {
+            None
+        }
+    }
+
+    fn handle_lemmy_spoiler(&mut self, container: &mut Node<'a>, line: &str) -> bool {
+        let Some(matched) = self.detect_lemmy_spoiler(line) else {
+            return false;
+        };
+
+        let first_nonspace = self.first_nonspace;
+        let offset = self.offset;
+
+        let info_start = first_nonspace + matched;
+        let mut info_end = info_start;
+        while info_end < line.len() && !strings::is_line_end_char(line.as_bytes()[info_end]) {
+            info_end += 1;
+        }
+
+        let mut info = entity::unescape_html(&line[info_start..info_end]);
+        strings::trim_cow(&mut info);
+        let mut info = info.into_owned();
+        strings::unescape(&mut info);
+
+        // Match Lemmy's `^spoiler\s+(.*)$`: literal "spoiler", a whitespace boundary,
+        // then a non-empty title. Rejects `:::spoiler` (no title) and `:::spoilers x`
+        // (no whitespace after the keyword).
+        let title = match info.strip_prefix("spoiler") {
+            Some(rest) if rest.starts_with(char::is_whitespace) => {
+                let trimmed = rest.trim();
+                if trimmed.is_empty() {
+                    return false;
+                }
+                trimmed.to_string()
+            }
+            _ => return false,
+        };
+
+        let nls = NodeLemmySpoiler {
+            fence_length: matched,
+            fence_offset: first_nonspace - offset,
+            title,
+        };
+
+        *container = self.add_child(
+            container,
+            NodeValue::LemmySpoiler(Box::new(nls)),
+            self.first_nonspace + 1,
+        );
+
+        let line_to_consume = line.len() - offset;
+        self.advance_offset(line, line_to_consume, false);
+
+        true
+    }
+
+    fn detect_lemmy_spoiler(&self, line: &str) -> Option<usize> {
+        if self.options.extension.lemmy_spoiler {
             scanners::open_block_directive_fence(&line[self.first_nonspace..])
         } else {
             None
@@ -2196,7 +2278,7 @@ where
             NodeValue::Document => true,
             NodeValue::CodeBlock(ref ncb) => ncb.fenced && ncb.closed,
             NodeValue::MultilineBlockQuote(..) => true,
-            NodeValue::BlockDirective(..) => true,
+            NodeValue::BlockDirective(..) | NodeValue::LemmySpoiler(..) => true,
             _ => false,
         } {
             ast.sourcepos.end = (self.line_number, self.curline_end_col).into();
@@ -2232,6 +2314,13 @@ where
                     self.working_content = mem::take(&mut ast.lines_mut().content);
                     self.working_content.clear();
                     ast.lines = None;
+                    node.detach();
+                }
+            }
+            NodeValue::LemmySpoiler(_) => {
+                // Empty body: no toggle target, drop the node so downstream renderers
+                // never see a title without paired content.
+                if node.first_child().is_none() {
                     node.detach();
                 }
             }
@@ -2640,7 +2729,8 @@ where
         // for the post-processing step.
 
         let needs_spx = self.options.extension.tasklist
-            || (self.options.extension.autolink && !in_bracket_context);
+            || ((self.options.extension.autolink || self.options.extension.lemmy_mention)
+                && !in_bracket_context);
 
         let mut spxv = SmallVec::new();
         if needs_spx {
@@ -2690,6 +2780,10 @@ where
         };
         if self.options.extension.tasklist {
             self.process_tasklist(node, text, sourcepos, &mut spx);
+        }
+
+        if self.options.extension.lemmy_mention && !in_bracket_context {
+            autolink::process_lemmy_mentions(self.arena, node, text, sourcepos, &spx, 0);
         }
 
         if self.options.extension.autolink && !in_bracket_context {
@@ -3037,11 +3131,27 @@ pub enum AutolinkType {
 }
 
 pub(crate) struct Spx {
-    items: SmallVec<[(Sourcepos, usize); 4]>,
-    front: usize,
+    pub(crate) items: SmallVec<[(Sourcepos, usize); 4]>,
+    pub(crate) front: usize,
 }
 
 impl Spx {
+    // The end column `consume(rem)` would return, without consuming: matchers that address the
+    // remaining run by absolute offset (Lemmy mentions) run before the consuming email pass.
+    pub(crate) fn col_at(&self, mut rem: usize) -> usize {
+        for &(sp, x) in &self.items[self.front..] {
+            match rem.cmp(&x) {
+                Ordering::Greater => rem -= x,
+                Ordering::Equal => return sp.end.column,
+                Ordering::Less if rem == 0 => return sp.start.column - 1,
+                Ordering::Less => {
+                    return (sp.end.column + rem).saturating_sub(x).max(sp.start.column);
+                }
+            }
+        }
+        unreachable!()
+    }
+
     // Sourcepos end column `e` of a node determined by advancing through `spx`
     // until `i` bytes of input are seen.
     //

@@ -1,0 +1,90 @@
+//! Profile where parse time is spent.
+//! Run with: cargo run --release --example profile_parse
+
+fn main() {
+    use comrak::{blob, parse_document_zerocopy};
+    use std::time::Instant;
+
+    let opts = comrak::benchmarks::production_options();
+
+    let input = comrak::benchmarks::long_doc();
+    let trimmed = input.trim();
+
+    // Warmup
+    for _ in 0..200 {
+        parse_document_zerocopy(trimmed, &opts, |_| {});
+    }
+
+    // Measure total parse, many iterations
+    let iterations = 2000;
+    let start = Instant::now();
+    for _ in 0..iterations {
+        parse_document_zerocopy(trimmed, &opts, |_| {});
+    }
+    let total = start.elapsed() / iterations;
+    println!(
+        "long-doc total parse: {:.1} us",
+        total.as_nanos() as f64 / 1000.0
+    );
+
+    // Now with blob rendering
+    let start = Instant::now();
+    for _ in 0..iterations {
+        parse_document_zerocopy(trimmed, &opts, |root| {
+            let _ = blob::render_blob(root, trimmed);
+        });
+    }
+    let total_with_blob = start.elapsed() / iterations;
+    // Saturate: scheduler noise can make the parse-only loop measure slower
+    // than parse+blob; a negative difference would panic the subtraction.
+    let blob_time = total_with_blob.checked_sub(total).unwrap_or_default();
+    println!(
+        "long-doc parse+blob: {:.1} us (blob: {:.1} us)",
+        total_with_blob.as_nanos() as f64 / 1000.0,
+        blob_time.as_nanos() as f64 / 1000.0
+    );
+
+    // Profile each test
+    let inputs = vec![
+        ("plain", comrak::benchmarks::PLAIN.to_string()),
+        ("simple", comrak::benchmarks::SIMPLE.to_string()),
+        ("medium", comrak::benchmarks::MEDIUM.to_string()),
+        ("heavy-inline", comrak::benchmarks::heavy_inline()),
+        ("complex", comrak::benchmarks::complex()),
+        ("long-doc", comrak::benchmarks::long_doc()),
+        ("prose", comrak::benchmarks::prose_doc()),
+    ];
+
+    println!(
+        "\n{:<15} {:>8} {:>8} {:>8}",
+        "test", "parse", "blob", "total"
+    );
+    println!("{:-<43}", "");
+    for (name, input) in &inputs {
+        let trimmed = input.trim();
+        let iterations = 2000;
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            parse_document_zerocopy(trimmed, &opts, |_| {});
+        }
+        let parse = start.elapsed() / iterations;
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            parse_document_zerocopy(trimmed, &opts, |root| {
+                let _ = blob::render_blob(root, trimmed);
+            });
+        }
+        let total = start.elapsed() / iterations;
+        let blob = total.checked_sub(parse).unwrap_or_default();
+
+        println!(
+            "{:<15} {:>6.1} us {:>6.1} us {:>6.1} us",
+            name,
+            parse.as_nanos() as f64 / 1000.0,
+            blob.as_nanos() as f64 / 1000.0,
+            total.as_nanos() as f64 / 1000.0
+        );
+    }
+}

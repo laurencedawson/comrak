@@ -517,6 +517,15 @@ hello world
 after"#,
 );
 
+const LEMMY_SPOILER_TITLE: TestCase = (
+    &[sourcepos!((2:1-4:3))],
+    r#"before
+:::spoiler Title
+hello world
+:::
+after"#,
+);
+
 const COMMENT_INLINE: TestCase = (&[sourcepos!((1:3-1:8))], "x %%aa%% tail");
 
 const MULTILINE_COMMENT: TestCase = (&[sourcepos!((1:1-2:4))], "%%\naa%%bb");
@@ -575,6 +584,7 @@ fn node_values() -> HashMap<NodeValueDiscriminants, TestCase> {
                 Alert => ALERT,
                 Subtext => SUBTEXT,
                 BlockDirective => BLOCK_DIRECTIVE,
+                LemmySpoiler => LEMMY_SPOILER_TITLE,
                 CommentInline => COMMENT_INLINE,
                 MultilineComment => MULTILINE_COMMENT,
                 Raw => unreachable!(),
@@ -619,6 +629,8 @@ fn sourcepos() {
     options.extension.subtext = true;
     options.extension.block_directive = true;
     options.extension.ofm_comments = true;
+    options.extension.lemmy_spoiler = true;
+    options.extension.lemmy_mention = true;
     #[cfg(feature = "phoenix_heex")]
     {
         options.extension.phoenix_heex = true;

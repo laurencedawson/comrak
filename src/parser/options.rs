@@ -642,6 +642,49 @@ pub struct Extension<'c> {
     #[cfg_attr(feature = "bon", builder(default))]
     pub block_directive: bool,
 
+    /// Enables Lemmy-style user and community mentions.
+    ///
+    /// User mentions (`@user@instance.com`) become links to `https://instance.com/u/user`.
+    /// Community mentions (`!community@instance.com`) become links to `https://instance.com/c/community`.
+    ///
+    /// ```md
+    /// @user@example.com
+    /// !community@example.com
+    /// ```
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.extension.lemmy_mention = true;
+    ///
+    /// assert_eq!(markdown_to_html("@user@example.com\n", &options),
+    ///            "<p><a href=\"https://example.com/u/user\">@user@example.com</a></p>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub lemmy_mention: bool,
+
+    /// Enables Lemmy-style spoiler blocks.
+    ///
+    /// Blocks starting with `:::spoiler Title` and ending with `:::` are parsed
+    /// as container blocks. The content inside is parsed as normal markdown.
+    ///
+    /// ```md
+    /// :::spoiler Click
+    /// Hidden content
+    /// :::
+    /// ```
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.extension.lemmy_spoiler = true;
+    ///
+    /// assert_eq!(markdown_to_html(":::spoiler Click\nHidden\n:::\n", &options),
+    ///            "<details>\n<summary>Click</summary>\n<p>Hidden</p>\n</details>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub lemmy_spoiler: bool,
+
     /// Parse attributes in setext and ATX headers.
     /// ```rust
     /// # use comrak::{parse_document, Arena, Options, nodes::NodeValue};
@@ -1002,6 +1045,30 @@ pub struct Parse<'c> {
     /// ```
     #[cfg_attr(feature = "bon", builder(default))]
     pub sourcepos_chars: bool,
+
+    /// Sanitize author input before parsing: strips invisible Unicode
+    /// characters (zero-width spaces, bidi controls, variation selectors —
+    /// preserving ZWJ for emoji sequences and VS16 for emoji presentation)
+    /// and any leading run of whitespace + `\<newline>` hard breaks, which
+    /// user content from Lemmy / Reddit sometimes starts with and which would
+    /// otherwise render an empty paragraph above the first real content.
+    ///
+    /// Both strips must happen before parsing, not at render time: invisible
+    /// characters would otherwise survive into link destinations and mention
+    /// targets.
+    ///
+    /// ```rust
+    /// # use comrak::{markdown_to_html, Options};
+    /// let mut options = Options::default();
+    /// options.parse.sanitize_input = true;
+    ///
+    /// assert_eq!(markdown_to_html("he\u{200b}llo\n", &options),
+    ///            "<p>hello</p>\n");
+    /// assert_eq!(markdown_to_html("\\\n![alt](url)\n", &options),
+    ///            "<p><img src=\"url\" alt=\"alt\" /></p>\n");
+    /// ```
+    #[cfg_attr(feature = "bon", builder(default))]
+    pub sanitize_input: bool,
 }
 
 /// The type of the callback used when a reference link is encountered with no

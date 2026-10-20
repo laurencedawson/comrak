@@ -1,0 +1,1761 @@
+//! Tests for the blob renderer (`comrak::blob::render_blob`).
+//!
+//! Organized into sections:
+//! - `format`    — blob byte layout, header, padding, UTF-16 positions, sort
+//! - `inline`    — bold/italic/strike/super/sub/code/breaks/shortcodes
+//! - `links`     — explicit links, domain suffixes, autolinks
+//! - `images`    — markdown images, autolink-to-image, link-wrapping-image
+//! - `block`     — headings, lists, task lists, blockquotes, code blocks, tables
+//! - `footnotes` — footnote refs and definitions
+//! - `edge`      — unicode, pathological inputs, empty, deep nesting
+
+use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, TABLE, visit};
+use crate::{Arena, Options, parse_document, parse_document_zerocopy};
+
+// ── helpers ──────────────────────────────────────────────────────────────
+
+fn test_opts() -> Options<'static> {
+    let mut opts = Options::default();
+    opts.extension.strikethrough = true;
+    opts.extension.table = true;
+    opts.extension.autolink = true;
+    opts.extension.superscript = true;
+    opts.extension.subscript = true;
+    opts.extension.tasklist = true;
+    #[cfg(feature = "shortcodes")]
+    {
+        opts.extension.shortcodes = true;
+    }
+    opts.extension.footnotes = true;
+    opts.extension.lemmy_mention = true;
+    opts.extension.lemmy_spoiler = true;
+    opts.parse.sanitize_input = true;
+    opts.parse.smart = false; // deliberately off: rendering policy lives in the blob writer (src/text.rs)
+    opts
+}
+
+/// Render markdown through the full parse+visit pipeline, returning the
+/// BlobWriter so tests can inspect internals directly.
+fn render_raw(markdown: &str) -> BlobWriter {
+    let opts = test_opts();
+    parse_document_zerocopy(markdown.trim(), &opts, |root| {
+        let mut out = BlobWriter::new(256);
+        visit(root, &mut out, 0, 0, 0);
+        out
+    })
+}
+
+/// `render_raw` plus footnote append and pending-newline flush — what most
+/// rendering assertions want.
+fn render_test(markdown: &str) -> BlobWriter {
+    let mut out = render_raw(markdown);
+    out.append_footnotes();
+    out.clear_pending();
+    out
+}
+
+/// Render via the arena-managed full-postprocess path. Required by tasklist
+/// tests because `parse_document_zerocopy` skips the text coalescing pass
+/// that `[ ]` detection needs.
+fn render_test_full_parse(markdown: &str) -> BlobWriter {
+    let opts = test_opts();
+    let arena = Arena::new();
+    let root = parse_document(&arena, markdown.trim(), &opts);
+    let mut out = BlobWriter::new(256);
+    visit(root, &mut out, 0, 0, 0);
+    out.append_footnotes();
+    out.clear_pending();
+    out
+}
+
+/// Render + serialize to the final blob byte representation.
+fn blob_bytes(markdown: &str) -> Vec<u8> {
+    render_raw(markdown).into_blob()
+}
+
+/// Text section of a raw blob (after the 8-byte header).
+fn blob_text(blob: &[u8]) -> &str {
+    let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+    std::str::from_utf8(&blob[8..8 + text_len]).unwrap()
+}
+
+fn blob_span_count(blob: &[u8]) -> usize {
+    // High byte of the span_count word carries flags; mask it off for the count.
+    (i32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) & 0x00FF_FFFF) as usize
+}
+
+#[allow(dead_code)]
+fn blob_flags(blob: &[u8]) -> u8 {
+    blob[7]
+}
+
+/// Decoded view of one span in the BlobWriter (not the serialized blob).
+struct SpanView {
+    typ: i32,
+    start: usize,
+    end: usize,
+    data: i32,
+    url: Option<String>,
+}
+
+impl SpanView {
+    fn indent(&self) -> i32 {
+        self.data >> 16
+    }
+    fn number(&self) -> i32 {
+        self.data & 0xFFFF
+    }
+}
+
+struct SpanIter<'a> {
+    spans: &'a [i32],
+    url_data: &'a [u8],
+    idx: usize,
+}
+
+impl<'a> Iterator for SpanIter<'a> {
+    type Item = SpanView;
+    fn next(&mut self) -> Option<Self::Item> {
+        let base = self.idx * 4;
+        if base + 3 >= self.spans.len() {
+            return None;
+        }
+        self.idx += 1;
+        let typ = self.spans[base + 2];
+        let raw_data = self.spans[base + 3];
+        // The data field packs offset(20)|len(12) for URL-carrying spans;
+        // LIST_ITEM and QUOTE reuse the slot for (indent<<16)|number and depth;
+        // LEMMY_SPOILER_TITLE reuses it for the title byte length.
+        let url_len = (raw_data & 0xFFF) as usize;
+        let offset = (raw_data >> 12) as usize;
+        let url = if url_len > 0
+            && typ != LIST_ITEM
+            && typ != QUOTE
+            && typ != LEMMY_SPOILER_TITLE
+            && typ != TABLE
+        {
+            Some(String::from_utf8_lossy(&self.url_data[offset..offset + url_len]).into_owned())
+        } else {
+            None
+        };
+        Some(SpanView {
+            start: self.spans[base] as usize,
+            end: self.spans[base + 1] as usize,
+            typ,
+            data: raw_data,
+            url,
+        })
+    }
+}
+
+trait BlobWriterExt {
+    fn span_iter(&self) -> SpanIter<'_>;
+}
+
+impl BlobWriterExt for BlobWriter {
+    fn span_iter(&self) -> SpanIter<'_> {
+        SpanIter {
+            spans: &self.spans,
+            url_data: &self.url_data,
+            idx: 0,
+        }
+    }
+}
+
+// ── format ───────────────────────────────────────────────────────────────
+
+mod format {
+    use super::*;
+    use crate::blob::*;
+
+    /// Empty writer produces a valid 8-byte header-only blob.
+    #[test]
+    fn empty_writer_produces_valid_blob() {
+        let out = BlobWriter::new(0);
+        let blob = out.into_blob();
+        assert_eq!(blob.len(), 8);
+        assert_eq!(blob_text(&blob), "");
+        assert_eq!(blob_span_count(&blob), 0);
+    }
+
+    /// Text is padded to 4-byte alignment before span data. Covers text
+    /// lengths 1–5 so every alignment offset is hit.
+    #[test]
+    fn four_byte_alignment_padding() {
+        for md in &["a", "ab", "abc", "abcd", "abcde"] {
+            let blob = blob_bytes(md);
+            let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+            let span_count = blob_span_count(&blob);
+            let span_start = 8 + text_len + (4 - text_len % 4) % 4;
+            if span_count > 0 {
+                assert!(blob.len() >= span_start + span_count * 16);
+            }
+        }
+    }
+
+    /// URL data field packs as offset(20)|len(12); roundtrip recovers bytes.
+    #[test]
+    fn url_offset_len_packing_roundtrips() {
+        let result = render_test("[click](https://example.com)");
+        let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
+        assert_eq!(span.url.as_deref(), Some("https://example.com"));
+        let url_len = (span.data & 0xFFF) as usize;
+        let offset = (span.data >> 12) as usize;
+        let unpacked = std::str::from_utf8(&result.url_data[offset..offset + url_len]).unwrap();
+        assert_eq!(unpacked, "https://example.com");
+    }
+
+    /// 12-bit length field limits URLs to 4095 bytes.
+    #[test]
+    fn url_truncation_at_max_len() {
+        let long_path = "a".repeat(4200);
+        let md = format!("[click](https://example.com/{long_path})");
+        let result = render_test(&md);
+        let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
+        assert!(span.url.unwrap().len() <= 4095);
+    }
+
+    /// The cap cut must land on a char boundary: the host decodes the url_data
+    /// slice as UTF-8, and a split codepoint becomes U+FFFD there.
+    #[test]
+    fn url_truncation_keeps_utf8_boundary() {
+        let md = format!("[click](https://example.com/{})", "€".repeat(2000));
+        let result = render_test(&md);
+        let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
+        let (offset, len) = ((span.data >> 12) as usize, (span.data & 0xFFF) as usize);
+        assert!(std::str::from_utf8(&result.url_data[offset..offset + len]).is_ok());
+    }
+
+    /// `clear_pending()` drops unflushed queued newlines.
+    #[test]
+    fn pending_newlines_dont_materialize_without_text() {
+        let mut out = BlobWriter::new(64);
+        out.write_text("hello");
+        out.nl(2);
+        out.clear_pending();
+        assert_eq!(out.text(), "hello");
+    }
+
+    /// `nl(n)` keeps only the maximum pending count across successive calls.
+    #[test]
+    fn queue_newlines_takes_max() {
+        let mut out = BlobWriter::new(64);
+        out.write_text("a");
+        out.nl(1);
+        out.nl(3);
+        out.nl(2);
+        out.write_text("b");
+        assert_eq!(out.text(), "a\n\n\nb");
+    }
+
+    /// Span positions use UTF-16 code units (emoji = 2 units, surrogate pair).
+    #[test]
+    fn span_positions_use_utf16() {
+        let result = render_test("😀**bold**");
+        let bold = result.span_iter().find(|s| s.typ == BOLD).unwrap();
+        assert_eq!(bold.start, 2);
+        assert_eq!(bold.end, 6);
+    }
+
+    /// ASCII span positions are 1:1 with byte offsets.
+    #[test]
+    fn utf16_positions_ascii() {
+        let result = render_test("**hello**");
+        let bold = result.span_iter().find(|s| s.typ == BOLD).unwrap();
+        assert_eq!(bold.start, 0);
+        assert_eq!(bold.end, 5);
+    }
+
+    /// CJK characters count as 1 UTF-16 unit each (3 UTF-8 bytes but BMP).
+    #[test]
+    fn utf16_positions_cjk() {
+        let result = render_test("中文**粗体**");
+        let bold = result.span_iter().find(|s| s.typ == BOLD).unwrap();
+        assert_eq!(bold.start, 2);
+        assert_eq!(bold.end, 4);
+    }
+
+    /// Mixed ASCII/emoji/CJK UTF-16 positions: H=1 i=1 😀=2 中=1 → bold at 5.
+    #[test]
+    fn utf16_positions_mixed() {
+        let result = render_test("Hi😀中**b**");
+        let bold = result.span_iter().find(|s| s.typ == BOLD).unwrap();
+        assert_eq!(bold.start, 5);
+        assert_eq!(bold.end, 6);
+    }
+
+    /// `into_blob()` sorts spans by start position so Android layout can
+    /// early-exit on the sorted stream.
+    #[test]
+    fn span_sorting_in_blob() {
+        let out = render_test("**bold *and italic* text**");
+        let blob = out.into_blob();
+        let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+        let span_count = blob_span_count(&blob);
+        let span_start = 8 + text_len + (4 - text_len % 4) % 4;
+        let mut prev_start = -1i32;
+        for i in 0..span_count {
+            let offset = span_start + i * 16;
+            let start = i32::from_le_bytes([
+                blob[offset],
+                blob[offset + 1],
+                blob[offset + 2],
+                blob[offset + 3],
+            ]);
+            assert!(
+                start >= prev_start,
+                "spans out of order: {start} after {prev_start}"
+            );
+            prev_start = start;
+        }
+        assert!(span_count >= 2);
+    }
+
+    /// Zero-length spans (start == end) are skipped at emission time.
+    #[test]
+    fn zero_length_spans_skipped() {
+        let mut out = BlobWriter::new(64);
+        let pos = out.pos();
+        out.span(BOLD, pos);
+        assert_eq!(out.span_iter().count(), 0);
+    }
+
+    /// `span_url()` with empty URL still emits the span (if non-zero length)
+    /// but stores no URL bytes.
+    #[test]
+    fn span_url_empty_url() {
+        let mut out = BlobWriter::new(64);
+        out.write_text("text");
+        out.span_url(LINK, 0, &crate::resolve_url(""));
+        let span = out.span_iter().find(|s| s.typ == LINK).unwrap();
+        assert_eq!(span.url, None);
+    }
+
+    /// `span_data()` skips zero-length spans (same check as `span()`).
+    #[test]
+    fn span_data_start_ge_end_skipped() {
+        let mut out = BlobWriter::new(64);
+        let pos = out.pos();
+        out.span_data(LIST_ITEM, pos, 42);
+        assert_eq!(out.span_iter().count(), 0);
+    }
+
+    /// Multiple URLs pack sequentially in url_data with correct offsets.
+    #[test]
+    fn multiple_urls_correct_offsets() {
+        let mut out = BlobWriter::new(64);
+        out.write_text("aaa");
+        out.span_url(LINK, 0, &crate::resolve_url("https://first.com"));
+        out.write_text("bbb");
+        out.span_url(LINK, 3, &crate::resolve_url("https://second.com"));
+        let urls: Vec<_> = out.span_iter().filter_map(|s| s.url).collect();
+        assert_eq!(urls, vec!["https://first.com", "https://second.com"]);
+    }
+
+    /// Zero-length spans are excluded from the serialized blob too.
+    #[test]
+    fn blob_spans_exclude_zero_length() {
+        let mut out = BlobWriter::new(64);
+        out.write_text("hello");
+        out.span(BOLD, 0);
+        let pos = out.pos();
+        out.span(ITALIC, pos);
+        let blob = out.into_blob();
+        assert_eq!(blob_span_count(&blob), 1);
+    }
+
+    /// Trailing newlines are trimmed from the final blob text.
+    #[test]
+    fn trailing_newlines_trimmed() {
+        let blob = blob_bytes("This kid:\n\n");
+        assert_eq!(blob_text(&blob), "This kid:");
+    }
+
+    /// Nested blockquotes don't leave trailing newlines, and internal blanks
+    /// between nesting levels are preserved.
+    #[test]
+    fn blockquote_blob_newlines() {
+        let text = String::from_utf8(
+            blob_text(&blob_bytes("> A\n>> B\n>>> C\n\nAfter"))
+                .as_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(text.contains("A\n\nB"), "missing newline A→B: {text:?}");
+        assert!(text.contains("B\n\nC"), "missing newline B→C: {text:?}");
+        assert!(text.contains("C\n\n") && text.contains("After"));
+        assert!(!text.ends_with('\n'));
+
+        let blob2 = blob_bytes("> A\n>> B\n>>> C");
+        assert!(!blob_text(&blob2).ends_with('\n'));
+    }
+
+    /// All serialized span start/end positions are within text bounds.
+    #[test]
+    fn span_positions_within_text_bounds() {
+        let blob = blob_bytes("**bold** and *italic*");
+        let text = blob_text(&blob);
+        let text_utf16_len = text.encode_utf16().count() as i32;
+        let text_len = text.len();
+        let span_count = blob_span_count(&blob);
+        let span_start = 8 + text_len + (4 - text_len % 4) % 4;
+        for i in 0..span_count {
+            let offset = span_start + i * 16;
+            let start = i32::from_le_bytes([
+                blob[offset],
+                blob[offset + 1],
+                blob[offset + 2],
+                blob[offset + 3],
+            ]);
+            let end = i32::from_le_bytes([
+                blob[offset + 4],
+                blob[offset + 5],
+                blob[offset + 6],
+                blob[offset + 7],
+            ]);
+            assert!(start >= 0 && start <= text_utf16_len);
+            assert!(end >= 0 && end <= text_utf16_len);
+            assert!(start <= end);
+        }
+    }
+
+    const FLAG_IS_ASCII: u8 = 1 << 0;
+    const FLAG_HAS_SPOILER_BODY: u8 = 1 << 1;
+
+    /// Empty writer: is_ascii vacuously true, no spoiler body.
+    #[test]
+    fn flags_empty_blob() {
+        let blob = BlobWriter::new(0).into_blob();
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
+    }
+
+    /// Pure ASCII text with formatting spans sets is_ascii and nothing else.
+    #[test]
+    fn flags_ascii_bold_only() {
+        let blob = blob_bytes("**bold text**");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags, FLAG_IS_ASCII);
+    }
+
+    /// An image sets no flag of its own: the host decides on layout from the spans it
+    /// finds, so nothing in the header speaks for it.
+    #[test]
+    fn flags_image_sets_nothing_of_its_own() {
+        let blob = blob_bytes("![](https://example.com/x.jpg)");
+        assert_eq!(blob_flags(&blob), FLAG_IS_ASCII);
+    }
+
+    /// A spoiler's hidden body is the one span the header speaks for, so the host can
+    /// skip containment checks on every comment that has none.
+    #[test]
+    fn flags_lemmy_spoiler_sets_spoiler_body() {
+        let blob = blob_bytes(":::spoiler the secret\nhidden body\n:::");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, FLAG_HAS_SPOILER_BODY);
+    }
+
+    /// Non-ASCII content (emoji) clears is_ascii.
+    #[test]
+    fn flags_non_ascii_clears_is_ascii() {
+        let blob = blob_bytes("**bold \u{1F389}**");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, 0);
+    }
+
+    /// One Cyrillic character buried in an otherwise-ASCII long doc must
+    /// still clear is_ascii. Guards against any fast-path optimization in
+    /// `prefer_ascii` / `write_text` that would skip per-write tracking.
+    #[test]
+    fn flags_single_cyrillic_in_long_doc_clears_is_ascii() {
+        let mut md = String::from("# heading\n\n");
+        for _ in 0..200 {
+            md.push_str("ordinary paragraph text that is fully ASCII and prints normally. ");
+        }
+        md.push_str("a buried \u{0444} character\n");
+        for _ in 0..200 {
+            md.push_str("more padding text continuing as plain ASCII content here. ");
+        }
+        let blob = blob_bytes(&md);
+        let flags = blob_flags(&blob);
+        assert_eq!(
+            flags & FLAG_IS_ASCII,
+            0,
+            "single non-ASCII char must clear is_ascii"
+        );
+    }
+
+    /// Typographic chars that `prefer_ascii` converts (curly quotes, em-dash,
+    /// ellipsis) end up as pure ASCII in the blob — is_ascii must stay set.
+    /// This pins the contract: prefer_ascii's output drives the flag, not the
+    /// input. If someone shortcuts the per-write `is_ascii()` check, this fails.
+    #[test]
+    fn flags_typographic_chars_converted_keeps_is_ascii() {
+        // Curly quotes, em-dash, ellipsis — all in prefer_ascii's conversion set.
+        let blob = blob_bytes("he said \u{201C}hello\u{201D} \u{2014} then left\u{2026}");
+        let flags = blob_flags(&blob);
+        let text = std::str::from_utf8(
+            &blob[8..8 + i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize],
+        )
+        .unwrap();
+        assert!(
+            text.is_ascii(),
+            "prefer_ascii should have converted to ASCII: {text:?}"
+        );
+        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+    }
+
+    /// Non-ASCII chars NOT in prefer_ascii's conversion set survive into the
+    /// blob and must clear is_ascii. Picks U+00E9 (é) — UTF-8 `0xC3 0xA9`,
+    /// no `0xE2` prefix, so prefer_ascii's memchr fast path returns immediately
+    /// without converting. The per-write `is_ascii()` is the only thing that
+    /// catches it.
+    #[test]
+    fn flags_unhandled_non_ascii_clears_is_ascii() {
+        let blob = blob_bytes("café latte");
+        let flags = blob_flags(&blob);
+        assert_eq!(flags & FLAG_IS_ASCII, 0);
+    }
+
+    /// Render through `render_blob` proper so the ASCII-input writer
+    /// selection (`new_ascii` fast path) is exercised, unlike `render_raw`
+    /// which always constructs the scanning writer.
+    fn render_blob_full(markdown: &str) -> Vec<u8> {
+        let opts = test_opts();
+        let md = markdown.trim();
+        parse_document_zerocopy(md, &opts, |root| crate::blob::render_blob(root, md))
+            .expect("expected a blob")
+    }
+
+    /// First (start, end, type) span record decoded from a serialized blob.
+    fn first_span(blob: &[u8]) -> (i32, i32, i32) {
+        let txt_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+        let o = 8 + txt_len + (4 - txt_len % 4) % 4;
+        (
+            i32::from_le_bytes([blob[o], blob[o + 1], blob[o + 2], blob[o + 3]]),
+            i32::from_le_bytes([blob[o + 4], blob[o + 5], blob[o + 6], blob[o + 7]]),
+            i32::from_le_bytes([blob[o + 8], blob[o + 9], blob[o + 10], blob[o + 11]]),
+        )
+    }
+
+    /// Smartypants turns ASCII `(c)` into © after the fast-path writer was
+    /// already selected from the ASCII input. The violation check must force
+    /// a re-render: flag cleared and span offsets in UTF-16 over the real
+    /// text, not bytes.
+    #[test]
+    fn flags_ascii_input_smartypants_symbol_clears_is_ascii() {
+        let blob = render_blob_full("(c) 2024 **bold**");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert_eq!(blob_text(&blob), "\u{00A9} 2024 bold");
+        // "© 2024 " is 7 UTF-16 units; byte-based accounting would give 8.
+        assert_eq!(first_span(&blob), (7, 11, crate::blob::BOLD));
+    }
+
+    /// Decoded HTML entities are another ASCII-in, non-ASCII-out path.
+    #[test]
+    fn flags_ascii_input_entity_clears_is_ascii() {
+        let blob = render_blob_full("&copy; entity test");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert!(blob_text(&blob).starts_with('\u{00A9}'));
+    }
+
+    /// Entities and shortcode emoji write non-ASCII under fast-path UTF-16
+    /// accounting before any symbol substitution; write_prose's in-place ASCII
+    /// downgrade must not skip the re-render that repairs those offsets.
+    #[test]
+    fn flags_symbol_after_entity_keeps_span_offsets() {
+        let blob = render_blob_full("&eacute;x **bold** (c)");
+        let text = blob_text(&blob);
+        assert_eq!(text, "\u{e9}x bold \u{a9}");
+        let bold = text.find("bold").unwrap();
+        let start = text[..bold].encode_utf16().count() as i32;
+        let (s, e, _) = first_span(&blob);
+        assert_eq!((s, e), (start, start + 4));
+    }
+
+    #[cfg(feature = "shortcodes")]
+    #[test]
+    fn flags_symbol_after_emoji_keeps_span_offsets() {
+        let blob = render_blob_full(":smile: **bold** (c)");
+        let text = blob_text(&blob);
+        let bold = text.find("bold").unwrap();
+        let start = text[..bold].encode_utf16().count() as i32;
+        let (s, e, _) = first_span(&blob);
+        assert_eq!((s, e), (start, start + 4));
+    }
+
+    /// Footnote definitions render into a temporary writer; their text lands
+    /// in the main writer via `append_footnotes`, after the visit. An emoji
+    /// shortcode inside one must still clear is_ascii on the final blob.
+    #[test]
+    #[cfg(feature = "shortcodes")]
+    fn flags_ascii_input_footnote_shortcode_clears_is_ascii() {
+        let blob = render_blob_full("a[^1]\n\n[^1]: note with :joy: emoji");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert!(blob_text(&blob).contains('\u{1F602}'));
+    }
+
+    /// Inline shortcode emoji from ASCII input: another transform the
+    /// re-render fallback must catch, with offsets where UTF-16 units
+    /// (surrogate pair = 2) differ from both bytes (4) and chars (1).
+    #[test]
+    #[cfg(feature = "shortcodes")]
+    fn flags_ascii_input_inline_shortcode_clears_is_ascii() {
+        let blob = render_blob_full("happy :joy: time **bold**");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        // "happy 😂 time " is 14 UTF-16 units (emoji = surrogate pair).
+        assert_eq!(first_span(&blob), (14, 18, crate::blob::BOLD));
+    }
+
+    /// Control: ASCII input whose output stays ASCII keeps the flag set when
+    /// rendered through the fast-path writer selection.
+    #[test]
+    fn flags_ascii_input_ascii_output_keeps_is_ascii() {
+        let blob = render_blob_full("plain ascii control **bold**");
+        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, FLAG_IS_ASCII);
+    }
+
+    /// span_count remains correctly readable when flag bits are set.
+    #[test]
+    fn span_count_unaffected_by_flag_byte() {
+        let blob = blob_bytes("![](https://example.com/x.jpg)");
+        // image, image_size span... at least 1 span and flags must coexist.
+        assert!(blob_flags(&blob) != 0);
+        assert!(blob_span_count(&blob) > 0);
+    }
+}
+
+// ── inline ───────────────────────────────────────────────────────────────
+
+mod inline {
+    use super::*;
+    use crate::blob::*;
+
+    #[test]
+    fn bold_italic() {
+        let result = render_test("***bold and italic***");
+        assert!(result.span_iter().any(|s| s.typ == BOLD));
+        assert!(result.span_iter().any(|s| s.typ == ITALIC));
+    }
+
+    #[test]
+    fn strikethrough() {
+        let result = render_test("~~deleted~~");
+        assert!(result.span_iter().any(|s| s.typ == STRIKETHROUGH));
+        assert_eq!(result.text(), "deleted");
+    }
+
+    #[test]
+    fn superscript() {
+        let result = render_test("^superscript^");
+        assert!(result.span_iter().any(|s| s.typ == SUPERSCRIPT));
+        assert!(result.span_iter().any(|s| s.typ == SUPERSCRIPT_SIZE));
+        assert_eq!(result.text(), "superscript");
+    }
+
+    #[test]
+    fn subscript() {
+        let result = render_test("~subscript~");
+        assert!(result.span_iter().any(|s| s.typ == SUBSCRIPT));
+        assert!(result.span_iter().any(|s| s.typ == SUBSCRIPT_SIZE));
+        assert_eq!(result.text(), "subscript");
+    }
+
+    #[test]
+    fn inline_code() {
+        let result = render_test("`code`");
+        assert!(result.span_iter().any(|s| s.typ == CODE));
+        assert_eq!(result.text(), "code");
+    }
+
+    #[test]
+    fn raw_html_block_renders_as_literal_text() {
+        let result = render_test("<Laughs in GrapheneOS>");
+        assert_eq!(result.text(), "<Laughs in GrapheneOS>");
+    }
+
+    #[test]
+    fn raw_html_inline_renders_as_literal_text() {
+        let result = render_test("hey <Laughs in GrapheneOS> there");
+        assert_eq!(result.text(), "hey <Laughs in GrapheneOS> there");
+    }
+
+    /// Trailing double-space forces a line break.
+    #[test]
+    fn hard_line_break() {
+        let result = render_test("line one  \nline two");
+        assert_eq!(result.text(), "line one\nline two");
+    }
+
+    /// Soft break renders as space outside a blockquote, newline inside.
+    #[test]
+    fn soft_break() {
+        let result = render_test("line one\nline two");
+        assert_eq!(result.text(), "line one line two");
+
+        let result = render_test("> line one\n> line two");
+        assert!(result.text().contains("line one\nline two"));
+    }
+
+    /// Emoji shortcodes resolve to Unicode; unknown shortcodes pass through.
+    #[test]
+    #[cfg(feature = "shortcodes")]
+    fn shortcodes() {
+        let out = render_test("Hello :smile: world");
+        assert_eq!(out.text(), "Hello 😄 world");
+
+        let out = render_test(":thumbsup: :heart:");
+        assert_eq!(out.text(), "👍 ❤\u{fe0f}");
+
+        let out = render_test("Hello :notarealcode: world");
+        assert_eq!(out.text(), "Hello :notarealcode: world");
+    }
+}
+
+// ── links ────────────────────────────────────────────────────────────────
+
+mod links {
+    use super::*;
+    use crate::blob::*;
+
+    #[test]
+    fn domain_suffix_appended() {
+        let result = render_test("[click here](https://wikipedia.org)");
+        assert!(result.text().starts_with("click here (wikipedia.org)"));
+    }
+
+    #[test]
+    fn domain_suffix_strips_www() {
+        let result = render_test("[click here](https://www.wikipedia.org/wiki/Rust)");
+        assert!(result.text().starts_with("click here (wikipedia.org)"));
+    }
+
+    /// No suffix when link text already contains the domain.
+    #[test]
+    fn domain_suffix_suppressed_when_text_contains_domain() {
+        let result = render_test("[wikipedia.org](https://wikipedia.org)");
+        assert!(!result.text().starts_with("wikipedia.org (wikipedia.org)"));
+    }
+
+    /// Bare autolink as sole content renders as LINK.
+    #[test]
+    fn bare_autolink() {
+        let result = render_test("https://example.com/page");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// Lemmy community mentions become LINK spans pointing at the community
+    /// (not, e.g., a mailto link for the `name@instance` tail).
+    #[test]
+    fn lemmy_community_mention() {
+        let result = render_test("!linux@lemmy.ml");
+        assert!(result.span_iter().any(|s| {
+            s.typ == LINK
+                && s.url
+                    .as_deref()
+                    .is_some_and(|u| u.contains("lemmy.ml/c/linux"))
+        }));
+    }
+
+    /// Lemmy user mentions don't append a domain suffix (text already contains it).
+    #[test]
+    fn lemmy_user_mention_no_suffix() {
+        let result = render_test("@user@lemmy.ml");
+        assert_eq!(result.text(), "@user@lemmy.ml");
+        assert!(result.span_iter().any(|s| {
+            s.typ == LINK
+                && s.url
+                    .as_deref()
+                    .is_some_and(|u| u.contains("lemmy.ml/u/user"))
+        }));
+    }
+
+    /// Explicit link to an image URL still gets domain suffix and stays LINK.
+    #[test]
+    fn explicit_link_to_image_url_stays_link() {
+        let result = render_test("[click](https://i.imgur.com/abc.jpg)");
+        assert_eq!(result.text(), "click (i.imgur.com)");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// Link whose visible text equals the URL: no suffix.
+    #[test]
+    fn suffix_suppressed_when_text_equals_url() {
+        let result = render_test("[https://example.com/path](https://example.com/path)");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// Domain match is case-insensitive.
+    #[test]
+    fn domain_suffix_case_insensitive() {
+        let result = render_test("[Wikipedia.Org](https://wikipedia.org)");
+        assert!(!result.text().starts_with("Wikipedia.Org (wikipedia.org)"));
+    }
+
+    /// Domain suffix renders wrapped in a LINK_SIZE span.
+    #[test]
+    fn link_size_span_wraps_domain_suffix() {
+        let result = render_test("[click](https://example.com)");
+        assert!(result.span_iter().any(|s| s.typ == LINK_SIZE));
+    }
+
+    /// Explicit descriptive link stays LINK.
+    #[test]
+    fn descriptive_link_stays_link() {
+        let result = render_test("[click here](https://example.com/page)");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// Bare URL preceded by other content stays LINK.
+    #[test]
+    fn bare_url_at_end_with_preceding_content_stays_link() {
+        let result = render_test("Check this out\n\nhttps://example.com/page");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+        assert!(result.text().contains("https://example.com/page"));
+    }
+
+    /// Bare URL mid-document stays LINK.
+    #[test]
+    fn trailing_url_not_at_end_stays_link() {
+        let result = render_test("Check this out: https://example.com/page\n\nMore text here.");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// An app link names a place in the app, not an address: no domain suffix.
+    #[test]
+    fn app_link_no_domain_suffix() {
+        let result = render_test("[>>123](app-link://g/thread/100#p123)");
+        assert_eq!(result.text(), ">>123");
+    }
+
+    /// An app link stays a LINK carrying its url exactly as written, scheme included.
+    #[test]
+    fn app_link_stays_link_with_url_untouched() {
+        let result = render_test("[>>123](app-link://g/thread/100#p123)");
+        let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
+        assert_eq!(span.url.as_deref(), Some("app-link://g/thread/100#p123"));
+        assert!(result.span_iter().any(|s| s.typ == LINK_SIZE));
+    }
+
+    /// The path's first segment is not a host: it is never matched against the link text.
+    #[test]
+    fn app_link_no_suffix_whatever_the_text() {
+        let result =
+            render_test("[g](app-link://g/thread/100) and [x](app-link://boards.example.org/g/)");
+        assert_eq!(result.text(), "g and x");
+    }
+
+    /// An app link beside an ordinary one: only the ordinary link gets its suffix.
+    #[test]
+    fn app_link_beside_web_link_only_web_link_suffixed() {
+        let result = render_test("[>>1](app-link://g/thread/1) [site](https://example.com/a)");
+        assert_eq!(result.text(), ">>1 site (example.com)");
+    }
+
+    /// Non-image bare URL stays LINK (not IMAGE).
+    #[test]
+    fn non_image_url_stays_link() {
+        let result = render_test("https://example.com/page");
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == LINK && s.url.as_deref() == Some("https://example.com/page"))
+        );
+        assert!(!result.span_iter().any(|s| s.typ == IMAGE));
+    }
+}
+
+// ── images ───────────────────────────────────────────────────────────────
+
+mod images {
+    use super::*;
+    use crate::blob::*;
+
+    /// `![alt](url)` produces IMAGE span with URL.
+    #[test]
+    fn markdown_image() {
+        let result = render_test("![alt](https://example.com/img.png)");
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://example.com/img.png"))
+        );
+        assert_eq!(result.text(), "\u{0001}");
+    }
+
+    /// Bare autolink to an image URL becomes IMAGE, not LINK.
+    #[test]
+    fn bare_image_url_to_image() {
+        let result = render_test("https://i.imgur.com/abc.jpg");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE));
+        assert!(!result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// DDG-proxied image URL (with query that looks like an image) becomes IMAGE.
+    #[test]
+    fn ddg_proxied_image_becomes_image() {
+        let result = render_test(
+            "https://external-content.duckduckgo.com/iu/?u=http%3A%2F%2Fwiki.example.com%2Fimg%2FLink.png%2Frev%2Flatest%3Fcb%3D20090331010533&f=1",
+        );
+        assert!(result.span_iter().any(|s| s.typ == IMAGE));
+        assert!(!result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// `[text](image-url)` with visible text stays LINK — only bare autolinks convert.
+    #[test]
+    fn explicit_link_to_image_stays_link() {
+        let result = render_test("[click](https://i.imgur.com/abc.jpg)");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+        assert!(!result.span_iter().any(|s| s.typ == IMAGE));
+    }
+
+    /// `[![](img)](url)` becomes IMAGE using the image's URL, not the link's.
+    #[test]
+    fn link_wrapping_image_becomes_image() {
+        let result = render_test("[![alt](https://i.imgur.com/abc.jpg)](https://example.com)");
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == IMAGE && s.url.as_deref() == Some("https://i.imgur.com/abc.jpg"))
+        );
+        assert!(!result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// Link wrapping an image must not append a domain suffix.
+    #[test]
+    fn link_wrapping_image_no_domain_suffix() {
+        let result =
+            render_test("[![](https://lemmy.ca/pictrs/image/abc.png)](https://lemmy.ca/post/123)");
+        assert!(!result.text().contains("(lemmy.ca)"));
+        assert!(result.span_iter().any(|s| s.typ == IMAGE));
+    }
+
+    /// Lemmy pict-rs images are rewritten to request a server-side thumbnail preview.
+    #[test]
+    fn pictrs_image_gets_thumbnail_preview() {
+        let result = render_test("![](https://lemmy.world/pictrs/image/abc.jpeg)");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref()
+                == Some("https://lemmy.world/pictrs/image/abc.jpeg?thumbnail=400&format=webp")));
+    }
+
+    /// Animated pict-rs gifs are NOT rewritten (webp transcode would strip animation).
+    #[test]
+    fn pictrs_gif_not_rewritten() {
+        let result = render_test("![](https://lemmy.world/pictrs/image/abc.gif)");
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref() == Some("https://lemmy.world/pictrs/image/abc.gif")));
+    }
+
+    /// A video in image syntax renders as a LINK, not a broken IMAGE.
+    #[test]
+    fn video_in_image_syntax_becomes_link() {
+        let result = render_test("![clip](https://lemmy.world/pictrs/image/abc.mp4)");
+        assert!(result.span_iter().any(|s| s.typ == LINK
+            && s.url.as_deref() == Some("https://lemmy.world/pictrs/image/abc.mp4")));
+        assert!(!result.span_iter().any(|s| s.typ == IMAGE));
+    }
+
+    /// With no alt text, the downgraded video link uses the URL as its visible text.
+    #[test]
+    fn video_in_image_syntax_no_alt_uses_url() {
+        let result = render_test("![](https://lemmy.world/pictrs/image/abc.mp4)");
+        assert!(
+            result
+                .text()
+                .contains("https://lemmy.world/pictrs/image/abc.mp4")
+        );
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+        assert!(!result.span_iter().any(|s| s.typ == IMAGE));
+    }
+
+    /// Inline image proxy URLs are unwrapped (matching the link path), not left proxied.
+    #[test]
+    fn image_proxy_url_unwrapped() {
+        let result = render_test(
+            "![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fwww.explainxkcd.com%2Fwiki%2Fimages%2F1%2F1c%2Ftv_problems.png)",
+        );
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref()
+                == Some("https://www.explainxkcd.com/wiki/images/1/1c/tv_problems.png")));
+    }
+
+    /// A proxied cross-instance pict-rs image is unwrapped first, then thumbnailed.
+    #[test]
+    fn proxied_pictrs_unwrapped_then_thumbnailed() {
+        let result = render_test(
+            "![](https://lemmy.zip/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fpictrs%2Fimage%2Fabc.jpeg)",
+        );
+        assert!(result.span_iter().any(|s| s.typ == IMAGE
+            && s.url.as_deref()
+                == Some("https://other.tld/pictrs/image/abc.jpeg?thumbnail=400&format=webp")));
+    }
+
+    /// Known image hosts trigger IMAGE via autolink detection.
+    #[test]
+    fn known_hosts_become_image() {
+        for input in &[
+            "https://i.redd.it/abc123",
+            "https://preview.redd.it/abc123?width=640&format=png",
+            "https://i.imgur.com/abc123",
+            "https://example.com/img.jpg#ref",
+        ] {
+            let result = render_test(input);
+            assert!(
+                result.span_iter().any(|s| s.typ == IMAGE),
+                "failed for {input}"
+            );
+        }
+    }
+
+    /// Imgur album/gallery paths are excluded from image detection.
+    #[test]
+    fn imgur_exclusions_stay_link() {
+        for input in &[
+            "https://i.imgur.com/a/abc123",
+            "https://i.imgur.com/gallery/abc123",
+        ] {
+            let result = render_test(input);
+            assert!(
+                result.span_iter().any(|s| s.typ == LINK),
+                "failed for {input}"
+            );
+            assert!(
+                !result.span_iter().any(|s| s.typ == IMAGE),
+                "unexpected IMAGE for {input}"
+            );
+        }
+    }
+
+    /// Consecutive inline images on one line → at most one blank line between them.
+    #[test]
+    fn consecutive_images_single_blank_line() {
+        let result = render_test("![](https://example.com/a.png) ![](https://example.com/b.png)");
+        assert!(!result.text().contains("\n\n\n"));
+    }
+
+    /// Images separated by a blank line → still no triple newline.
+    #[test]
+    fn consecutive_images_separate_paragraphs() {
+        let result =
+            render_test("![](https://example.com/a.png)\n\n![](https://example.com/b.png)");
+        assert!(!result.text().contains("\n\n\n"));
+    }
+
+    /// Image after text has a blank line before it, not three.
+    #[test]
+    fn image_after_text() {
+        let result = render_test("hello ![](https://example.com/a.png)");
+        let text = result.text();
+        assert!(text.contains("\n\n"));
+        assert!(!text.contains("\n\n\n"));
+    }
+}
+
+// ── block ────────────────────────────────────────────────────────────────
+
+mod block {
+    use super::*;
+    use crate::blob::*;
+
+    /// All 6 heading levels produce their span type; H1 also bold.
+    #[test]
+    fn headings_all_levels() {
+        let levels = [
+            ("# H1", HEADING_1),
+            ("## H2", HEADING_2),
+            ("### H3", HEADING_3),
+            ("#### H4", HEADING_4),
+            ("##### H5", HEADING_5),
+            ("###### H6", HEADING_6),
+        ];
+        for (md, expected) in levels {
+            let result = render_test(md);
+            assert!(
+                result.span_iter().any(|s| s.typ == expected),
+                "missing {expected} for {md}"
+            );
+        }
+        let h1 = render_test("# H1");
+        assert!(h1.span_iter().any(|s| s.typ == BOLD));
+    }
+
+    #[test]
+    fn heading_with_inline_formatting() {
+        let result = render_test("# **Bold Heading**");
+        assert!(result.span_iter().any(|s| s.typ == HEADING_1));
+        assert!(result.span_iter().any(|s| s.typ == BOLD));
+        assert_eq!(result.text(), "Bold Heading");
+    }
+
+    #[test]
+    fn nested_lists() {
+        let result = render_test("- Item 1\n  - Nested 1\n  - Nested 2\n- Item 2");
+        assert_eq!(result.text(), "Item 1\nNested 1\nNested 2\nItem 2");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items.len(), 4);
+        assert_eq!((items[0].indent(), items[0].number()), (0, 0));
+        assert_eq!((items[1].indent(), items[1].number()), (1, 0));
+        assert_eq!((items[2].indent(), items[2].number()), (1, 0));
+        assert_eq!((items[3].indent(), items[3].number()), (0, 0));
+
+        let result = render_test("- Level 1\n  - Level 2\n    - Level 3");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items[0].indent(), 0);
+        assert_eq!(items[1].indent(), 1);
+        assert_eq!(items[2].indent(), 2);
+    }
+
+    /// Ordered lists preserve numbering including custom start.
+    #[test]
+    fn ordered_lists() {
+        let result = render_test("1. First\n2. Second\n3. Third");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].number(), 1);
+        assert_eq!(items[2].number(), 3);
+
+        let result = render_test("5. Fifth\n6. Sixth");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items[0].number(), 5);
+        assert_eq!(items[1].number(), 6);
+
+        // Huge ordinals clamp below the 0xFFFE/0xFFFF checkbox sentinels and
+        // never spill into the indent bits.
+        let result = render_test("65534. a\n65535. b\n65536. c");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items.len(), 3);
+        for item in &items {
+            assert_eq!((item.indent(), item.number()), (0, 0xFFFD));
+        }
+    }
+
+    /// Bullet list containing ordered sub-list.
+    #[test]
+    fn mixed_list_nesting() {
+        let result = render_test("- Bullet\n  1. Ordered\n  2. Second");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items.len(), 3);
+        assert_eq!((items[0].indent(), items[0].number()), (0, 0));
+        assert_eq!((items[1].indent(), items[1].number()), (1, 1));
+        assert_eq!((items[2].indent(), items[2].number()), (1, 2));
+    }
+
+    #[test]
+    fn list_then_paragraph() {
+        let result = render_test("- Item 1\n- Item 2\n\nParagraph after");
+        assert!(result.text().starts_with("Item 1"));
+        assert!(result.text().ends_with("Paragraph after"));
+    }
+
+    #[test]
+    fn list_item_with_inline_formatting() {
+        let result = render_test("- **bold** item");
+        assert!(result.span_iter().any(|s| s.typ == BOLD));
+        assert!(result.span_iter().any(|s| s.typ == LIST_ITEM));
+        assert_eq!(result.text(), "bold item");
+    }
+
+    /// Task list checkbox encoded in number field: unchecked=0xFFFE, checked=0xFFFF.
+    /// Tasklists need the full-postprocess path; the zero-copy path skips
+    /// the text coalescing that `[ ]` detection requires.
+    #[test]
+    fn task_list_basic() {
+        let result = render_test_full_parse("- [ ] unchecked\n- [x] checked");
+        assert_eq!(result.text(), "unchecked\nchecked");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!((items[0].indent(), items[0].number()), (0, 0xFFFE));
+        assert_eq!((items[1].indent(), items[1].number()), (0, 0xFFFF));
+    }
+
+    #[test]
+    fn task_list_mixed_with_regular_items() {
+        let result = render_test_full_parse("- regular\n- [ ] unchecked\n- [x] checked");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!(items[0].number(), 0);
+        assert_eq!(items[1].number(), 0xFFFE);
+        assert_eq!(items[2].number(), 0xFFFF);
+    }
+
+    #[test]
+    fn task_list_nested() {
+        let result = render_test_full_parse("- [ ] parent\n  - [x] child");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert_eq!((items[0].indent(), items[0].number()), (0, 0xFFFE));
+        assert_eq!((items[1].indent(), items[1].number()), (1, 0xFFFF));
+    }
+
+    #[test]
+    fn task_list_markers_stripped() {
+        assert_eq!(
+            render_test_full_parse("- [ ] todo item").text(),
+            "todo item"
+        );
+        assert_eq!(
+            render_test_full_parse("- [x] done item").text(),
+            "done item"
+        );
+    }
+
+    #[test]
+    fn multiline_blockquote() {
+        let result = render_test("> Line 1\n> Line 2\n> Line 3");
+        let quote = result.span_iter().find(|s| s.typ == QUOTE).unwrap();
+        assert_eq!(quote.start, 0);
+        assert!(quote.end >= 20);
+    }
+
+    #[test]
+    fn blockquote_then_text_separated() {
+        let result = render_test("> Quote\n\nRegular text");
+        assert!(!result.text().contains("QuoteRegular"));
+    }
+
+    #[test]
+    fn blockquote_multiple_paragraphs_separated() {
+        let result = render_test("> Para 1\n>\n> Para 2");
+        assert!(!result.text().contains("Para 1Para 2"));
+    }
+
+    /// Nested blockquote depth values and uniform end positions (no staircase).
+    #[test]
+    fn nested_blockquotes() {
+        let result = render_test(
+            "> one\n\
+             >> two\n\
+             > > > three",
+        );
+        let quotes: Vec<_> = result.span_iter().filter(|s| s.typ == QUOTE).collect();
+        assert_eq!(quotes.len(), 3);
+        let (inner, middle, outer) = (&quotes[0], &quotes[1], &quotes[2]);
+        assert_eq!(inner.data, 2);
+        assert_eq!(middle.data, 1);
+        assert_eq!(outer.data, 0);
+        assert_eq!(outer.start, 0);
+        assert!(inner.start > middle.start);
+        assert!(middle.start > outer.start);
+        // All end at the same position — no trailing staircase.
+        assert_eq!(inner.end, middle.end);
+        assert_eq!(middle.end, outer.end);
+    }
+
+    /// Blockquote with a list: QUOTE sorts before LIST_ITEM at same start.
+    #[test]
+    fn blockquote_containing_list() {
+        let result = render_test("> - item 1\n> - item 2");
+        assert!(result.span_iter().any(|s| s.typ == QUOTE));
+        assert!(result.span_iter().any(|s| s.typ == LIST_ITEM));
+
+        let blob = blob_bytes("> - item 1\n> - item 2");
+        let tlen = i32::from_le_bytes(blob[0..4].try_into().unwrap()) as usize;
+        let base = 8 + tlen + (4 - tlen % 4) % 4;
+        let first_type = i32::from_le_bytes(blob[base + 8..base + 12].try_into().unwrap());
+        assert_eq!(first_type, QUOTE);
+    }
+
+    /// Fenced code block strips fence and language tag.
+    #[test]
+    fn code_block() {
+        let result = render_test("```rust\nfn main() {}\n```");
+        assert_eq!(result.text(), "fn main() {}");
+        assert!(result.span_iter().any(|s| s.typ == CODE_BLOCK));
+    }
+
+    /// Empty code block produces no span (zero-length skipped).
+    #[test]
+    fn empty_code_block() {
+        let result = render_test("```\n```");
+        assert_eq!(result.text(), "");
+        assert_eq!(result.span_iter().count(), 0);
+    }
+
+    /// Tables render as "View Table" placeholder.
+    #[test]
+    fn table_placeholder() {
+        let result = render_test("| A | B |\n|---|---|\n| 1 | 2 |");
+        assert_eq!(result.text(), "View Table");
+        assert!(result.span_iter().any(|s| s.typ == TABLE));
+    }
+
+    /// Decodes a TABLE span's url_data payload: a `(rows<<16|cols)` header then
+    /// length-prefixed cell markdown, row-major.
+    fn decode_table(url_data: &[u8], data: i32) -> (usize, usize, Vec<String>) {
+        let mut p = (data - 1) as usize;
+        let packed = u32::from_le_bytes([
+            url_data[p],
+            url_data[p + 1],
+            url_data[p + 2],
+            url_data[p + 3],
+        ]);
+        p += 4;
+        let (rows, cols) = ((packed >> 16) as usize, (packed & 0xFFFF) as usize);
+        let mut cells = Vec::new();
+        for _ in 0..rows * cols {
+            let len = u16::from_le_bytes([url_data[p], url_data[p + 1]]) as usize;
+            p += 2;
+            cells.push(String::from_utf8(url_data[p..p + len].to_vec()).unwrap());
+            p += len;
+        }
+        (rows, cols, cells)
+    }
+
+    /// Table cells are packed into url_data, addressed by `data = offset+1`:
+    /// a `(rows<<16|cols)` header then length-prefixed inline-markdown cells.
+    #[test]
+    fn table_payload_roundtrips() {
+        let result = render_test("| a | b |\n|---|---|\n| 1 | 2 |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (rows, cols, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!((rows, cols), (2, 2));
+        assert_eq!(cells, vec!["a", "b", "1", "2"]);
+    }
+
+    /// Body cells keep their inline markdown verbatim (emphasis, code, links),
+    /// so the host can re-parse and render each cell exactly as a post body.
+    #[test]
+    fn table_cell_inline_markdown_roundtrips() {
+        let result = render_test("| h |\n|---|\n| **bold** and `code` and [l](https://e.com) |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!(cells[1], "**bold** and `code` and [l](https://e.com)");
+    }
+
+    /// A cell whose text starts with a block marker is escaped, so re-parsing the
+    /// cell as a standalone document keeps it inline text rather than promoting it
+    /// to a list / heading / blockquote.
+    #[test]
+    fn table_cell_escapes_leading_block_markers() {
+        for (md, expected) in [
+            ("| h |\n|---|\n| 1. foo |", "1\\. foo"),
+            ("| h |\n|---|\n| # foo |", "\\# foo"),
+            ("| h |\n|---|\n| - foo |", "\\- foo"),
+            ("| h |\n|---|\n| > foo |", "\\> foo"),
+        ] {
+            let result = render_test(md);
+            let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+            let (_, _, cells) = decode_table(&result.url_data, span.data);
+            assert_eq!(cells[1], expected, "input {md:?}");
+        }
+    }
+
+    /// Extension inline syntax round-trips even though the cell encoder runs with
+    /// default Options: the formatter emits by node type, and the host re-parses
+    /// with the extensions enabled.
+    #[test]
+    fn table_cell_extension_syntax_roundtrips() {
+        let result = render_test("| h |\n|---|\n| ~~struck~~ |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!(cells[1], "~~struck~~");
+    }
+
+    /// A cell cut at the u16 length cap must not end mid-codepoint: the host
+    /// decodes each cell as UTF-8.
+    #[test]
+    fn table_cell_truncation_keeps_utf8_boundary() {
+        let cell = "é".repeat(33_000); // 66 000 bytes; an unchecked cut at 65 535 splits a char
+        let result = render_test(&format!("| h |\n|---|\n| {cell} |"));
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        assert!(cells[1].len() <= u16::MAX as usize);
+        assert!(cells[1].chars().all(|c| c == 'é'));
+    }
+
+    /// A body row shorter than the header is padded with empty cells to the
+    /// column count, so every row contributes exactly `cols` entries.
+    #[test]
+    fn table_short_row_padded_to_columns() {
+        let result = render_test("| a | b |\n|---|---|\n| only |");
+        let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
+        let (rows, cols, cells) = decode_table(&result.url_data, span.data);
+        assert_eq!((rows, cols), (2, 2));
+        assert_eq!(cells, vec!["a", "b", "only", ""]);
+    }
+
+    /// `---` produces HRULE span with object-replacement char.
+    #[test]
+    fn thematic_break() {
+        let result = render_test("---");
+        assert!(result.span_iter().any(|s| s.typ == HRULE));
+        assert_eq!(result.text(), "\u{0001}");
+    }
+
+    /// Consecutive thematic breaks produce separate spans.
+    #[test]
+    fn consecutive_thematic_breaks() {
+        let result = render_test("---\n\n---");
+        let hr_count = result.span_iter().filter(|s| s.typ == HRULE).count();
+        assert_eq!(hr_count, 2);
+    }
+
+    /// Lemmy spoiler emits LEMMY_SPOILER_TITLE over the title and LEMMY_SPOILER_CONTENT
+    /// over the body, plus BOLD + LINK_SIZE for title styling. The body's start sits
+    /// 1 byte past the title's end (the gap newline) so cache[title.idx + 1] always
+    /// resolves to the body span — no other span shares that position.
+    #[test]
+    fn lemmy_spoiler_two_spans() {
+        let result = render_test("::: spoiler tap me\nhidden body\n:::");
+        let title = result
+            .span_iter()
+            .find(|s| s.typ == LEMMY_SPOILER_TITLE)
+            .unwrap();
+        let body = result
+            .span_iter()
+            .find(|s| s.typ == LEMMY_SPOILER_CONTENT)
+            .unwrap();
+        assert_eq!(&result.text()[title.start..title.end], "tap me");
+        assert_eq!(
+            body.start,
+            title.end + 1,
+            "body must start one byte past title end"
+        );
+        assert!(result.text()[body.start..body.end].contains("hidden body"));
+        // Title also gets BOLD + LINK_SIZE for styling.
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == BOLD && s.start == title.start && s.end == title.end)
+        );
+        assert!(
+            result
+                .span_iter()
+                .any(|s| s.typ == LINK_SIZE && s.start == title.start && s.end == title.end)
+        );
+    }
+
+    /// Empty-body spoilers are dropped by the parser (no toggle target), so the
+    /// blob writer never sees a LemmySpoiler without a paired body. This guarantees
+    /// the title→body adjacency invariant in Java.
+    #[test]
+    fn lemmy_spoiler_empty_body_dropped() {
+        let result = render_test("::: spoiler title only\n:::");
+        assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER_TITLE));
+        assert!(!result.span_iter().any(|s| s.typ == LEMMY_SPOILER_CONTENT));
+    }
+}
+
+// ── footnotes ────────────────────────────────────────────────────────────
+
+mod footnotes {
+    use super::*;
+    use crate::blob::*;
+
+    /// References render as superscript numbers; definitions appear after an
+    /// HRULE separator with the same numbering.
+    #[test]
+    fn refs_and_definitions() {
+        let out = render_test("Hello[^1] world[^2].\n\n[^1]: First note.\n[^2]: Second note.");
+        assert_eq!(
+            out.text(),
+            "Hello1 world2.\n\n\u{0001}\n\n1 First note.\n2 Second note."
+        );
+        let spans: Vec<_> = out.span_iter().collect();
+        assert_eq!(spans.iter().filter(|s| s.typ == HRULE).count(), 1);
+        assert_eq!(spans.iter().filter(|s| s.typ == SUPERSCRIPT).count(), 4);
+    }
+}
+
+// ── edge ─────────────────────────────────────────────────────────────────
+
+mod edge {
+    use super::*;
+    use crate::blob::*;
+
+    /// Empty and whitespace-only inputs produce empty output with no spans.
+    #[test]
+    fn empty_inputs() {
+        for input in &["", "   \n\n   \n"] {
+            let result = render_test(input);
+            assert_eq!(result.text(), "", "expected empty for {input:?}");
+            assert_eq!(result.span_iter().count(), 0);
+        }
+        let blob = blob_bytes("");
+        assert_eq!(blob.len(), 8);
+        assert_eq!(blob_text(&blob), "");
+        assert_eq!(blob_span_count(&blob), 0);
+    }
+
+    /// 5-level nested blockquote staircase depth values.
+    #[test]
+    fn deeply_nested_blockquotes() {
+        let result = render_test("> 1\n>> 2\n>>> 3\n>>>> 4\n>>>>> 5");
+        let quotes: Vec<_> = result.span_iter().filter(|s| s.typ == QUOTE).collect();
+        assert_eq!(quotes.len(), 5);
+        let mut depths: Vec<i32> = quotes.iter().map(|q| q.data).collect();
+        depths.sort();
+        assert_eq!(depths, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// 4-level nested list indent values.
+    #[test]
+    fn deeply_nested_lists() {
+        let result = render_test("- L1\n  - L2\n    - L3\n      - L4");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
+        assert!(items.len() >= 4);
+        assert_eq!(items[0].indent(), 0);
+        assert_eq!(items[1].indent(), 1);
+        assert_eq!(items[2].indent(), 2);
+        assert_eq!(items[3].indent(), 3);
+    }
+
+    #[test]
+    fn unicode_emoji() {
+        let result = render_test("Hello 😀🎉 world");
+        assert!(result.text().contains("😀"));
+        assert!(result.text().contains("🎉"));
+    }
+
+    #[test]
+    fn unicode_cjk() {
+        let result = render_test("中文测试");
+        assert_eq!(result.text(), "中文测试");
+    }
+
+    /// Long plain paragraph produces no spans (fast path signal).
+    #[test]
+    fn plain_ascii_text_unchanged() {
+        let input = "just some plain text";
+        let result = render_test(input);
+        assert_eq!(result.span_iter().count(), 0);
+        assert_eq!(result.text(), input);
+    }
+
+    /// Long plain text still produces no spans.
+    #[test]
+    fn very_long_paragraph_no_spans() {
+        let long = "word ".repeat(500);
+        let result = render_test(&long);
+        assert!(!result.text().is_empty());
+        assert_eq!(result.span_iter().count(), 0);
+    }
+
+    /// Empty link text: LINK span is skipped (zero length), but domain suffix still appends.
+    #[test]
+    fn empty_link_text() {
+        let result = render_test("[](https://example.com)");
+        assert_eq!(result.text(), " (example.com)");
+        assert_eq!(result.span_iter().filter(|s| s.typ == LINK).count(), 0);
+    }
+
+    /// Inline formatting inside link text keeps both span types.
+    #[test]
+    fn link_text_with_inline_formatting() {
+        let result = render_test("[**bold link**](https://example.com)");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+        assert!(result.span_iter().any(|s| s.typ == BOLD));
+    }
+
+    /// Bare URL with query/fragment parses as LINK.
+    #[test]
+    fn url_with_query_and_fragment() {
+        let result = render_test("https://example.com/page?q=1&r=2#section");
+        assert!(result.span_iter().any(|s| s.typ == LINK));
+    }
+
+    /// Document UTF-16 unit counts for reference.
+    #[test]
+    fn utf16_len_reference() {
+        assert_eq!("hello".encode_utf16().count(), 5);
+        assert_eq!("café".encode_utf16().count(), 4);
+        assert_eq!("中文".encode_utf16().count(), 2);
+        assert_eq!("😀".encode_utf16().count(), 2);
+        assert_eq!("Hello 中文 café 😀".encode_utf16().count(), 16);
+    }
+
+    /// Unclosed formatting markers pass through as literal text.
+    #[test]
+    fn pathological_unclosed_formatting() {
+        let result = render_test("**unclosed bold");
+        assert_eq!(result.text(), "**unclosed bold");
+        assert_eq!(result.span_iter().filter(|s| s.typ == BOLD).count(), 0);
+
+        let result = render_test("*unclosed italic");
+        assert_eq!(result.text(), "*unclosed italic");
+        assert_eq!(result.span_iter().filter(|s| s.typ == ITALIC).count(), 0);
+    }
+
+    /// `****` parses as thematic break, not empty bold. ```` `` ```` passes through.
+    #[test]
+    fn ambiguous_empty_formatting() {
+        let result = render_test("****");
+        assert_eq!(result.text(), "\u{0001}");
+        assert!(result.span_iter().any(|s| s.typ == HRULE));
+
+        let result = render_test("``");
+        assert_eq!(result.text(), "``");
+        assert_eq!(result.span_iter().count(), 0);
+    }
+
+    /// A paragraph of only `&nbsp;` shows nothing, so the paragraphs trailing a comment are not
+    /// blank lines under it.
+    #[test]
+    fn trailing_invisible_paragraphs_are_dropped() {
+        assert_eq!(
+            render_test("word\n\n&nbsp;\n\n&nbsp;\n\n&nbsp;").text(),
+            "word"
+        );
+    }
+
+    /// Between paragraphs, an invisible one keeps the height it reads as: the blank lines.
+    #[test]
+    fn invisible_paragraph_between_keeps_its_height() {
+        assert_eq!(render_test("a\n\n&nbsp;\n\nb").text(), "a\n\n\n\nb");
+    }
+
+    /// Only top-level paragraphs: one inside a quote is the quote's content and stays.
+    #[test]
+    fn invisible_paragraph_in_a_quote_stays() {
+        assert!(render_test("> a\n>\n> &nbsp;").text().contains('\u{a0}'));
+    }
+
+    /// A no-break space beside a visible character is part of the text.
+    #[test]
+    fn no_break_space_beside_text_stays() {
+        assert_eq!(render_test("&nbsp;word").text(), "\u{a0}word");
+    }
+}
+
+// ── production config ────────────────────────────────────────────────────
+// Regression tests for the exact option set the app ships (P0: mentions and
+// email autolinks silently failing to link on the zerocopy path when
+// parse.smart is enabled).
+
+mod production {
+    use super::*;
+    use crate::blob::*;
+
+    /// Mirrors `production_options()` in the JNI shim
+    /// (library/src/main/rust/src/lib.rs). Keep in sync: the shim's own tests
+    /// only cover `needs_parse`, so span-level behavior is pinned here.
+    fn production_opts() -> Options<'static> {
+        let mut opts = Options::default();
+        opts.extension.strikethrough = true;
+        opts.extension.table = true;
+        opts.extension.autolink = true;
+        opts.extension.superscript = true;
+        opts.extension.subscript = true;
+        #[cfg(feature = "shortcodes")]
+        {
+            opts.extension.shortcodes = true;
+        }
+        opts.extension.footnotes = true;
+        opts.extension.lemmy_mention = true;
+        opts.extension.lemmy_spoiler = true;
+        opts.parse.sanitize_input = true;
+        opts.parse.smart = false; // deliberately off: rendering policy lives in the blob writer (src/text.rs)
+        opts
+    }
+
+    /// `render_test`, but with the production option set.
+    fn render_prod(markdown: &str) -> BlobWriter {
+        let opts = production_opts();
+        parse_document_zerocopy(markdown.trim(), &opts, |root| {
+            let mut out = BlobWriter::new(256);
+            visit(root, &mut out, 0, 0, 0);
+            out.append_footnotes();
+            out.clear_pending();
+            out
+        })
+    }
+
+    fn link_urls(w: &BlobWriter) -> Vec<String> {
+        w.span_iter()
+            .filter(|s| s.typ == LINK)
+            .filter_map(|s| s.url)
+            .collect()
+    }
+
+    #[test]
+    fn user_mention_links_on_lemmy_ml() {
+        let urls = link_urls(&render_prod("@user@lemmy.ml"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.ml/u/user")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn user_mention_links_on_lemmy_world() {
+        let urls = link_urls(&render_prod("@user@lemmy.world"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.world/u/user")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn user_mention_links_on_dot_com_instance() {
+        let urls = link_urls(&render_prod("@user@example.com"));
+        assert!(
+            urls.iter().any(|u| u.contains("example.com/u/user")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn community_mention_links() {
+        let urls = link_urls(&render_prod("!linux@lemmy.ml"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.ml/c/linux")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn email_autolink_links() {
+        let urls = link_urls(&render_prod("mail user@x.com now"));
+        assert!(urls.iter().any(|u| u.starts_with("mailto:")), "{urls:?}");
+    }
+
+    #[test]
+    fn url_autolink_links() {
+        let urls = link_urls(&render_prod("see https://example.com/page ok"));
+        assert!(
+            urls.iter().any(|u| u.contains("example.com/page")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn email_then_mention_both_link() {
+        let urls = link_urls(&render_prod("Contact user@x.com or @foo@bar.com"));
+        assert!(
+            urls.iter().any(|u| u.starts_with("mailto:user@x.com")),
+            "{urls:?}"
+        );
+        assert!(urls.iter().any(|u| u.contains("bar.com/u/foo")), "{urls:?}");
+    }
+
+    #[test]
+    fn mention_mid_text_email_after_both_link() {
+        let urls = link_urls(&render_prod("see @foo@bar.com then mail user@x.com now"));
+        assert!(urls.iter().any(|u| u.contains("bar.com/u/foo")), "{urls:?}");
+        assert!(
+            urls.iter().any(|u| u.starts_with("mailto:user@x.com")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn mention_after_punctuation_run_links() {
+        let urls = link_urls(&render_prod("wow!!!! !comm@lemmy.world"));
+        assert!(
+            urls.iter().any(|u| u.contains("lemmy.world/c/comm")),
+            "{urls:?}"
+        );
+    }
+
+    /// Under retired smart this shape sits in one text node, so the mention
+    /// links on the zerocopy path too — the smart-era P0 (a capped "!!!"
+    /// node isolating the mention, silently dropping the link) can't recur.
+    #[test]
+    fn mention_starting_inside_punctuation_run_links() {
+        let w = render_prod("wow!!!!abc@y.com");
+        assert!(w.text().contains("abc@y.com"));
+        assert!(
+            w.span_iter().any(|s| s.typ == LINK),
+            "mention adjacent to a punctuation run must link"
+        );
+    }
+}

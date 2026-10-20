@@ -271,6 +271,15 @@ pub enum NodeValue {
 
     /// **Block**. A block comment span. Enabled with `ofm_comments` option.
     MultilineComment(NodeCommentBlock),
+
+    /// A Lemmy spoiler block.
+    ///
+    /// ```md
+    /// :::spoiler Click to reveal
+    /// Hidden content
+    /// :::
+    /// ```
+    LemmySpoiler(Box<NodeLemmySpoiler>),
 }
 
 /// Alignment of a single table cell.
@@ -649,6 +658,19 @@ pub struct NodeBlockDirective {
     pub info: String,
 }
 
+/// The metadata of a Lemmy spoiler block.
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct NodeLemmySpoiler {
+    /// The length of the opening fence (number of colons).
+    pub fence_length: usize,
+
+    /// The indentation level of the fence marker.
+    pub fence_offset: usize,
+
+    /// The spoiler title (text after `:::spoiler `).
+    pub title: String,
+}
+
 /// Attributes on the node, if any.
 ///
 /// These are somewhat HTML-specific in nature, though none are formatted
@@ -716,7 +738,7 @@ impl NodeValue {
             | NodeValue::MultilineComment(_)
             | NodeValue::Alert(_)
             | NodeValue::Subtext => true,
-            NodeValue::BlockDirective(_) => true,
+            NodeValue::BlockDirective(_) | NodeValue::LemmySpoiler(_) => true,
             #[cfg(feature = "phoenix_heex")]
             NodeValue::HeexBlock(..) => true,
             _ => false,
@@ -811,6 +833,7 @@ impl NodeValue {
             NodeValue::Alert(_) => "alert",
             NodeValue::Subtext => "subtext",
             NodeValue::BlockDirective(_) => "block_directive",
+            NodeValue::LemmySpoiler(_) => "lemmy_spoiler",
         }
     }
 
@@ -1170,7 +1193,7 @@ impl<'a> arena_tree::Node<'a, RefCell<Ast>> {
             NodeValue::Alert(_) => {
                 child.block() && !matches!(*child, NodeValue::Item(..) | NodeValue::TaskItem(..))
             }
-            NodeValue::BlockDirective(_) => {
+            NodeValue::BlockDirective(_) | NodeValue::LemmySpoiler(_) => {
                 child.block() && !matches!(*child, NodeValue::Item(..) | NodeValue::TaskItem(..))
             }
 
