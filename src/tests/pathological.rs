@@ -103,7 +103,7 @@ fn pathological_table_autocompleted_cells() {
         ..Default::default()
     };
 
-    let arena = typed_arena::Arena::new();
+    let arena = Arena::new();
     let root = parse_document(&arena, &input, &options);
     let table = root
         .descendants()
