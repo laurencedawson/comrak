@@ -430,6 +430,10 @@ pub fn trim_start_match<'s>(s: &'s str, pat: &str) -> &'s str {
 
 pub fn count_newlines(input: &str) -> (usize, usize) {
     let bytes = input.as_bytes();
+    // Most callers pass a few bytes of one line, where the matcher's setup outweighs its scan
+    if memchr::memchr2(b'\r', b'\n', bytes).is_none() {
+        return (0, input.len());
+    }
     let matcher = cr_or_lf_matcher();
     let mut matches = matcher.iter(bytes);
     let mut num_lines = 0;

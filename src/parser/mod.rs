@@ -2832,7 +2832,12 @@ where
             self.process_tasklist(node, text, sourcepos, &mut spx);
         }
 
-        if self.options.extension.autolink && !in_bracket_context {
+        // Every address the email detector links contains '@', so @-free nodes skip it entirely.
+        if in_bracket_context || memchr::memchr(b'@', text.as_bytes()).is_none() {
+            return;
+        }
+
+        if self.options.extension.autolink {
             autolink::process_email_autolinks(
                 self.arena,
                 node,
