@@ -2034,7 +2034,7 @@ where
             });
         }
         let node = self.arena.alloc(child.into());
-        parent.append(node);
+        parent.append_new(node);
         node
     }
 
