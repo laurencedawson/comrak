@@ -2842,25 +2842,29 @@ where
         // Record the original list of sourcepos and bytecounts
         // for the post-processing step.
 
-        let needs_spx = self.options.extension.tasklist
-            || ((self.options.extension.autolink || self.options.extension.lemmy_mention)
-                && !in_bracket_context);
-
-        let mut spxv = SmallVec::new();
-        if needs_spx {
-            spxv.push((sourcepos, root.len()));
-        }
-
         // Sized from the whole sibling run first: `to_mut` on a short borrowed root would allocate
-        // its current length, then grow again on the first push.
+        // its current length, then grow again on the first push. Every mention and email contains
+        // an '@', so a run without one skips the detectors and their sourcepos list.
         let mut total_len = root.len();
+        let mut has_at = memchr::memchr(b'@', root.as_bytes()).is_some();
         let mut walk = node.next_sibling();
         while let Some(ns) = walk {
             let NodeValue::Text(ref adj) = ns.data().value else {
                 break;
             };
             total_len += adj.len();
+            has_at = has_at || memchr::memchr(b'@', adj.as_bytes()).is_some();
             walk = ns.next_sibling();
+        }
+
+        let needs_spx = self.options.extension.tasklist
+            || ((self.options.extension.autolink || self.options.extension.lemmy_mention)
+                && !in_bracket_context
+                && has_at);
+
+        let mut spxv = SmallVec::new();
+        if needs_spx {
+            spxv.push((sourcepos, root.len()));
         }
         if total_len > root.len() {
             let mut joined = String::with_capacity(total_len);
