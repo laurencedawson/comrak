@@ -114,7 +114,7 @@ impl ByteTables {
 pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub arena: &'a Arena<'a>,
     pub options: &'o Options<'c>,
-    pub input: String,
+    pub input: Cow<'a, str>,
     line: usize,
     block_line: usize,
     pub scanner: Scanner,
@@ -132,6 +132,10 @@ pub struct Subject<'a: 'd, 'r, 'o, 'd, 'c, 'p> {
     pub scanned_for_backticks: bool,
     no_link_openers: bool,
     pub(crate) relaxed_autolink_dead_zone_end: usize,
+    string_arena: Option<&'a crate::StringArena>,
+    /// `input` at its full `'a` lifetime when borrowed (zerocopy mode);
+    /// cached at construction so hot paths avoid re-matching the Cow.
+    zerocopy_input: Option<&'a str>,
 }
 
 #[derive(Default)]
@@ -146,14 +150,19 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     pub fn new(
         arena: &'a Arena<'a>,
         options: &'o Options<'c>,
-        input: String,
+        input: Cow<'a, str>,
         line: usize,
         refmap: &'r mut RefMap,
         tables: &'r ByteTables,
         footnote_defs: &'p mut FootnoteDefs<'a>,
         delimiter_arena: &'d typed_arena::Arena<Delimiter<'a, 'd>>,
         inline_footnote_depth: usize,
+        string_arena: Option<&'a crate::StringArena>,
     ) -> Self {
+        let zerocopy_input = match input {
+            Cow::Borrowed(s) => Some(s),
+            Cow::Owned(_) => None,
+        };
         Subject {
             arena,
             options,
@@ -175,6 +184,47 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             scanned_for_backticks: false,
             no_link_openers: true,
             relaxed_autolink_dead_zone_end: 0,
+            string_arena,
+            zerocopy_input,
+        }
+    }
+
+    fn is_zerocopy(&self) -> bool {
+        matches!(self.input, Cow::Borrowed(_))
+    }
+
+    /// Re-derive `s` — a subslice of `self.input` — at the full `'a`
+    /// lifetime, by offset within the borrowed input. None when the input
+    /// is owned or `s` isn't inside it.
+    #[inline]
+    fn promote_str(&self, s: &str) -> Option<&'a str> {
+        let base = self.zerocopy_input?;
+        let off = (s.as_ptr() as usize).wrapping_sub(base.as_ptr() as usize);
+        base.get(off..off.wrapping_add(s.len()))
+    }
+
+    /// `self.input[r]` at the full `'a` lifetime; None when the input is
+    /// owned (non-zerocopy). Offset-known fast path — no pointer math.
+    #[inline]
+    fn input_slice(&self, r: std::ops::Range<usize>) -> Option<&'a str> {
+        self.zerocopy_input.map(|b| &b[r])
+    }
+
+    #[inline]
+    fn text_cow(&self, s: &str) -> Cow<'a, str> {
+        match self.promote_str(s) {
+            Some(p) => Cow::Borrowed(p),
+            None => Cow::Owned(s.to_string()),
+        }
+    }
+
+    /// Promote a parse-temporary `Cow<'_, str>`: borrows that live inside
+    /// the `'a` input keep their borrow; anything else is cloned.
+    #[inline]
+    fn promote_cow(&self, c: Cow<'_, str>) -> Cow<'a, str> {
+        match c {
+            Cow::Borrowed(s) => self.text_cow(s),
+            Cow::Owned(s) => Cow::Owned(s),
         }
     }
 
@@ -226,11 +276,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             start_column,
             end_column,
         );
-        inl.append(self.make_inline(
-            NodeValue::Text(entity::unescape_html(url).into_owned().into()),
-            start_column + 1,
-            end_column - 1,
-        ));
+        let text = self.promote_cow(entity::unescape_html(url));
+        inl.append(self.make_inline(NodeValue::Text(text), start_column + 1, end_column - 1));
         inl
     }
 
@@ -406,8 +453,11 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 let startpos = self.scanner.pos;
                 self.scanner.pos = endpos;
 
-                let mut contents: Cow<str> = if endpos == self.input.len() {
-                    let mut contents = mem::take(&mut self.input);
+                // The `mem::take` below resets `input` and makes `is_zerocopy` lie.
+                let zerocopy = self.is_zerocopy();
+
+                let mut contents: Cow<str> = if !zerocopy && endpos == self.input.len() {
+                    let mut contents = mem::take(&mut self.input).into_owned();
                     strings::remove_from_start(&mut contents, startpos);
                     contents.into()
                 } else {
@@ -423,11 +473,11 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 // Don't create empty text nodes - this can happen after trimming trailing
                 // whitespace, is useless, and would cause sourcepos underflow in endpos - 1.
                 if !contents.is_empty() {
-                    Some(self.make_inline(
-                        NodeValue::Text(contents.into_owned().into()),
-                        startpos,
-                        endpos - 1,
-                    ))
+                    let text = match self.input_slice(startpos..endpos) {
+                        Some(p) => Cow::Borrowed(p),
+                        None => contents.into_owned().into(),
+                    };
+                    Some(self.make_inline(NodeValue::Text(text), startpos, endpos - 1))
                 } else {
                     None
                 }
@@ -518,9 +568,11 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
         let buf = &self.input[startpos + openticks..endpos - openticks];
         let buf = strings::normalize_code(buf);
+        // Keeping the borrow skips a String alloc per clean code span.
+        let literal = self.promote_cow(buf);
         let code = NodeCode {
             num_backticks: openticks,
-            literal: buf.into_owned().into(),
+            literal,
         };
         let node = self.make_inline(NodeValue::Code(code), startpos, endpos - 1);
         self.adjust_node_newlines(
@@ -551,9 +603,15 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
             let inline_text = self.make_inline(
                 NodeValue::Text(
-                    self.input[self.scanner.pos - 1..self.scanner.pos]
-                        .to_string()
-                        .into(),
+                    self.input_slice(self.scanner.pos - 1..self.scanner.pos)
+                        .map_or_else(
+                            || {
+                                self.input[self.scanner.pos - 1..self.scanner.pos]
+                                    .to_string()
+                                    .into()
+                            },
+                            Cow::Borrowed,
+                        ),
                 ),
                 self.scanner.pos - 1,
                 self.scanner.pos - 1,
@@ -864,9 +922,15 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                 "“".into()
             }
         } else {
-            self.input[self.scanner.pos - numdelims..self.scanner.pos]
-                .to_string()
-                .into()
+            self.input_slice(self.scanner.pos - numdelims..self.scanner.pos)
+                .map_or_else(
+                    || {
+                        self.input[self.scanner.pos - numdelims..self.scanner.pos]
+                            .to_string()
+                            .into()
+                    },
+                    Cow::Borrowed,
+                )
         };
         let inl = self.make_inline(
             NodeValue::Text(contents),
@@ -1299,16 +1363,21 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         def_node.append(para_node);
 
         // Parse the content recursively as inlines
+        let input: Cow<'a, str> = match self.string_arena {
+            Some(sa) => Cow::Borrowed(&*sa.alloc(String::from(content))),
+            None => Cow::Owned(String::from(content)),
+        };
         let mut subj = Subject::new(
             self.arena,
             self.options,
-            content.into(),
+            input,
             1, // Use line 1 to match the paragraph's sourcepos
             self.refmap,
             self.tables,
             self.footnote_defs,
             self.delimiter_arena,
             self.inline_footnote_depth + 1,
+            self.string_arena,
         );
 
         while subj.parse_inline(para_node, 1, &line_offsets) {}
@@ -1896,10 +1965,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                     self.scanner.pos = endall + 1;
                     let url = strings::clean_url(url);
                     let title = strings::clean_title(&self.input[starttitle..endtitle]);
+                    let url = self.promote_cow(url);
+                    let title = self.promote_cow(title);
                     self.close_bracket_match(
                         is_image,
-                        url.into(),
-                        title.into(),
+                        url,
+                        title,
                         source_end_pos,
                         parent_line_offsets,
                     );
@@ -1954,8 +2025,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
             let reff = reff.into_owned();
             self.close_bracket_match(
                 is_image,
-                reff.url,
-                reff.title,
+                Cow::Owned(reff.url),
+                Cow::Owned(reff.title),
                 self.scanner.pos,
                 parent_line_offsets,
             );
@@ -2082,17 +2153,14 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     fn close_bracket_match(
         &mut self,
         is_image: bool,
-        url: String,
-        title: String,
+        url: Cow<'a, str>,
+        title: Cow<'a, str>,
         source_end_pos: usize,
         #[cfg_attr(not(feature = "attributes"), allow(unused))] parent_line_offsets: &[usize],
     ) {
         let last = self.brackets.pop().unwrap();
 
-        let nl = NodeLink {
-            url: url.into(),
-            title: title.into(),
-        };
+        let nl = NodeLink { url, title };
         let inl = make_inline(
             self.arena,
             if is_image {
@@ -2838,13 +2906,14 @@ mod tests {
         let mut subject = Subject::new(
             &arena,
             &options,
-            input,
+            input.into(),
             1,
             &mut refmap,
             &tables,
             &mut footnote_defs,
             &delimiter_arena,
             0,
+            None,
         );
         subject.scanner.pos = 1;
 
@@ -2869,13 +2938,14 @@ mod tests {
         let mut subject = Subject::new(
             &arena,
             &options,
-            input,
+            input.into(),
             1,
             &mut refmap,
             &tables,
             &mut footnote_defs,
             &delimiter_arena,
             0,
+            None,
         );
         subject.scanner.pos = 1;
         assert_eq!(subject.scan_to_closing_backtick(1), None);

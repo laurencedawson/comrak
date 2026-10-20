@@ -109,6 +109,9 @@ pub use xml::format_document_with_plugins as format_xml_with_plugins;
 /// compared to typed_arena's 2x doubling.
 pub type Arena<'a> = arena::Arena<nodes::AstNode<'a>>;
 
+/// Arena holding paragraph content during zero-copy parsing, so text nodes can borrow it.
+pub type StringArena = arena::Arena<String>;
+
 /// Render Markdown to HTML.
 ///
 /// See the documentation of the crate root for an example.

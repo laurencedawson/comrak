@@ -51,14 +51,21 @@ where
     F: for<'a> FnOnce(Node<'a>) -> R,
 {
     let arena = Arena::new();
-    f(parse_document_inner(&arena, md, options, false))
+    let string_arena = crate::StringArena::new();
+    f(parse_document_inner(
+        &arena,
+        md,
+        options,
+        false,
+        Some(&string_arena),
+    ))
 }
 
 /// Parse a Markdown document to an AST.
 ///
 /// See the documentation of the crate root for an example.
 pub fn parse_document<'a>(arena: &'a Arena<'a>, md: &str, options: &Options) -> Node<'a> {
-    parse_document_inner(arena, md, options, true)
+    parse_document_inner(arena, md, options, true, None)
 }
 
 fn parse_document_inner<'a>(
@@ -66,6 +73,7 @@ fn parse_document_inner<'a>(
     md: &str,
     options: &Options,
     needs_sourcepos: bool,
+    string_arena: Option<&'a crate::StringArena>,
 ) -> Node<'a> {
     let root = arena.alloc(
         Ast {
@@ -83,6 +91,7 @@ fn parse_document_inner<'a>(
     let delimiter_arena = typed_arena::Arena::new();
     let mut parser = Parser::new(arena, root, options, &delimiter_arena);
     parser.needs_sourcepos = needs_sourcepos;
+    parser.string_arena = string_arena;
     let document = parser.parse(md);
     if options.parse.sourcepos_chars {
         convert_sourcepos_columns_to_chars(document, md);
@@ -159,6 +168,7 @@ pub struct Parser<'a: 'd, 'o, 'c, 'd> {
     saw_list: bool,
     /// False on the blob path, which never reads sourcepos: its fix-up tree walks are skipped.
     needs_sourcepos: bool,
+    string_arena: Option<&'a crate::StringArena>,
     working_content: String,
     curline_len: usize,
     curline_end_col: usize,
@@ -218,6 +228,7 @@ where
             partially_consumed_tab: false,
             saw_list: false,
             needs_sourcepos: true,
+            string_arena: None,
             working_content: String::new(),
             curline_len: 0,
             curline_end_col: 0,
@@ -2532,17 +2543,22 @@ where
             offsets,
         } = *lines;
         strings::rtrim(&mut content);
+        let input: Cow<'a, str> = match self.string_arena {
+            Some(sa) => Cow::Borrowed(&*sa.alloc(content)),
+            None => Cow::Owned(content),
+        };
 
         let mut subj = inlines::Subject::new(
             self.arena,
             self.options,
-            content,
+            input,
             line,
             &mut self.refmap,
             &self.inline_tables,
             &mut self.footnote_defs,
             self.delimiter_arena,
             0,
+            self.string_arena,
         );
 
         while subj.parse_inline(node, line, &offsets) {}
