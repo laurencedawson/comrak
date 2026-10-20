@@ -242,6 +242,17 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         start_column: usize,
         end_column: usize,
     ) -> Node<'a> {
+        self.make_inline_here(value, start_column, end_column)
+    }
+
+    /// `make_inline` built in the caller's frame, for the plain-text path.
+    #[inline(always)]
+    fn make_inline_here(
+        &self,
+        value: NodeValue<'a>,
+        start_column: usize,
+        end_column: usize,
+    ) -> Node<'a> {
         let start_column =
             start_column as isize + 1 + self.column_offset + self.line_offset as isize;
         let end_column = end_column as isize + 1 + self.column_offset + self.line_offset as isize;
@@ -483,7 +494,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
                         Some(p) => Cow::Borrowed(p),
                         None => contents.into_owned().into(),
                     };
-                    Some(self.make_inline(NodeValue::Text(text), startpos, endpos - 1))
+                    Some(self.make_inline_here(NodeValue::Text(text), startpos, endpos - 1))
                 } else {
                     None
                 }
