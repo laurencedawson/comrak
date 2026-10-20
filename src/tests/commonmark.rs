@@ -18,7 +18,14 @@ fn commonmark_avoids_spurious_backslash() {
     let options = Options::default();
     let empty = LineColumn { line: 0, column: 0 };
 
-    let ast = |val: NodeValue| arena.alloc(Ast::new(val, empty).into());
+    fn mk<'a>(
+        arena: &'a Arena<'a>,
+        val: NodeValue<'a>,
+        at: LineColumn,
+    ) -> &'a crate::nodes::AstNode<'a> {
+        arena.alloc(Ast::new(val, at).into())
+    }
+    let ast = |val| mk(&arena, val, empty);
     let root = ast(NodeValue::Document);
 
     let p1 = ast(NodeValue::Paragraph);
@@ -41,7 +48,14 @@ fn commonmark_renders_single_list_item() {
     let arena = Arena::new();
     let options = Options::default();
     let empty = LineColumn { line: 0, column: 0 };
-    let ast = |val: NodeValue| arena.alloc(Ast::new(val, empty).into());
+    fn mk<'a>(
+        arena: &'a Arena<'a>,
+        val: NodeValue<'a>,
+        at: LineColumn,
+    ) -> &'a crate::nodes::AstNode<'a> {
+        arena.alloc(Ast::new(val, at).into())
+    }
+    let ast = |val| mk(&arena, val, empty);
     let list_options = NodeList {
         list_type: ListType::Ordered,
         start: 1,

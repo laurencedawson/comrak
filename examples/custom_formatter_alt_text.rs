@@ -24,7 +24,7 @@ fn autotitle_images(
         }
     }
 
-    nl.title = s;
+    nl.title = s.into();
 }
 
 fn formatter<'a>(
