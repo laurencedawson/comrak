@@ -40,7 +40,7 @@ fn render_raw(markdown: &str) -> BlobWriter {
     let opts = test_opts();
     parse_document_zerocopy(markdown.trim(), &opts, |root| {
         let mut out = BlobWriter::new(256);
-        visit(root, &mut out, 0, 0, 0);
+        visit(root, &mut out);
         out
     })
 }
@@ -62,7 +62,7 @@ fn render_test_full_parse(markdown: &str) -> BlobWriter {
     let arena = Arena::new();
     let root = parse_document(&arena, markdown.trim(), &opts);
     let mut out = BlobWriter::new(256);
-    visit(root, &mut out, 0, 0, 0);
+    visit(root, &mut out);
     out.append_footnotes();
     out.clear_pending();
     out
@@ -352,6 +352,34 @@ mod format {
             sorted.sort_unstable();
             assert_eq!(emitted, sorted, "the sort lost or changed a span");
         }
+    }
+
+    /// The walk keeps its own stack: nesting far past what recursion survived on a 1 MB
+    /// thread (about 1,500 quotes, 780 list items, or a few thousand emphases) renders every
+    /// level, one span each.
+    #[test]
+    #[ntest::timeout(10000)]
+    fn deep_nesting_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let list = (0..2_000)
+                    .map(|d| format!("{}- x\n", "  ".repeat(d)))
+                    .collect();
+                let emphasis = format!("{}{}", "*x **x ".repeat(2_500), " x** x*".repeat(2_500));
+                for (md, spans) in [
+                    ("> ".repeat(10_000) + "x", 10_000),
+                    (list, 2_000),
+                    (emphasis, 5_000),
+                ] {
+                    let out = render_raw(&md);
+                    assert!(out.text().split_whitespace().all(|w| w == "x"));
+                    assert_eq!(out.spans.len() / 4, spans);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     /// Zero-length spans (start == end) are skipped at emission time.
@@ -1695,7 +1723,7 @@ mod production {
         let opts = production_opts();
         parse_document_zerocopy(markdown.trim(), &opts, |root| {
             let mut out = BlobWriter::new(256);
-            visit(root, &mut out, 0, 0, 0);
+            visit(root, &mut out);
             out.append_footnotes();
             out.clear_pending();
             out

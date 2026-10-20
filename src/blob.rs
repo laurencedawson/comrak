@@ -65,11 +65,11 @@ pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
     } else {
         BlobWriter::new(input.len())
     };
-    visit(root, &mut b, 0, 0, 0);
+    visit(root, &mut b);
     b.append_footnotes();
     if b.fast_path_ascii && !b.text().is_ascii() {
         b = BlobWriter::new(input.len());
-        visit(root, &mut b, 0, 0, 0);
+        visit(root, &mut b);
         b.append_footnotes();
     }
     if b.spans.is_empty() && b.text() == input {
@@ -98,6 +98,9 @@ pub(crate) struct BlobWriter {
     /// Set if any LEMMY_SPOILER_CONTENT span exists. Stored as a header flag so
     /// consumers can skip hidden-spoiler containment checks for normal content.
     has_spoiler_body: bool,
+    /// How many lists and quotes the walk is inside.
+    list_depth: usize,
+    quote_depth: usize,
 }
 
 impl BlobWriter {
@@ -141,6 +144,8 @@ impl BlobWriter {
             all_ascii: true,
             fast_path_ascii,
             has_spoiler_body: false,
+            list_depth: 0,
+            quote_depth: 0,
         }
     }
 
@@ -432,65 +437,145 @@ impl BlobWriter {
     }
 }
 
-pub(crate) fn visit<'a>(
+/// A container the walk is inside. Only containers are held, so nesting depth costs heap and
+/// not call stack, as in upstream's formatters. The walk moves by the tree's own links, and the
+/// held containers are always the current node's ancestors, so none needs its node.
+struct Open {
+    kind: Kind,
+    start: usize,
+    /// Span types it closes with; a negative type is an empty slot.
+    spans: [i32; 2],
+    /// The newline gap after it.
+    gap: usize,
+}
+
+enum Kind {
+    Plain,
+    /// The next item's number.
+    List(i32),
+    /// The item's span data, until its own blocks are written and its nested lists are next.
+    Item(Option<i32>),
+    Quote,
+    /// The writer outside it.
+    Footnote(Box<BlobWriter>),
+    /// Where the text starts, and whether it stands in for a video.
+    Link(usize, bool),
+}
+
+const NO_SPANS: [i32; 2] = [-1, -1];
+
+thread_local! {
+    /// The walk's stack from this thread's last render, so the next allocates none.
+    static OPEN: RefCell<Vec<Open>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn visit<'a>(root: &'a AstNode<'a>, out: &mut BlobWriter) {
+    let mut open = OPEN.take();
+    walk(root, out, &mut open);
+    OPEN.set(open);
+}
+
+fn walk<'a>(root: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) {
+    let (mut node, mut parent) = (root, root);
+    loop {
+        let held = open.len();
+        enter(node, out, open);
+        let mut after = (open.len() == held).then_some(node);
+        if after.is_none() {
+            parent = node;
+        }
+        loop {
+            let Some(top) = open.last_mut() else {
+                return;
+            };
+            if let Some(next) = next_child(parent, top, after, out) {
+                node = next;
+                break;
+            }
+            leave(parent, open.pop().unwrap(), out);
+            after = Some(parent);
+            parent = parent.parent().unwrap_or(root);
+        }
+    }
+}
+
+/// The child to walk after `after` (or the first), with any gap that goes before it.
+fn next_child<'a>(
     node: &'a AstNode<'a>,
+    o: &mut Open,
+    after: Option<&'a AstNode<'a>>,
     out: &mut BlobWriter,
-    list_depth: usize,
-    quote_depth: usize,
-    ordinal: i32,
-) {
+) -> Option<&'a AstNode<'a>> {
+    let from = after.map_or_else(|| node.first_child(), |a| a.next_sibling());
+    match &mut o.kind {
+        Kind::Item(pending) => {
+            let is_list = |c: &&AstNode<'a>| matches!(c.data.borrow().value, List(_));
+            let siblings = |from| std::iter::successors(from, |c: &&AstNode<'a>| c.next_sibling());
+            let mut next = siblings(from).find(|c| is_list(c) == pending.is_none());
+            if next.is_none()
+                && let Some(data) = pending.take()
+            {
+                out.span_data(LIST_ITEM, o.start, data);
+                next = siblings(node.first_child()).find(is_list);
+            }
+            if next.is_some() && pending.is_none() {
+                out.nl(1);
+            }
+            return next;
+        }
+        Kind::Quote if after.is_some() && from.is_some() => out.nl(2),
+        _ => {}
+    }
+    from
+}
+
+/// Writes a node's opening, and holds it open when its children are to be walked.
+fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) {
     let val = &node.data.borrow().value;
     let start = out.pos();
+    let hold = |open: &mut Vec<Open>, kind, start, spans, gap| {
+        open.push(Open {
+            kind,
+            start,
+            spans,
+            gap,
+        })
+    };
 
     match val {
         List(l) => {
-            let mut num = match l.list_type {
+            let top_level = out.list_depth == 0;
+            out.list_depth += 1;
+            let number = match l.list_type {
                 ListType::Ordered => l.start as i32,
                 ListType::Bullet => 0,
             };
-            for c in node.children() {
-                visit(c, out, list_depth + 1, quote_depth, num);
-                if num > 0 {
-                    num += 1;
-                }
-            }
-            if list_depth == 0 {
-                out.nl(2);
-            }
+            hold(open, Kind::List(number), start, NO_SPANS, gap(top_level));
         }
 
         Item(_) | TaskItem(_) => {
-            let indent = list_depth.saturating_sub(1);
+            let indent = out.list_depth.saturating_sub(1);
             let number = match val {
                 TaskItem(ti) => 0xFFFE + ti.symbol.is_some() as i32,
                 // Clamp below the checkbox sentinels: ordered starts go up to
                 // 999,999,999 and would render as checkboxes or spill into the
                 // indent bits.
-                _ => ordinal.clamp(0, 0xFFFD),
+                _ => match open.last_mut().map(|o| &mut o.kind) {
+                    Some(Kind::List(n)) => {
+                        *n += (*n > 0) as i32;
+                        (*n - (*n > 0) as i32).clamp(0, 0xFFFD)
+                    }
+                    _ => 0,
+                },
             };
-            let is_list = |c: &&AstNode<'a>| matches!(c.data.borrow().value, List(_));
-            for c in node.children().filter(|c| !is_list(c)) {
-                visit(c, out, list_depth, quote_depth, 0);
-            }
-            out.span_data(LIST_ITEM, start, ((indent as i32) << 16) | number);
-            for c in node.children().filter(is_list) {
-                out.nl(1);
-                visit(c, out, list_depth, quote_depth, 0);
-            }
-            out.nl(1);
+            let data = ((indent as i32) << 16) | number;
+            hold(open, Kind::Item(Some(data)), start, NO_SPANS, 1);
         }
 
         BlockQuote => {
-            for (i, c) in node.children().enumerate() {
-                if i > 0 {
-                    out.nl(2);
-                }
-                visit(c, out, list_depth, quote_depth + 1, 0);
-            }
-            out.span_data(QUOTE, start, quote_depth as i32);
-            if quote_depth == 0 {
-                out.nl(2);
-            }
+            let top_level = out.quote_depth == 0;
+            out.quote_depth += 1;
+            hold(open, Kind::Quote, start, NO_SPANS, gap(top_level));
         }
 
         Paragraph => {
@@ -505,18 +590,13 @@ pub(crate) fn visit<'a>(
             {
                 out.p += 2;
             } else {
-                visit_children(node, out, list_depth, quote_depth);
-                if top_level {
-                    out.nl(2);
-                }
+                hold(open, Kind::Plain, start, NO_SPANS, gap(top_level));
             }
         }
 
         Heading(h) => {
-            visit_children(node, out, list_depth, quote_depth);
-            out.span(HEADINGS[(h.level as usize).saturating_sub(1).min(5)], start);
-            out.span(BOLD, start);
-            out.nl(2);
+            let heading = HEADINGS[(h.level as usize).saturating_sub(1).min(5)];
+            hold(open, Kind::Plain, start, [heading, BOLD], 2);
         }
 
         CodeBlock(c) => {
@@ -544,11 +624,8 @@ pub(crate) fn visit<'a>(
         }
 
         FootnoteDefinition(_) => {
-            let mut tmp = BlobWriter::new(64);
-            for c in node.children() {
-                visit(c, &mut tmp, 0, 0, 0);
-            }
-            out.footnotes.push(tmp.text().trim().to_string());
+            let outside = std::mem::replace(out, BlobWriter::new(64));
+            hold(open, Kind::Footnote(Box::new(outside)), start, NO_SPANS, 0);
         }
 
         Text(t) => out.write_prose(&collapse_whitespace(t)),
@@ -571,14 +648,7 @@ pub(crate) fn visit<'a>(
             if is_video_url(&url) {
                 // A video in image syntax can't be embedded as an image. Render it as a
                 // link instead: the alt text, or the URL itself when there is no alt.
-                let text_start = out.blob.len();
-                visit_children(node, out, list_depth, quote_depth);
-                if out.blob.len() == text_start {
-                    out.write_text(&url);
-                }
-                out.span_url(LINK, start, &url);
-                out.span(LINK_SIZE, start);
-                out.append_domain_suffix(text_start, &url);
+                hold(open, Kind::Link(out.blob.len(), true), start, NO_SPANS, 0);
             } else {
                 out.emit_image(&url);
             }
@@ -586,39 +656,20 @@ pub(crate) fn visit<'a>(
 
         LineBreak => out.nl(1),
         SoftBreak => {
-            if quote_depth > 0 {
+            if out.quote_depth > 0 {
                 out.nl(1)
             } else if !out.at_line_start() {
                 out.write_text(" ")
             }
         }
 
-        Strong | Emph | Strikethrough => {
-            visit_children(node, out, list_depth, quote_depth);
-            out.span(
-                match val {
-                    Strong => BOLD,
-                    Emph => ITALIC,
-                    Strikethrough => STRIKETHROUGH,
-                    _ => unreachable!(),
-                },
-                start,
-            );
-        }
-
-        Superscript | Subscript => {
-            visit_children(node, out, list_depth, quote_depth);
-            let (t, size) = if matches!(val, Superscript) {
-                (SUPERSCRIPT, SUPERSCRIPT_SIZE)
-            } else {
-                (SUBSCRIPT, SUBSCRIPT_SIZE)
-            };
-            out.span(t, start);
-            out.span(size, start);
-        }
+        Strong => hold(open, Kind::Plain, start, [BOLD, -1], 0),
+        Emph => hold(open, Kind::Plain, start, [ITALIC, -1], 0),
+        Strikethrough => hold(open, Kind::Plain, start, [STRIKETHROUGH, -1], 0),
+        Superscript => hold(open, Kind::Plain, start, [SUPERSCRIPT, SUPERSCRIPT_SIZE], 0),
+        Subscript => hold(open, Kind::Plain, start, [SUBSCRIPT, SUBSCRIPT_SIZE], 0),
 
         Link(l) => {
-            let url = crate::parser::url::resolve_url(&l.url);
             let only = node.first_child().filter(|c| c.next_sibling().is_none());
             let wraps_image = only.is_some_and(|c| matches!(&c.data.borrow().value, Image(_)));
             let autolink = only.is_some_and(|c| {
@@ -626,15 +677,11 @@ pub(crate) fn visit<'a>(
                 Text(t) if t.starts_with("http://") || t.starts_with("https://"))
             });
             if wraps_image {
-                visit_children(node, out, list_depth, quote_depth);
-            } else if autolink && is_image_url(&url) {
-                out.emit_image(&url);
+                hold(open, Kind::Plain, start, NO_SPANS, 0);
+            } else if autolink && is_image_url(&crate::parser::url::resolve_url(&l.url)) {
+                out.emit_image(&crate::parser::url::resolve_url(&l.url));
             } else {
-                let text_start = out.blob.len();
-                visit_children(node, out, list_depth, quote_depth);
-                out.span_url(LINK, start, &url);
-                out.span(LINK_SIZE, start);
-                out.append_domain_suffix(text_start, &url);
+                hold(open, Kind::Link(out.blob.len(), false), start, NO_SPANS, 0);
             }
         }
 
@@ -648,15 +695,51 @@ pub(crate) fn visit<'a>(
             out.span(LEMMY_SPOILER_TITLE, start);
             // Body span owns one trailing newline so the blank-line gap collapses with it.
             out.nl(1);
-            let content_start = out.pos();
-            out.nl(2);
-            visit_children(node, out, list_depth, quote_depth);
-            out.span(LEMMY_SPOILER_CONTENT, content_start);
+            hold(open, Kind::Plain, out.pos(), [LEMMY_SPOILER_CONTENT, -1], 2);
             out.nl(2);
         }
 
-        _ => visit_children(node, out, list_depth, quote_depth),
+        _ => hold(open, Kind::Plain, start, NO_SPANS, 0),
     }
+}
+
+/// A top-level block's blank line after it.
+fn gap(top_level: bool) -> usize {
+    if top_level { 2 } else { 0 }
+}
+
+/// Writes a container's closing once its children are done.
+fn leave<'a>(node: &'a AstNode<'a>, o: Open, out: &mut BlobWriter) {
+    match o.kind {
+        Kind::List(_) => out.list_depth -= 1,
+        Kind::Quote => {
+            out.quote_depth -= 1;
+            out.span_data(QUOTE, o.start, out.quote_depth as i32);
+        }
+        Kind::Footnote(outside) => {
+            let tmp = std::mem::replace(out, *outside);
+            out.footnotes.push(tmp.text().trim().to_string());
+        }
+        Kind::Link(text_start, video) => {
+            let (Link(l) | Image(l)) = &node.data.borrow().value else {
+                unreachable!()
+            };
+            let url = crate::parser::url::resolve_url(&l.url);
+            if video && out.blob.len() == text_start {
+                out.write_text(&url);
+            }
+            out.span_url(LINK, o.start, &url);
+            out.span(LINK_SIZE, o.start);
+            out.append_domain_suffix(text_start, &url);
+        }
+        Kind::Plain | Kind::Item(_) => {}
+    }
+    for t in o.spans {
+        if t >= 0 {
+            out.span(t, o.start);
+        }
+    }
+    out.nl(o.gap);
 }
 
 /// `fmt::Write` over the url section, so a table cell's markdown lands there without a String
@@ -666,11 +749,5 @@ impl std::fmt::Write for Utf8Sink<'_> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         self.0.extend_from_slice(s.as_bytes());
         Ok(())
-    }
-}
-
-fn visit_children<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, ld: usize, qd: usize) {
-    for c in node.children() {
-        visit(c, out, ld, qd, 0);
     }
 }
