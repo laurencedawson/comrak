@@ -2253,14 +2253,16 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
 
     fn find_special_char(&self) -> usize {
         let bytes = self.input.as_bytes();
+        let special = &self.tables.special;
         let mut i = self.scanner.pos;
-        while i < bytes.len() {
-            if self.tables.special[bytes[i] as usize] && self.is_special_char_at(i) {
+        while let Some(skip) = bytes[i..].iter().position(|&b| special[b as usize]) {
+            i += skip;
+            if self.is_special_char_at(i) {
                 return i;
             }
             i += 1;
         }
-        i
+        bytes.len()
     }
 
     fn is_special_char_at(&self, i: usize) -> bool {
