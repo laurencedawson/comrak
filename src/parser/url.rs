@@ -62,7 +62,7 @@ fn resolve_target(url: &str) -> Cow<'_, str> {
         Some(r) => r,
         None => return url,
     };
-    let host = rest.split('/').next().unwrap_or("");
+    let host = memchr::memchr(b'/', rest.as_bytes()).map_or(rest, |i| &rest[..i]);
 
     if host.ends_with("duckduckgo.com") {
         if let Some(u) = unwrap_redirect(&url, "external-content.duckduckgo.com/iu/", "u") {
@@ -293,9 +293,9 @@ pub fn extract_domain(url: &str) -> Option<Cow<'_, str>> {
         return None;
     }
     let start = SCHEME_SEP.find(url.as_bytes())? + 3;
-    let end = url[start..]
-        .find('/')
-        .or_else(|| url[start..].find('?'))
+    let after = &url.as_bytes()[start..];
+    let end = memchr::memchr(b'/', after)
+        .or_else(|| memchr::memchr(b'?', after))
         .map_or(url.len(), |i| start + i);
     let mut host = &url[start..end];
     if host.starts_with("www.") {
