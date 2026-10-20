@@ -1984,7 +1984,7 @@ where
     fn add_child(
         &mut self,
         mut parent: Node<'a>,
-        value: NodeValue,
+        value: NodeValue<'a>,
         start_column: usize,
     ) -> Node<'a> {
         while !parent.can_contain_type(&value) {
@@ -2773,7 +2773,7 @@ where
         &mut self,
         node: Node<'a>,
         mut sourcepos: Sourcepos,
-        root: &mut Cow<'static, str>,
+        root: &mut Cow<'a, str>,
         in_bracket_context: bool,
     ) -> Sourcepos {
         // Join adjacent text nodes together, then post-process.
@@ -2837,7 +2837,7 @@ where
     fn postprocess_text_node_with_context_inner(
         &mut self,
         node: Node<'a>,
-        text: &mut Cow<'static, str>,
+        text: &mut Cow<'a, str>,
         sourcepos: &mut Sourcepos,
         spxv: SmallVec<[(Sourcepos, usize); 4]>,
         in_bracket_context: bool,
@@ -2876,7 +2876,7 @@ where
     fn process_tasklist(
         &mut self,
         node: Node<'a>,
-        text: &mut Cow<'static, str>,
+        text: &mut Cow<'a, str>,
         sourcepos: &mut Sourcepos,
         spx: &mut Spx,
     ) {

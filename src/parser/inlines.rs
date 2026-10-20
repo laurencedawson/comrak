@@ -182,7 +182,12 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     // Constructors //
     //////////////////
 
-    fn make_inline(&self, value: NodeValue, start_column: usize, end_column: usize) -> Node<'a> {
+    fn make_inline(
+        &self,
+        value: NodeValue<'a>,
+        start_column: usize,
+        end_column: usize,
+    ) -> Node<'a> {
         let start_column =
             start_column as isize + 1 + self.column_offset + self.line_offset as isize;
         let end_column = end_column as isize + 1 + self.column_offset + self.line_offset as isize;
@@ -215,8 +220,8 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     ) -> Node<'a> {
         let inl = self.make_inline(
             NodeValue::Link(Box::new(NodeLink {
-                url: strings::clean_autolink(url, kind).into(),
-                title: String::new(),
+                url: strings::clean_autolink(url, kind).into_owned().into(),
+                title: Cow::Borrowed(""),
             })),
             start_column,
             end_column,
@@ -515,7 +520,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
         let buf = strings::normalize_code(buf);
         let code = NodeCode {
             num_backticks: openticks,
-            literal: buf.into(),
+            literal: buf.into_owned().into(),
         };
         let node = self.make_inline(NodeValue::Code(code), startpos, endpos - 1);
         self.adjust_node_newlines(
@@ -850,7 +855,7 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     fn handle_delim(&mut self, b: u8) -> Node<'a> {
         let (numdelims, can_open, can_close) = self.scan_delims(b);
 
-        let contents: Cow<'static, str> = if b == b'\'' && self.options.parse.smart {
+        let contents: Cow<'a, str> = if b == b'\'' && self.options.parse.smart {
             "’".into()
         } else if b == b'"' && self.options.parse.smart {
             if can_close {
@@ -2084,7 +2089,10 @@ impl<'a, 'r, 'o, 'd, 'c, 'p> Subject<'a, 'r, 'o, 'd, 'c, 'p> {
     ) {
         let last = self.brackets.pop().unwrap();
 
-        let nl = NodeLink { url, title };
+        let nl = NodeLink {
+            url: url.into(),
+            title: title.into(),
+        };
         let inl = make_inline(
             self.arena,
             if is_image {
@@ -2680,7 +2688,7 @@ pub(crate) fn manual_scan_link_url_2(input: &str) -> Option<(&str, usize)> {
 
 pub(crate) fn make_inline<'a>(
     arena: &'a Arena<'a>,
-    value: NodeValue,
+    value: NodeValue<'a>,
     sourcepos: Sourcepos,
 ) -> Node<'a> {
     let ast = Ast {
