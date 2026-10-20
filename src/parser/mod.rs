@@ -2762,20 +2762,36 @@ where
             spxv.push((sourcepos, root.len()));
         }
 
-        while let Some(ns) = node.next_sibling() {
-            let mut ns_data = ns.data_mut();
-            let sp = ns_data.sourcepos;
-            let NodeValue::Text(ref mut adj) = ns_data.value else {
+        // Sized from the whole sibling run first: `to_mut` on a short borrowed root would allocate
+        // its current length, then grow again on the first push.
+        let mut total_len = root.len();
+        let mut walk = node.next_sibling();
+        while let Some(ns) = walk {
+            let NodeValue::Text(ref adj) = ns.data().value else {
                 break;
             };
-            let adj = mem::take(adj);
-            drop(ns_data);
-            root.to_mut().push_str(&adj);
-            if needs_spx {
-                spxv.push((sp, adj.len()));
+            total_len += adj.len();
+            walk = ns.next_sibling();
+        }
+        if total_len > root.len() {
+            let mut joined = String::with_capacity(total_len);
+            joined.push_str(root);
+            while let Some(ns) = node.next_sibling() {
+                let mut ns_data = ns.data_mut();
+                let sp = ns_data.sourcepos;
+                let NodeValue::Text(ref mut adj) = ns_data.value else {
+                    break;
+                };
+                let adj = mem::take(adj);
+                drop(ns_data);
+                joined.push_str(&adj);
+                if needs_spx {
+                    spxv.push((sp, adj.len()));
+                }
+                sourcepos.end.column = sp.end.column;
+                ns.detach();
             }
-            sourcepos.end.column = sp.end.column;
-            ns.detach();
+            *root = Cow::Owned(joined);
         }
 
         if needs_spx {
