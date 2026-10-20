@@ -311,6 +311,49 @@ mod format {
         assert!(span_count >= 2);
     }
 
+    /// Spans reach the sort after their node's children, which the insertion sort exploits.
+    /// Deep nesting is its worst case: each quote moves back past every deeper one, so the
+    /// move budget must hand over to the general sort, and the result must still be the
+    /// (start asc, end desc, type asc) order holding the same spans.
+    #[test]
+    #[ntest::timeout(4000)]
+    fn deep_nesting_spans_sorted() {
+        let key =
+            |s: &[i32]| ((s[0] as i64) << 32) | (((0xFF_FFFF - s[1]) as i64) << 8) | s[2] as i64;
+        for md in [
+            format!("{} **x** *y*", "> ".repeat(300)),
+            (0..100)
+                .map(|d| format!("{}- item {d}\n", "  ".repeat(d)))
+                .collect(),
+            "**a** *b* `c` ~~d~~ [e](https://example.com)\n\n".repeat(200),
+        ] {
+            let out = render_raw(&md);
+            let mut emitted: Vec<[i32; 4]> = out
+                .spans
+                .chunks_exact(4)
+                .map(|s| s.try_into().unwrap())
+                .collect();
+            let blob = out.into_blob();
+            let text_len = i32::from_le_bytes(blob[0..4].try_into().unwrap()) as usize;
+            let at = 8 + text_len + (4 - text_len % 4) % 4;
+            let mut sorted: Vec<[i32; 4]> = blob[at..at + blob_span_count(&blob) * 16]
+                .chunks_exact(16)
+                .map(|c| {
+                    std::array::from_fn(|i| {
+                        i32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap())
+                    })
+                })
+                .collect();
+            assert!(
+                sorted.windows(2).all(|w| key(&w[0]) <= key(&w[1])),
+                "spans out of order"
+            );
+            emitted.sort_unstable();
+            sorted.sort_unstable();
+            assert_eq!(emitted, sorted, "the sort lost or changed a span");
+        }
+    }
+
     /// Zero-length spans (start == end) are skipped at emission time.
     #[test]
     fn zero_length_spans_skipped() {

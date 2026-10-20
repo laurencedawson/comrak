@@ -382,12 +382,32 @@ impl BlobWriter {
         // (for descending order), bits 7..0 = span type. Safe because start/end
         // are non-negative text offsets (well under 2^24 for all realistic
         // documents) and span types fit in u8.
-        spans_view.sort_unstable_by_key(|s| {
+        let key = |s: &[i32; 4]| {
             let start = s[0] as u32 as u64;
             let end_inv = (0xFF_FFFF - (s[1] as u32 & 0xFF_FFFF)) as u64;
             let ty = (s[2] as u32 & 0xFF) as u64;
             (start << 32) | (end_inv << 8) | ty
-        });
+        };
+        // Spans arrive after their node's children, so each only has to move back past its own
+        // descendants: an insertion sort is linear plus those moves. Deep nesting could make the
+        // moves quadratic, so past a budget per span the rest goes to the general sort.
+        let mut budget = span_count * 8;
+        let mut i = 1;
+        while i < span_count && budget > 0 {
+            let cur = spans_view[i];
+            let k = key(&cur);
+            let mut j = i;
+            while j > 0 && key(&spans_view[j - 1]) > k {
+                spans_view[j] = spans_view[j - 1];
+                j -= 1;
+            }
+            budget = budget.saturating_sub(i - j);
+            spans_view[j] = cur;
+            i += 1;
+        }
+        if i < span_count {
+            spans_view.sort_unstable_by_key(key);
+        }
 
         // Header layout: text_len in bytes 0-3, span_count in bytes 4-6, flags
         // in byte 7. span_count is capped at 24 bits (16M); the high byte is
