@@ -28,7 +28,13 @@ pub fn collapse_whitespace(s: &str) -> Cow<'_, str> {
     let has_double = if bytes.len() < 64 {
         bytes.windows(2).any(|w| w[0] == b' ' && w[1] == b' ')
     } else {
-        memchr::memmem::find(bytes, b"  ").is_some()
+        // Built once: memmem::find would construct a searcher on every call
+        static DOUBLE_SPACE: std::sync::OnceLock<memchr::memmem::Finder<'static>> =
+            std::sync::OnceLock::new();
+        DOUBLE_SPACE
+            .get_or_init(|| memchr::memmem::Finder::new(b"  "))
+            .find(bytes)
+            .is_some()
     };
     if !has_double {
         return Cow::Borrowed(s);
