@@ -647,6 +647,47 @@ median of seven, microseconds:
 The blob work adds no allocations. syncdown's device suite passes on
 [443a6fd] (Pixel 9 Pro XL).
 
+### Parse squeeze (October 2026)
+
+A sampled profile of old fork against [443a6fd] on heavy-inline, diffed per
+inlined function, found two concentrated costs rather than a spread. Each
+figure is parse-only against the commit before it:
+
+| Commit | Change | Effect |
+|---|---|---|
+| [6ef2dfb] | Plain text nodes are built in the caller's frame | heavy-inline -6% |
+| [0bda756] | Text runs without an `@` skip the mention and email detectors | heavy-inline -5%, complex -2%, medium -2% |
+| [710d6a9] | `find_special_char` scans with `position` between candidates | prose -2% |
+
+`make_inline` had the same machine code and call count in both trees but took
+twice the time: its caller writes the node value with 8-byte stores and it
+copies it with 16-byte loads, which the store buffer cannot forward. Only the
+plain-text site takes the inlined copy, since inlining every caller cost
+complex and medium 1-2%. Upstream's `spx` gating (0c0b3c0, above) still built
+the sourcepos list for every text node when autolink or mentions were on, then
+moved it into detectors that return without an `@`; the sizing walk now checks
+for one first. `find_special_char` keeps upstream's context check, only the
+scan between candidates changed.
+
+Interleaved against [443a6fd], median of seven: parse heavy-inline -12%,
+prose -3%, complex, long-doc and medium -2%, spec and progit level. Render is
+untouched but reads +1-4% from code layout. Totals against the old fork:
+
+| Corpus | Old fork | Now |
+|---|---|---|
+| prose | 42.1 | 33.8 (-20%) |
+| long-doc | 99.9 | 99.7 (level) |
+| complex | 28.2 | 28.9 (+2%) |
+| heavy-inline | 23.4 | 23.1 (-1%) |
+| medium | 5.7 | 5.8 (+2%) |
+
+Blob output is byte-identical on the corpus and the nested corpus, allocations
+are unchanged, and syncdown's device suite passes on [710d6a9]. Measured and
+dropped: a larger node arena presize (heavy-inline +9%) and a thread-local pool
+reusing arena chunks across parses (±1-2%). What remains of the complex and
+long-doc parse gap is diffuse (`open_new_blocks`, `process_emphasis`,
+`merge_borrowed_text_runs`).
+
 ### Before the rebase
 
 The old fork's throughput and allocation work (tagged `pre-rebase-0.56`),
@@ -744,3 +785,6 @@ Pixel 9 Pro XL).
 [3ee03e2]: https://github.com/laurencedawson/comrak/commit/3ee03e2
 [718160c]: https://github.com/laurencedawson/comrak/commit/718160c
 [443a6fd]: https://github.com/laurencedawson/comrak/commit/443a6fd
+[6ef2dfb]: https://github.com/laurencedawson/comrak/commit/6ef2dfb
+[0bda756]: https://github.com/laurencedawson/comrak/commit/0bda756
+[710d6a9]: https://github.com/laurencedawson/comrak/commit/710d6a9
