@@ -23,6 +23,9 @@ use crate::text::{collapse_whitespace, prefer_ascii, typographic_symbols};
 #[allow(missing_docs)]
 mod span_types;
 
+/// A site's HTML into the blob, the walk over HTML beside the one over comrak's tree.
+mod html;
+
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
 // can reference span type ids without reaching into `span_types` directly.
 pub(crate) use span_types::*;
