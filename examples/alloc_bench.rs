@@ -192,4 +192,59 @@ fn main() {
             print_histogram();
         }
     }
+
+    // The same corpora as HTML, through the walk over HTML: one walk, so no parse and blob split
+    use comrak::benchmarks::html;
+    let html_inputs: Vec<(&str, String)> = vec![
+        ("html/plain", html::PLAIN.to_string()),
+        ("html/simple", html::SIMPLE.to_string()),
+        ("html/medium", html::MEDIUM.to_string()),
+        ("html/deep-nesting", html::deep_nesting()),
+        ("html/heavy-inline", html::heavy_inline()),
+        ("html/complex", html::complex()),
+        ("html/long-doc", html::long_doc()),
+        ("html/prose", html::prose_doc()),
+    ];
+    for (_, input) in &html_inputs {
+        let _ = blob::render_html_blob(input.trim());
+    }
+    println!();
+    for (name, input) in &html_inputs {
+        let trimmed = input.trim();
+        start_tracking();
+        let _ = blob::render_html_blob(trimmed);
+        let (count, bytes) = stop_tracking();
+        println!(
+            "{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input)",
+            name,
+            trimmed.len(),
+            count,
+            bytes / 1024,
+            bytes as f64 / trimmed.len() as f64
+        );
+    }
+
+    // Ten real Hacker News comments both ways, as the app reads them
+    let html_comments = html::hn_comments();
+    let md_comments = html::hn_comments_markdown();
+    start_tracking();
+    for c in &html_comments {
+        let _ = blob::render_html_blob(c);
+    }
+    let (html_count, html_bytes) = stop_tracking();
+    start_tracking();
+    for c in &md_comments {
+        parse_document_zerocopy(c, &opts, |root| {
+            let _ = blob::render_blob(root, c);
+        });
+    }
+    let (md_count, md_bytes) = stop_tracking();
+    println!(
+        "{:<20} html {:>5} allocs {:>6} KB | markdown {:>5} allocs {:>6} KB",
+        "hn-comments",
+        html_count,
+        html_bytes / 1024,
+        md_count,
+        md_bytes / 1024
+    );
 }
