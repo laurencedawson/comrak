@@ -16,6 +16,7 @@
 //! - `words`      : markdown's characters, tags no site rule reads, comments, typography
 //! - `tags`       : what a site's rules make a tag: a quoted line, a strike, a spoiler
 //! - `site links` : relative links resolved against the page, the app's own pages its links
+//! - `typed addresses` : addresses among the words linked, as comrak's autolink links them
 //! - `whole`      : a real comment
 //! - `parity`     : the same comments as markdown and as HTML, read the same
 
@@ -27,7 +28,7 @@ use crate::blob::{
 use crate::parse_document_zerocopy;
 
 /// Hacker News' rules: a paragraph opening on `>` is a quote.
-const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[], base: None, app_links: &[] };
+const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[], autolink: false, base: None, app_links: &[] };
 
 /// 4chan's tags: greentext a quoted line, a dead link struck through, a spoiler hidden. Its dead
 /// links open on `>>`, so a paragraph's marks are no quote.
@@ -38,6 +39,7 @@ const CHAN: HtmlRules<'static> = HtmlRules {
         TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
         TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
     ],
+    autolink: true,
     base: Some("https://boards.4chan.org/g/thread/100"),
     app_links: &["https://boards.4chan.org/*/thread/*"],
 };
@@ -770,6 +772,105 @@ fn site_link_relative_onto_an_app_page_is_the_apps() {
     assert_eq!(chan_link("<a href=\"201#p5\">x</a>").1, "app-link://g/thread/201#p5");
 }
 
+// ── typed addresses ──────────────────────────────────────────────────────
+
+/// Every link in a comment: its words and its address.
+fn chan_links(html: &str) -> Vec<(String, String)> {
+    let (text, spans) = chan(html);
+    spans
+        .into_iter()
+        .filter_map(|s| match s {
+            Span(start, end, t, Data::Url(url)) if t == LINK => {
+                let units: Vec<u16> = text.encode_utf16().collect();
+                Some((String::from_utf16(&units[start as usize..end as usize]).unwrap(), url))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A post's address typed among the words is the app's link to it, the address its words.
+#[test]
+fn typed_post_address_is_the_apps() {
+    assert_eq!(
+        chan_links("see https://boards.4chan.org/g/thread/123#p456 now"),
+        vec![(
+            "https://boards.4chan.org/g/thread/123#p456".to_string(),
+            "app-link://g/thread/123#p456".to_string()
+        )]
+    );
+    assert_eq!(chan("see https://boards.4chan.org/g/thread/123#p456 now").0, "see https://boards.4chan.org/g/thread/123#p456 now");
+}
+
+/// An address the site broke with a `<wbr>` is read whole.
+#[test]
+fn typed_address_broken_by_wbr_is_read_whole() {
+    assert_eq!(
+        chan_links("https://boards.4chan.org/g/thr<wbr>ead/123"),
+        vec![("https://boards.4chan.org/g/thread/123".to_string(), "app-link://g/thread/123".to_string())]
+    );
+}
+
+/// Several in a comment are each a link; one inside other markup is still one.
+#[test]
+fn typed_addresses_several_and_in_markup() {
+    assert_eq!(
+        chan_links("https://boards.4chan.org/g/thread/1 and <b>https://boards.4chan.org/v/thread/2</b>").len(),
+        2
+    );
+}
+
+/// An address that is already a link's words is that one link.
+#[test]
+fn typed_address_as_a_links_words_is_one_link() {
+    assert_eq!(
+        chan_links("<a href=\"https://example.com/a\">https://boards.4chan.org/g/thread/1</a>"),
+        vec![("https://boards.4chan.org/g/thread/1".to_string(), "https://example.com/a".to_string())]
+    );
+}
+
+/// Code is as written: an address in it is no link.
+#[test]
+fn typed_address_in_code_is_words() {
+    assert!(chan_links("<pre class=\"prettyprint\">https://example.com/a</pre>").is_empty());
+}
+
+/// Another page on the site, or another site, is a link as written, its punctuation outside it.
+#[test]
+fn typed_address_elsewhere_is_a_link() {
+    assert_eq!(
+        chan_links("(see https://example.com/a)."),
+        vec![("https://example.com/a".to_string(), "https://example.com/a".to_string())]
+    );
+    assert_eq!(
+        chan_links("https://boards.4chan.org/po/catalog"),
+        vec![("https://boards.4chan.org/po/catalog".to_string(), "https://boards.4chan.org/po/catalog".to_string())]
+    );
+}
+
+/// A `www.` address is a link over http, as comrak's autolink makes one.
+#[test]
+fn typed_www_address_is_a_link() {
+    assert_eq!(
+        chan_links("go to www.example.com today"),
+        vec![("www.example.com".to_string(), "http://www.example.com".to_string())]
+    );
+}
+
+/// A picture's address typed among the words is the picture.
+#[test]
+fn typed_picture_address_is_the_picture() {
+    let (text, spans) = chan("look https://i.imgur.com/abc.png here");
+    assert_eq!(text, "look \n\n\u{1}\n\n here");
+    assert_eq!(spans, vec![url(7, 8, IMAGE, "https://i.imgur.com/abc.png")]);
+}
+
+/// Without the rule, an address among the words is words: unchanged, so no blob at all.
+#[test]
+fn typed_address_without_the_rule_is_words() {
+    assert!(parse("see https://example.com/a now").is_none());
+}
+
 // ── whole ────────────────────────────────────────────────────────────────
 
 /// A real comment, as Algolia returns it: entities, a paragraph and a link whose words are its
@@ -898,6 +999,14 @@ fn parity_chan_tags_read_as_their_markdown() {
         ),
         ("a <s>b</s> c", "a \n\n::: spoiler Spoiler\nb\n:::\n\n c"),
         ("one<br>two<br><br>three", "one  \ntwo  \n  \nthree"),
+        ("see https://example.com/a now", "see https://example.com/a now"),
+        ("go to www.example.com today", "go to www.example.com today"),
+        ("(see https://example.com/a).", "(see https://example.com/a)."),
+        ("look https://i.imgur.com/abc.png here", "look https://i.imgur.com/abc.png here"),
+        (
+            "see https://boards.4chan.org/g/thread/123#p456 now",
+            "see [https://boards.4chan.org/g/thread/123#p456](app-link://g/thread/123#p456) now",
+        ),
     ];
     for (html, md) in pairs {
         assert_eq!(
