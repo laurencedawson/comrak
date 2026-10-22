@@ -39,6 +39,20 @@ pub(crate) fn is_own(site: u8, url: &str) -> bool {
     }
 }
 
+/// Whether `url`, already resolved, is on `site`'s own host, where the domain after a link's
+/// words tells its reader nothing; a relative address is. Lemmy, federated, has no host of its own.
+pub(crate) fn is_internal(site: u8, url: &str) -> bool {
+    let Some(url) = Url::parse(url) else {
+        return false;
+    };
+    url.on(match site {
+        sites::HACKER_NEWS => hacker_news::HOSTS,
+        sites::CHAN => chan::HOSTS,
+        sites::LOBSTERS => lobsters::HOSTS,
+        _ => &[],
+    })
+}
+
 /// An address as borrowed slices of itself: its host, its path without the leading slash, its
 /// query and its fragment, each empty where it has none. An `http` or `https` address has its
 /// host; a relative one, opening on `/`, is on the page it sits on, so has none. An address with

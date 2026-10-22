@@ -355,13 +355,13 @@ impl BlobWriter {
     }
 
     /// A link's spans over the words written since `start`: an `APP_LINK` where the url is one of
-    /// the site's own pages, which shows no domain after its words, a `LINK` with the domain where
-    /// the words lack it otherwise.
+    /// the site's own pages, a `LINK` otherwise, with the domain after the words where they lack
+    /// it, unless it is the site's own, which tells its reader nothing.
     fn link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
         let own = site::is_own(self.site, url);
         self.span_url(if own { APP_LINK } else { LINK }, start, url);
         self.span(LINK_SIZE, start);
-        if !own {
+        if !own && !site::is_internal(self.site, url) {
             self.append_domain_suffix(text_start, url);
         }
     }
