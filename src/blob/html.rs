@@ -490,8 +490,8 @@ impl<'a, 'o> Walk<'a, 'o> {
                 self.out.write_prose(&text[from..start]);
             }
             let words = &text[start..end];
-            let href = self.address(Cow::Owned(url.into_owned()));
-            let url = resolve_url(&href);
+            // Typed with its scheme, or `www.` given one, so never relative to the page
+            let url = resolve_url(&url);
             if (words.starts_with("http://") || words.starts_with("https://")) && is_image_url(&url) {
                 self.out.emit_image(&url);
             } else {
