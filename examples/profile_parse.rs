@@ -31,7 +31,7 @@ fn main() {
     let start = Instant::now();
     for _ in 0..iterations {
         parse_document_zerocopy(trimmed, &opts, |root| {
-            let _ = blob::render_blob(root, trimmed);
+            let _ = blob::render_blob(root, trimmed, comrak::blob::sites::PLAIN);
         });
     }
     let total_with_blob = start.elapsed() / iterations;
@@ -73,7 +73,7 @@ fn main() {
         let start = Instant::now();
         for _ in 0..iterations {
             parse_document_zerocopy(trimmed, &opts, |root| {
-                let _ = blob::render_blob(root, trimmed);
+                let _ = blob::render_blob(root, trimmed, comrak::blob::sites::PLAIN);
             });
         }
         let total = start.elapsed() / iterations;

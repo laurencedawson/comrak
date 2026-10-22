@@ -74,11 +74,13 @@ pub(crate) fn render_html_blob_with(
     } else {
         BlobWriter::new(input.len())
     };
-    visit(input, rules, site, base_url, &mut b);
+    b.site = site;
+    visit(input, rules, base_url, &mut b);
     b.append_footnotes();
     if b.fast_path_ascii && !b.text().is_ascii() {
         b = BlobWriter::new(input.len());
-        visit(input, rules, site, base_url, &mut b);
+        b.site = site;
+        visit(input, rules, base_url, &mut b);
         b.append_footnotes();
     }
     if b.spans.is_empty() && b.text() == input {
@@ -106,8 +108,6 @@ enum Open<'a> {
 struct Walk<'a, 'o> {
     html: &'a str,
     rules: &'o HtmlRules<'o>,
-    /// The site the HTML is from, which knows its own pages.
-    site: u8,
     /// The page the HTML sits on, which a relative link resolves against.
     base_url: Option<&'o str>,
     out: &'o mut BlobWriter,
@@ -130,11 +130,10 @@ struct Walk<'a, 'o> {
     line_quote: Option<usize>,
 }
 
-pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, site: u8, base_url: Option<&str>, out: &mut BlobWriter) {
+pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, base_url: Option<&str>, out: &mut BlobWriter) {
     let mut w = Walk {
         html,
         rules,
-        site,
         base_url,
         out,
         open: Vec::new(),
@@ -361,17 +360,6 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
     }
 
-    /// A link's spans over the words written since `start`: an `APP_LINK` where the url is one of
-    /// the site's own pages, which shows no domain after its words, a `LINK` with the domain where
-    /// the words lack it otherwise.
-    fn write_link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
-        let own = super::site::is_own(self.site, url);
-        self.out.span_url(if own { APP_LINK } else { LINK }, start, url);
-        self.out.span(LINK_SIZE, start);
-        if !own {
-            self.out.append_domain_suffix(text_start, url);
-        }
-    }
 
     /// A link whose only words are an address, to a picture, is the picture, as comrak's autolink
     /// is. Answers where the words after its `</a>` begin.
@@ -432,7 +420,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             }
             Open::Link(start, text_start, href) => {
                 let url = resolve_url(&href);
-                self.write_link(start, text_start, &url);
+                self.out.link(start, text_start, &url);
             }
         }
     }
@@ -509,7 +497,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             } else {
                 let (start, text_start) = (self.out.pos(), self.out.blob.len());
                 self.out.write_prose(words);
-                self.write_link(start, text_start, &url);
+                self.out.link(start, text_start, &url);
             }
             from = end;
         }

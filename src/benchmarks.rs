@@ -302,7 +302,7 @@ mod tests {
 
     fn parse_and_render(input: &str) -> Option<Vec<u8>> {
         parse_document_zerocopy(input, &default_opts(), |root| {
-            blob::render_blob(root, input)
+            blob::render_blob(root, input, crate::blob::sites::PLAIN)
         })
     }
 
@@ -373,7 +373,7 @@ mod tests {
             // Warmup
             for _ in 0..100 {
                 let _ = parse_document_zerocopy(trimmed, &opts, |root| {
-                    blob::render_blob(root, trimmed)
+                    blob::render_blob(root, trimmed, crate::blob::sites::PLAIN)
                 });
             }
 
@@ -381,7 +381,7 @@ mod tests {
             let start = std::time::Instant::now();
             for _ in 0..iterations {
                 let _ = parse_document_zerocopy(trimmed, &opts, |root| {
-                    blob::render_blob(root, trimmed)
+                    blob::render_blob(root, trimmed, crate::blob::sites::PLAIN)
                 });
             }
             let elapsed = start.elapsed() / iterations;

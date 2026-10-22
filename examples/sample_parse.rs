@@ -22,7 +22,7 @@ fn main() {
     let (mut n, mut bytes) = (0u64, 0usize);
     while start.elapsed() < Duration::from_secs(secs) {
         let b =
-            comrak::parse_document_zerocopy(md, &opts, |root| comrak::blob::render_blob(root, md));
+            comrak::parse_document_zerocopy(md, &opts, |root| comrak::blob::render_blob(root, md, comrak::blob::sites::PLAIN));
         bytes += b.map(|v| v.len()).unwrap_or(0);
         n += 1;
     }

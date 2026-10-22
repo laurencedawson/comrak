@@ -59,11 +59,12 @@ fn utf16_len(s: &str) -> usize {
     len
 }
 
-/// Render a comrak AST into a binary blob.
+/// Render a comrak AST into a binary blob, a link to one of `site`'s own pages written as an
+/// `APP_LINK` ([`sites::PLAIN`] owns none).
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
+pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, site: u8) -> Option<Vec<u8>> {
     // One upfront SIMD `is_ascii` on the input replaces ~thousands of small
     // per-Text-node scans inside `write_text`. ASCII input is only a hint:
     // the parser can emit non-ASCII output from ASCII input (smartypants
@@ -77,10 +78,12 @@ pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
     } else {
         BlobWriter::new(input.len())
     };
+    b.site = site;
     visit(root, &mut b);
     b.append_footnotes();
     if b.fast_path_ascii && !b.text().is_ascii() {
         b = BlobWriter::new(input.len());
+        b.site = site;
         visit(root, &mut b);
         b.append_footnotes();
     }
@@ -113,6 +116,8 @@ pub(crate) struct BlobWriter {
     /// How many lists and quotes the walk is inside.
     list_depth: usize,
     quote_depth: usize,
+    /// The site the input is from, which knows its own pages: a link to one is an `APP_LINK`.
+    site: u8,
 }
 
 impl BlobWriter {
@@ -156,6 +161,7 @@ impl BlobWriter {
             all_ascii: true,
             fast_path_ascii,
             has_spoiler_body: false,
+            site: sites::PLAIN,
             list_depth: 0,
             quote_depth: 0,
         }
@@ -346,6 +352,18 @@ impl BlobWriter {
         self.write_text("\u{0001}");
         self.span_url(IMAGE, start, url);
         self.nl(2);
+    }
+
+    /// A link's spans over the words written since `start`: an `APP_LINK` where the url is one of
+    /// the site's own pages, which shows no domain after its words, a `LINK` with the domain where
+    /// the words lack it otherwise.
+    fn link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
+        let own = site::is_own(self.site, url);
+        self.span_url(if own { APP_LINK } else { LINK }, start, url);
+        self.span(LINK_SIZE, start);
+        if !own {
+            self.append_domain_suffix(text_start, url);
+        }
     }
 
     fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
@@ -740,9 +758,7 @@ fn leave<'a>(node: &'a AstNode<'a>, o: Open, out: &mut BlobWriter) {
             if video && out.blob.len() == text_start {
                 out.write_text(&url);
             }
-            out.span_url(LINK, o.start, &url);
-            out.span(LINK_SIZE, o.start);
-            out.append_domain_suffix(text_start, &url);
+            out.link(o.start, text_start, &url);
         }
         Kind::Plain | Kind::Item(_) => {}
     }

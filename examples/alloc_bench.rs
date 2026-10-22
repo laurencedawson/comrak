@@ -138,7 +138,7 @@ fn main() {
     // Warmup
     for (_, input) in &inputs {
         parse_document_zerocopy(input.trim(), &opts, |root| {
-            let _ = blob::render_blob(root, input.trim());
+            let _ = blob::render_blob(root, input.trim(), comrak::blob::sites::PLAIN);
         });
     }
 
@@ -157,7 +157,7 @@ fn main() {
                 let pc = ALLOC_COUNT.load(Ordering::Relaxed);
                 let pb = ALLOC_BYTES.load(Ordering::Relaxed);
                 let nc = root.descendants().count();
-                let _ = blob::render_blob(root, trimmed);
+                let _ = blob::render_blob(root, trimmed, comrak::blob::sites::PLAIN);
                 (pc, pb, nc)
             });
         let (total_raw_count, total_raw_bytes) = stop_tracking();
@@ -235,7 +235,7 @@ fn main() {
     start_tracking();
     for c in &md_comments {
         parse_document_zerocopy(c, &opts, |root| {
-            let _ = blob::render_blob(root, c);
+            let _ = blob::render_blob(root, c, comrak::blob::sites::PLAIN);
         });
     }
     let (md_count, md_bytes) = stop_tracking();
