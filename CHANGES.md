@@ -14,7 +14,7 @@ history still resolve. Highlights:
 |---|---|
 | [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
 | [URL resolution](#url-resolution) | `resolve_url()`: proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint |
-| [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
+| [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
@@ -140,7 +140,7 @@ It does three things:
 
 > **Naming note.** The fork's resolver was renamed `clean_url` → `resolve_url` (and the old `NodeLink::cleaned_url()` accessor removed in favour of the `span_url` chokepoint) so it no longer collides with upstream's spec-unescaping `strings::clean_url` ([7c60125]).
 
-## Sites and app links ([df385a7], [3edc676], [5fc6ff3], [b381692], [736f5cd], [a721133], [89a23ad], [e277031], [94bb2f6])
+## Sites and app links ([df385a7], [3edc676], [5fc6ff3], [b381692], [736f5cd], [a721133], [89a23ad], [e277031], [94bb2f6], [d0c39d5])
 
 Both walks take the site they read for: a `u8` from `blob::sites` (`PLAIN`,
 `HACKER_NEWS`, `CHAN`, `LEMMY`, `LOBSTERS`), generated from syncdown's
@@ -152,8 +152,7 @@ matching on the id, every other site taking the default, and each site's code in
 | Question | Answers |
 |---|---|
 | `site::html(site)` | How its HTML reads: its [`HtmlRules`](#htmlrules-bca01f9-29b28a5-50226a9-2090141-10e87cf-5fc6ff3) |
-| `site::is_own(site, url)` | Whether a resolved address is one of its own pages, for the app to open itself |
-| `site::is_internal(site, url)` | Whether a resolved address is on its own host, where the domain after a link's words tells its reader nothing |
+| `site::page(site, url)` | What a resolved address is to it, read once: `Own`, one of its pages, for the app to open itself; `Internal`, on its own host, where the domain after a link's words tells its reader nothing; or `Elsewhere` |
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
 a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
@@ -185,6 +184,8 @@ Each site's own pages, from its own documentation:
   resolve it against. `//host` names another host, so is none
 - An address with a user, a port or a scheme other than `http` and `https` is
   no site's page. `PLAIN` owns none
+- A footnote's writer is the document's, site and all, so a link in a footnote
+  is marked as one in the body
 - Nothing is copied or allocated: `site::Url` reads an address as borrowed
   slices of itself, and compares bytes, so a host in another script is read
   whole. `alloc_bench`'s `site/is-own` line counts 0 allocations
@@ -193,7 +194,7 @@ Each site's own pages, from its own documentation:
   Lemmy and 362 Lobsters texts: 3,849 links, 3,370 of them own pages, none
   disagreeing, and no allocation reading all of them as each of the five sites.
   Every 4chan quotelink to a thread was an `APP_LINK`, and nothing else. Boards
-  and catalogs, the hosts list, relative addresses and `is_internal` came after
+  and catalogs, the hosts list, relative addresses and `Page::Internal` came after
   that run
 
 This replaces the `app-link://` scheme a host wrote into markdown for its own
@@ -264,7 +265,7 @@ offsets remain exact because everything before the substitution was ASCII.
 
 `comrak::blob::render_blob(root, input, site) -> Option<Vec<u8>>` renders the
 AST at `root` against the original source `input`, its links marked as
-[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6). Returns `None` when the
+[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5). Returns `None` when the
 document has no spans and the output text equals the input (the caller can
 then use the raw input string directly and skip allocating a blob).
 
@@ -306,7 +307,8 @@ an enhancement to the writer reaches both.
 #### `HtmlRules` ([bca01f9], [29b28a5], [50226a9], [2090141], [10e87cf], [5fc6ff3])
 
 How a site's HTML reads, compiled in with the site: each site's `HTML` in
-`src/blob/site/`, found by `site::html`, so the walk itself names no site.
+`src/blob/site/`, found by `site::html`, so the walk itself names no site and
+nothing outside the crate builds one.
 Whatever the site, `scheme://` and `www.` addresses
 among the words are links, as the autolink makes them in markdown: their
 bounds are read by `parser::autolink::url_in` and `www_in`, string-level forms
@@ -572,24 +574,22 @@ can be.
 ### `cargo run --release --example alloc_bench`
 
 Wraps the global allocator with counters, so every `alloc()` during a parse
-is recorded. Reports total count and bytes, parse vs blob split, a
-tiny/small/medium/large bucket summary, and a 16-bucket power-of-two
-histogram for the largest inputs. Confirms a change actually cut
-allocations without reaching for an external profiler.
+is recorded. Reports total count and bytes, parse vs blob split, and a
+16-bucket power-of-two histogram for the largest inputs. Confirms a change
+actually cut allocations without reaching for an external profiler.
 
 ```
 AstNode: 136 bytes, NodeValue: 40 bytes, Ast: 88 bytes
 complex    1586 chars |  91 allocs  104 KB (67.2x input) | parse  55 blob  36 |  298 nodes
 long-doc  13060 chars | 125 allocs  369 KB (29.0x input) | parse 118 blob   7 | 1058 nodes
 prose     12938 chars |  94 allocs  168 KB (13.4x input) | parse  88 blob   6 |  201 nodes
-  buckets: tiny(1-32)=10 small(33-128)=67 medium(129-1K)=35 large(1K+)=13
 ```
 
 The last line reads each site's own pages and their lookalikes through
-`site::is_own` and `site::is_internal`, which must allocate nothing:
+`site::page`, which must allocate nothing:
 
 ```
-site/is-own          15 links, 10 own, 11 on site |     0 allocs      0 bytes
+site/is-own          15 links, 10 own, 13 on site |     0 allocs      0 bytes
 ```
 
 These are a thread's second parse: the first also allocates the block contents
@@ -612,7 +612,7 @@ src/
 ├── blob.rs                    ← binary blob renderer: BlobWriter + visit + render_blob
 ├── blob/
 │   ├── html.rs                ← the walk over a site's HTML + render_html_blob
-│   ├── site.rs                ← what each site knows about itself: html, is_own, Url
+│   ├── site.rs                ← what each site knows about itself: html, page, Url
 │   ├── site/                  ← chan.rs, hacker_news.rs, lemmy.rs, lobsters.rs, from each site's docs
 │   ├── sites.rs, span_types.rs ← the site and span type ids, generated by syncdown
 │   └── html/
@@ -630,6 +630,7 @@ src/
     ├── blob.rs                ← blob renderer tests (format/inline/links/images/block/
     │                            footnotes/edge/production sub-modules)
     ├── blob_html.rs           ← the walk over HTML, and its parity with markdown
+    ├── blob_read.rs           ← a blob read back, the one reader every blob test asserts on
     ├── image_url.rs           ← is_image_url tests
     ├── lemmy.rs               ← lemmy_mention + lemmy_spoiler tests
     ├── site.rs                ← each site's own pages, and the markdown walk's links by site
@@ -641,7 +642,7 @@ src/
 
 examples/
 ├── profile_parse.rs           ← parse + blob timing
-├── alloc_bench.rs             ← alloc count / bytes / bucket histogram
+├── alloc_bench.rs             ← alloc count / bytes / size histogram
 └── sample_parse.rs            ← parse + blob loop for a sampling profiler
 ```
 
@@ -918,3 +919,4 @@ Pixel 9 Pro XL).
 [89a23ad]: https://github.com/laurencedawson/comrak/commit/89a23ad
 [e277031]: https://github.com/laurencedawson/comrak/commit/e277031
 [94bb2f6]: https://github.com/laurencedawson/comrak/commit/94bb2f6
+[d0c39d5]: https://github.com/laurencedawson/comrak/commit/d0c39d5
