@@ -595,6 +595,15 @@ fn tags_line_quotes_in_a_row_are_one_quote() {
     );
 }
 
+/// A blank line between quoted lines makes two quotes, as it does in markdown.
+#[test]
+fn tags_blank_line_splits_line_quotes() {
+    assert_eq!(
+        chan("<span class=\"quote\">&gt;a</span><br><br><span class=\"quote\">&gt;b</span>"),
+        (">a\n\n>b".to_string(), vec![quote(0, 2, 0), quote(4, 6, 0)])
+    );
+}
+
 /// The poster's own line after a quoted one is theirs, never the quote's: markdown's lazy
 /// continuation took it into the quote, which a site's HTML never says.
 #[test]
@@ -999,6 +1008,10 @@ fn parity_chan_tags_read_as_their_markdown() {
         ),
         ("a <s>b</s> c", "a \n\n::: spoiler Spoiler\nb\n:::\n\n c"),
         ("one<br>two<br><br>three", "one  \ntwo  \n  \nthree"),
+        (
+            "<span class=\"quote\">&gt;a</span><br><br><span class=\"quote\">&gt;b</span>",
+            ">\\>a\n\n>\\>b",
+        ),
         ("see https://example.com/a now", "see https://example.com/a now"),
         ("go to www.example.com today", "go to www.example.com today"),
         ("(see https://example.com/a).", "(see https://example.com/a)."),
