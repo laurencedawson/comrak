@@ -255,12 +255,17 @@ fn main() {
         .iter()
         .filter(|(site, url)| comrak::benchmarks::is_own(*site, url))
         .count();
+    let internal = links
+        .iter()
+        .filter(|(site, url)| comrak::benchmarks::is_internal(*site, url))
+        .count();
     let (count, bytes) = stop_tracking();
     println!(
-        "{:<20} {:>2} links, {:>2} own | {:>5} allocs {:>6} bytes",
+        "{:<20} {:>2} links, {:>2} own, {:>2} on site | {:>5} allocs {:>6} bytes",
         "site/is-own",
         links.len(),
         own,
+        internal,
         count,
         bytes
     );

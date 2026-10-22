@@ -141,7 +141,8 @@ pub fn prose_doc() -> String {
     s
 }
 
-/// Each site's own pages and their lookalikes, for `alloc_bench` to read through [`is_own`].
+/// Each site's own pages and their lookalikes, for `alloc_bench` to read through [`is_own`] and
+/// [`is_internal`].
 pub const SITE_LINKS: &[(u8, &str)] = {
     use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS};
     &[
@@ -151,9 +152,12 @@ pub const SITE_LINKS: &[(u8, &str)] = {
         (CHAN, "https://boards.4chan.org/g/thread/110063208/some-title#p110072890"),
         (CHAN, "https://boards.4channel.org/g/thread/110063208"),
         (CHAN, "https://boards.4chan.org/g/catalog#s=sqt"),
+        (CHAN, "https://boards.4chan.org/g/archive"),
         (LEMMY, "https://lemmy.ml/post/123/456"),
         (LEMMY, "https://lemmy.world/c/rust@programming.dev"),
+        (LEMMY, "/c/rust@lemmy.ml"),
         (LEMMY, "https://www.reddit.com/u/spez"),
+        (LEMMY, "https://www.youtube.com/c/veritasium"),
         (LOBSTERS, "https://lobste.rs/s/abc123/a_title/comments/def456"),
         (LOBSTERS, "https://lobste.rs/t/rust,go/page/2"),
         (LOBSTERS, "https://lobste.rs/about"),
@@ -163,6 +167,11 @@ pub const SITE_LINKS: &[(u8, &str)] = {
 /// Whether `url` is `site`'s own page, `blob::site::is_own` open to the benches.
 pub fn is_own(site: u8, url: &str) -> bool {
     crate::blob::site::is_own(site, url)
+}
+
+/// Whether `url` is on `site`'s own host, `blob::site::is_internal` open to the benches.
+pub fn is_internal(site: u8, url: &str) -> bool {
+    crate::blob::site::is_internal(site, url)
 }
 
 /// The same corpora written as the HTML a site would send for them, for the walk over HTML
