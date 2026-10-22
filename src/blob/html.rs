@@ -9,6 +9,7 @@ mod mdream;
 
 use super::*;
 use crate::image_url::is_image_url;
+use crate::parser::autolink::{url_in, www_in};
 use crate::parser::url::resolve_url;
 use mdream::entities::{decode_html_attribute_entities, decode_html_entities_into};
 use mdream::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
@@ -20,6 +21,9 @@ pub struct HtmlRules<'r> {
     pub quote_marks: bool,
     /// What a tag means, by its name and, where the rule names one, a class it has.
     pub tags: &'r [TagRule<'r>],
+    /// Addresses typed among the words are links, `scheme://` and `www.` ones as comrak's autolink
+    /// reads them, one broken by a `<wbr>` read whole.
+    pub autolink: bool,
     /// The page the HTML sits on, which a relative link resolves against, as a browser would.
     pub base: Option<&'r str>,
     /// The site's pages the app opens itself, as addresses whose `*` stands for one path segment:
@@ -132,6 +136,8 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, out: &mut BlobWriter) {
         line_quote: None,
     };
     let bytes = html.as_bytes();
+    // Words a `<wbr>` broke, read as the one run they are
+    let mut joined = String::new();
     let (mut i, mut from) = (0, 0);
     while let Some(at) = memchr::memchr(b'<', &bytes[from..]).map(|at| from + at) {
         let next = bytes.get(at + 1).copied().unwrap_or(0);
@@ -140,12 +146,46 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, out: &mut BlobWriter) {
             from = at + 1;
             continue;
         }
-        w.text(&html[i..at]);
+        if let Some(past) = wbr(bytes, at) {
+            joined.push_str(&html[i..at]);
+            (i, from) = (past, past);
+            continue;
+        }
+        w.run(&mut joined, &html[i..at]);
         i = w.tag(at);
         from = i;
     }
-    w.text(&html[i..]);
+    w.run(&mut joined, &html[i..]);
     w.end();
+}
+
+/// Where the words after a `<wbr>` at `at` begin, or none for any other tag.
+fn wbr(bytes: &[u8], at: usize) -> Option<usize> {
+    let name = bytes.get(at + 1..at + 4)?;
+    let after = *bytes.get(at + 4)?;
+    if !name.eq_ignore_ascii_case(b"wbr") || !(after == b'>' || after == b'/' || is_whitespace(after)) {
+        return None;
+    }
+    Some(at + 4 + memchr::memchr(b'>', &bytes[at + 4..])? + 1)
+}
+
+/// The next address typed in `text` from `from`: where it starts and ends, and its link.
+fn next_address(text: &str, from: usize) -> Option<(usize, usize, Cow<'_, str>)> {
+    let bytes = text.as_bytes();
+    let mut at = from;
+    while let Some(i) = memchr::memchr2(b':', b'w', &bytes[at..]).map(|i| at + i) {
+        if bytes[i] == b':' {
+            if let Some((start, end)) = url_in(text, i)
+                && start >= from
+            {
+                return Some((start, end, Cow::Borrowed(&text[start..end])));
+            }
+        } else if let Some(end) = www_in(text, i) {
+            return Some((i, end, Cow::Owned(format!("http://{}", &text[i..end]))));
+        }
+        at = i + 1;
+    }
+    None
 }
 
 /// HTML's whitespace: what a run of it between words collapses from.
@@ -176,6 +216,17 @@ fn collapse(s: &str) -> Cow<'_, str> {
 }
 
 impl<'a, 'o> Walk<'a, 'o> {
+    /// The words before a tag, with any a `<wbr>` broke off before them.
+    fn run(&mut self, joined: &mut String, raw: &str) {
+        if joined.is_empty() {
+            self.text(raw);
+        } else {
+            joined.push_str(raw);
+            self.text(joined);
+            joined.clear();
+        }
+    }
+
     /// Reads the tag opening at `at`, and answers where the words after it begin. A tag the input
     /// ends inside is no text, as HTML drops it.
     fn tag(&mut self, at: usize) -> usize {
@@ -403,8 +454,40 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
         if !words.is_empty() {
             self.begin();
-            self.out.write_prose(&collapse(words));
+            let words = collapse(words);
+            if self.rules.autolink && !self.open.iter().any(|o| matches!(o, Open::Link(..))) {
+                self.autolinked(&words);
+            } else {
+                self.out.write_prose(&words);
+            }
             self.space = run.ends_with(is_space);
+        }
+    }
+
+    /// Words with the addresses typed among them linked, each as comrak's autolink writes one: a
+    /// picture's address the picture, any other its words linked, the domain after them.
+    fn autolinked(&mut self, text: &str) {
+        let mut from = 0;
+        while let Some((start, end, url)) = next_address(text, from) {
+            if start > from {
+                self.out.write_prose(&text[from..start]);
+            }
+            let words = &text[start..end];
+            let href = self.address(Cow::Owned(url.into_owned()));
+            let url = resolve_url(&href);
+            if (words.starts_with("http://") || words.starts_with("https://")) && is_image_url(&url) {
+                self.out.emit_image(&url);
+            } else {
+                let (start, text_start) = (self.out.pos(), self.out.blob.len());
+                self.out.write_prose(words);
+                self.out.span_url(LINK, start, &url);
+                self.out.span(LINK_SIZE, start);
+                self.out.append_domain_suffix(text_start, &url);
+            }
+            from = end;
+        }
+        if from < text.len() {
+            self.out.write_prose(&text[from..]);
         }
     }
 

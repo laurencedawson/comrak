@@ -674,6 +674,52 @@ pub fn url_match<'a>(
     Some((inl, rewind, rewind + link_end))
 }
 
+/// A bare `scheme://` address around the `:` at `colon` in `text`, for a caller with no parser
+/// state, the walk over HTML: its start, the scheme rewound, and its end, as `url_match` reads one
+/// without relaxed autolinks.
+pub(crate) fn url_in(text: &str, colon: usize) -> Option<(usize, usize)> {
+    const SCHEMES: [&str; 3] = ["http", "https", "ftp"];
+    let bytes = text.as_bytes();
+    if text.len() - colon < 4 || bytes[colon + 1] != b'/' || bytes[colon + 2] != b'/' {
+        return None;
+    }
+    let mut rewind = 0;
+    while rewind < colon && isalpha(bytes[colon - rewind - 1]) {
+        rewind += 1;
+    }
+    let scheme = &text[colon - rewind..colon];
+    if !SCHEMES.iter().any(|s| scheme.eq_ignore_ascii_case(s)) {
+        return None;
+    }
+    if !text[colon + 3..].chars().next().is_some_and(is_valid_hostchar) {
+        return None;
+    }
+    let mut end = check_domain(&text[colon + 3..], true)? + 3;
+    while end < text.len() - colon && !isspace(bytes[colon + end]) {
+        end += 1;
+    }
+    let end = autolink_delim(&text[colon..], end, false);
+    Some((colon - rewind, colon + end))
+}
+
+/// A bare `www.` address at `at` in `text`, for a caller with no parser state: its end, as
+/// `www_match` reads one without relaxed autolinks. Its link is `http://` and its words.
+pub(crate) fn www_in(text: &str, at: usize) -> Option<usize> {
+    const WWW_DELIMS: [bool; 256] = character_set!(b"*_~([");
+    let bytes = text.as_bytes();
+    if at > 0 && !isspace(bytes[at - 1]) && !WWW_DELIMS[bytes[at - 1] as usize] {
+        return None;
+    }
+    if !text[at..].starts_with("www.") {
+        return None;
+    }
+    let mut end = check_domain(&text[at + 4..], false)? + 4;
+    while at + end < text.len() && !isspace(bytes[at + end]) {
+        end += 1;
+    }
+    Some(at + autolink_delim(&text[at..], end, false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::find_email_autolink;

@@ -1,6 +1,6 @@
 #[cfg(feature = "attributes")]
 mod attributes;
-mod autolink;
+pub(crate) mod autolink;
 mod inlines;
 pub mod options;
 #[cfg(feature = "phoenix_heex")]
