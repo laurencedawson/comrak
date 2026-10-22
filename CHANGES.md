@@ -456,7 +456,12 @@ bit:  31                                                            0
   only when more text follows. This avoids trailing whitespace at the end
   of the document and between sibling block elements.
 - Images are padded with one blank line on each side, counting any existing
-  trailing newlines so consecutive images don't stack padding.
+  trailing newlines past spaces, so consecutive images don't stack padding, even
+  a space apart. Pinned shape by shape, in both walks, by
+  `image_has_one_blank_line_before_it` and `a_to_a_picture_has_one_blank_line_before_it`.
+- An empty code block writes nothing and queues no gap, so a document never
+  opens on a blank line because of one, and the blocks around it stay one blank
+  line apart.
 - Zero-length spans (start ≥ end in UTF-16 units) are silently dropped at
   emission time — they carry no information.
 
