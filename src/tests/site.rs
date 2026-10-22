@@ -258,6 +258,19 @@ fn lemmy_not_on_hosts_sharing_its_shapes() {
     own(LEMMY, &["https://myyoutube.com/c/rust", "https://youtube.com.example/c/rust"]);
 }
 
+/// A relative address is on the site's own host, so the site's shapes are its own there too, as
+/// lemmy-ui writes a completed community or user; `//host` names another host, and a path without
+/// its slash is no address.
+#[test]
+fn relative_address_is_on_the_sites_own_host() {
+    own(LEMMY, &["/post/1", "/post/1/2", "/comment/3", "/c/rust@lemmy.ml", "/u/me@lemmy.ml", "/c/rust/"]);
+    own(HACKER_NEWS, &["/item?id=1", "/user?id=pg"]);
+    own(CHAN, &["/g/thread/100#p5"]);
+    own(LOBSTERS, &["/s/cdnepk", "/~pushcx"]);
+    not_own(LEMMY, &["/", "/search", "/communities", "//lemmy.world/post/1", "post/1"]);
+    not_own(PLAIN, &["/post/1"]);
+}
+
 // ── the markdown walk ────────────────────────────────────────────────────
 
 /// Every link in `md` read as `site`, its kind and address, and the text shown.
@@ -332,6 +345,26 @@ fn markdown_lobsters_links() {
     assert!(found.iter().all(|(t, _)| *t == APP_LINK), "{found:?}");
     let (_, found) = links(md, LEMMY);
     assert!(found.iter().all(|(t, _)| *t == LINK), "{found:?}");
+}
+
+/// lemmy-ui writes a community or user it completes as a link to its relative page: the app's,
+/// its address kept as written, and no domain after its words.
+#[test]
+fn markdown_lemmy_relative_links() {
+    let (text, found) = links(
+        "[!rust@lemmy.ml](/c/rust@lemmy.ml) [@me@lemmy.ml](/u/me@lemmy.ml) [p](/post/123) [s](/search)",
+        LEMMY,
+    );
+    assert_eq!(text, "!rust@lemmy.ml @me@lemmy.ml p s");
+    assert_eq!(
+        found,
+        vec![
+            (APP_LINK, "/c/rust@lemmy.ml".to_string()),
+            (APP_LINK, "/u/me@lemmy.ml".to_string()),
+            (APP_LINK, "/post/123".to_string()),
+            (LINK, "/search".to_string()),
+        ]
+    );
 }
 
 /// The plain site marks nothing.
