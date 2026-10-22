@@ -47,6 +47,7 @@ mod raw;
 mod regressions;
 mod rewriter;
 mod shortcodes;
+mod site;
 mod smart_parity;
 #[path = "tests/sourcepos.rs"]
 mod sourcepos_;
