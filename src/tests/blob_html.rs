@@ -683,7 +683,7 @@ fn site_link_own_pages_are_app_links() {
     assert!(own("<a href=\"#p123\" class=\"quotelink\">&gt;&gt;123</a>"));
     assert!(own("<a href=\"//boards.4channel.org/po/thread/570368#p570370\">x</a>"));
     assert!(own("see https://boards.4chan.org/g/thread/123#p456 now"));
-    assert!(!own("<a href=\"//boards.4chan.org/po/catalog#s=lft\">x</a>"));
+    assert!(!own("<a href=\"//boards.4chan.org/po/archive\">x</a>"));
     assert!(!own("<a href=\"https://example.com/g/thread/1\">x</a>"));
 }
 
@@ -731,17 +731,26 @@ fn site_link_in_full_is_the_apps() {
     );
 }
 
-/// A page no rule names, a board or a catalog search, stays an address on the site, with no domain
-/// after its words: the site's reader knows where they are.
+/// A board's index and its catalog, a search after `#`, are the app's, as a thread is: where a
+/// `>>>/po/` or `>>>/po/lft` quotelink goes.
 #[test]
-fn site_link_other_pages_stay_addresses() {
+fn site_link_boards_and_catalogs_are_the_apps() {
+    assert!(own("<a href=\"/wsr/\">board</a>"));
+    assert!(own("<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"));
     assert_eq!(
         chan_link("<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"),
         (">>>/po/lft".to_string(), "https://boards.4chan.org/po/catalog#s=lft".to_string())
     );
+}
+
+/// A page no rule names stays an address on the site, with no domain after its words: the site's
+/// reader knows where they are.
+#[test]
+fn site_link_other_pages_stay_addresses() {
+    assert!(!own("<a href=\"/g/archive\">archive</a>"));
     assert_eq!(
-        chan_link("<a href=\"/wsr/\">board</a>"),
-        ("board".to_string(), "https://boards.4chan.org/wsr/".to_string())
+        chan_link("<a href=\"/g/archive\">archive</a>"),
+        ("archive".to_string(), "https://boards.4chan.org/g/archive".to_string())
     );
 }
 
@@ -849,8 +858,8 @@ fn typed_address_elsewhere_is_a_link() {
         vec![("https://example.com/a".to_string(), "https://example.com/a".to_string())]
     );
     assert_eq!(
-        chan_links("https://boards.4chan.org/po/catalog"),
-        vec![("https://boards.4chan.org/po/catalog".to_string(), "https://boards.4chan.org/po/catalog".to_string())]
+        chan_links("https://boards.4chan.org/po/archive"),
+        vec![("https://boards.4chan.org/po/archive".to_string(), "https://boards.4chan.org/po/archive".to_string())]
     );
 }
 

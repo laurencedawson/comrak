@@ -95,14 +95,28 @@ fn chan_threads_and_posts() {
     ]);
 }
 
-/// A board, its catalog, an archive, a malformed thread or post, or another host is not its own.
+/// A board's index, with or without its slash, and its catalog, a search after `#`, on either host.
+#[test]
+fn chan_boards_and_catalogs() {
+    own(CHAN, &[
+        "https://boards.4chan.org/g/",
+        "https://boards.4chan.org/g",
+        "https://boards.4channel.org/po/",
+        "https://boards.4chan.org/g/catalog",
+        "https://boards.4chan.org/g/catalog/",
+        "https://boards.4chan.org/po/catalog#s=lft",
+    ]);
+}
+
+/// A board's archive or a page of its index, a malformed thread or post, the site with no board, or
+/// another host is not its own.
 #[test]
 fn chan_not_its_own() {
     not_own(CHAN, &[
-        "https://boards.4chan.org/g/",
-        "https://boards.4chan.org/g/catalog",
-        "https://boards.4chan.org/po/catalog#s=lft",
+        "https://boards.4chan.org/",
         "https://boards.4chan.org/g/archive",
+        "https://boards.4chan.org/g/2",
+        "https://boards.4chan.org/g/catalog/extra",
         "https://boards.4chan.org/g/thread/",
         "https://boards.4chan.org/g/thread/abc",
         "https://boards.4chan.org/g/thread/100#q123",
