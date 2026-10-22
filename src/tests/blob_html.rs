@@ -22,7 +22,8 @@
 
 use crate::benchmarks::production_options;
 use crate::blob::{
-    BOLD, CODE_BLOCK, HtmlRules, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE, LINK, LINK_SIZE,
+    BOLD, CODE_BLOCK, GREENTEXT, HtmlRules, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE, LINK,
+    LINK_SIZE,
     QUOTE, Reads, STRIKETHROUGH, TagRule, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
@@ -630,6 +631,53 @@ fn tags_class_among_others_matches() {
         chan("<span class=\"other quote\">&gt;a</span>"),
         (">a".to_string(), vec![quote(0, 2, 0)])
     );
+}
+
+/// 4chan's greentext as the site shows it, coloured, rather than a quote.
+fn greentext(html: &str) -> (String, Vec<Span>) {
+    let rules = HtmlRules {
+        tags: &[TagRule { tag: "span", class: Some("quote"), reads_as: Reads::Greentext }],
+        ..CHAN
+    };
+    let b = read(&render_html_blob(html, &rules).unwrap_or_else(|| panic!("no blob for {html:?}")));
+    (b.text, b.spans)
+}
+
+/// Greentext is its words, chevron and all, under one span.
+#[test]
+fn tags_greentext_covers_its_words() {
+    assert_eq!(
+        greentext("<span class=\"quote\">&gt;implying</span>"),
+        (">implying".to_string(), vec![span(0, 9, GREENTEXT)])
+    );
+}
+
+/// Each greentext line is its own span; the poster's own line after it is not green.
+#[test]
+fn tags_greentext_line_by_line() {
+    assert_eq!(
+        greentext("<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span><br>reply"),
+        (">a\n>b\nreply".to_string(), vec![span(0, 2, GREENTEXT), span(3, 5, GREENTEXT)])
+    );
+}
+
+/// Greentext after words on the same line opens its own line.
+#[test]
+fn tags_greentext_opens_its_own_line() {
+    assert_eq!(
+        greentext("x<span class=\"quote\">&gt;y</span>"),
+        ("x\n>y".to_string(), vec![span(2, 4, GREENTEXT)])
+    );
+}
+
+/// A quotelink inside greentext keeps its link: wider, the greentext sorts first and the link's
+/// colour is drawn over it.
+#[test]
+fn tags_greentext_holds_a_link() {
+    let (text, spans) = greentext("<span class=\"quote\">&gt;see <a href=\"#p5\">&gt;&gt;5</a></span>");
+    assert_eq!(text, ">see >>5");
+    assert_eq!(spans[0], span(0, 8, GREENTEXT));
+    assert!(spans.iter().any(|s| s.2 == LINK && s.0 == 5));
 }
 
 /// A dead link is struck through, its chevrons words.
