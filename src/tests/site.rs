@@ -176,6 +176,38 @@ fn lemmy_any_instance() {
     ]);
 }
 
+/// The same shapes on every instance: Lemmy is federated, so the host is never what makes a link
+/// its own.
+#[test]
+fn lemmy_on_every_instance() {
+    for host in [
+        "lemmy.ml",
+        "lemmy.world",
+        "sh.itjust.works",
+        "programming.dev",
+        "beehaw.org",
+        "feddit.org",
+        "lemm.ee",
+        "sopuli.xyz",
+        "lemmy.dbzer0.com",
+        "discuss.tchncs.de",
+        "infosec.pub",
+        "lemmy.blahaj.zone",
+    ] {
+        own(LEMMY, &[
+            &format!("https://{host}/post/1"),
+            &format!("https://{host}/post/1/2"),
+            &format!("https://{host}/comment/3"),
+            &format!("https://{host}/c/rust"),
+            &format!("https://{host}/c/rust@lemmy.ml"),
+            &format!("https://{host}/m/tech"),
+            &format!("https://{host}/u/someone"),
+            &format!("https://{host}/u/someone@lemmy.world"),
+        ]);
+        not_own(LEMMY, &[&format!("https://{host}/c/rust/settings"), &format!("https://{host}/post/x")]);
+    }
+}
+
 /// A page that is not content, a malformed id, another path, or reddit, whose users share the
 /// `/u/` shape, is not its own.
 #[test]
