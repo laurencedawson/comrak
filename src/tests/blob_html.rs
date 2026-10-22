@@ -14,21 +14,40 @@
 //! - `emphasis`   : italic and bold
 //! - `code`       : preformatted code kept as written
 //! - `words`      : markdown's characters, tags no site rule reads, comments, typography
+//! - `tags`       : what a site's rules make a tag: a quoted line, a strike, a spoiler
 //! - `whole`      : a real comment
 //! - `parity`     : the same comments as markdown and as HTML, read the same
 
 use crate::benchmarks::production_options;
 use crate::blob::{
-    BOLD, CODE_BLOCK, HtmlRules, IMAGE, ITALIC, LINK, LINK_SIZE, QUOTE, render_blob, render_html_blob,
+    BOLD, CODE_BLOCK, HtmlRules, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE, LINK, LINK_SIZE,
+    QUOTE, Reads, STRIKETHROUGH, TagRule, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
 
 /// Hacker News' rules: a paragraph opening on `>` is a quote.
-const HACKER_NEWS: HtmlRules = HtmlRules { quote_marks: true };
+const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[] };
+
+/// 4chan's tags: greentext a quoted line, a dead link struck through, a spoiler hidden. Its dead
+/// links open on `>>`, so a paragraph's marks are no quote.
+const CHAN: HtmlRules<'static> = HtmlRules {
+    quote_marks: false,
+    tags: &[
+        TagRule { tag: "span", class: Some("quote"), reads_as: Reads::LineQuote },
+        TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
+        TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
+    ],
+};
 
 /// The walk under test, by the name the tests were written against, read by Hacker News' rules.
 fn parse(html: &str) -> Option<Vec<u8>> {
     render_html_blob(html, &HACKER_NEWS)
+}
+
+/// The comment's text and spans, read by 4chan's rules.
+fn chan(html: &str) -> (String, Vec<Span>) {
+    let b = read(&render_html_blob(html, &CHAN).unwrap_or_else(|| panic!("no blob for {html:?}")));
+    (b.text, b.spans)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -551,6 +570,97 @@ fn words_prefer_ascii() {
     assert_eq!(plain("it&#x2019;s &#x201C;quoted&#x201D; &#x2014; dash&#x2026;"), "it's \"quoted\" - dash...");
 }
 
+// ── tags ─────────────────────────────────────────────────────────────────
+
+/// A quoted line keeps its chevron, as the site shows it, inside the quote.
+#[test]
+fn tags_line_quote_keeps_its_chevron() {
+    assert_eq!(
+        chan("<span class=\"quote\">&gt;implying</span>"),
+        (">implying".to_string(), vec![quote(0, 9, 0)])
+    );
+}
+
+/// Quoted lines straight after one another are one quote, as markdown's `>` lines are.
+#[test]
+fn tags_line_quotes_in_a_row_are_one_quote() {
+    assert_eq!(
+        chan("<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span>"),
+        (">a\n>b".to_string(), vec![quote(0, 5, 0)])
+    );
+}
+
+/// The poster's own line after a quoted one is theirs, never the quote's: markdown's lazy
+/// continuation took it into the quote, which a site's HTML never says.
+#[test]
+fn tags_line_quote_ends_at_the_next_line_of_words() {
+    assert_eq!(
+        chan("<span class=\"quote\">&gt;a</span><br>my reply"),
+        (">a\nmy reply".to_string(), vec![quote(0, 2, 0)])
+    );
+}
+
+/// A quoted line after words on the same line opens its own, one line down as the site shows it,
+/// not a paragraph down as markdown's block quote put it.
+#[test]
+fn tags_line_quote_after_words_opens_its_own_line() {
+    assert_eq!(
+        chan("x<span class=\"quote\">&gt;y</span>"),
+        ("x\n>y".to_string(), vec![quote(2, 4, 0)])
+    );
+}
+
+/// A tag with a class among others still matches.
+#[test]
+fn tags_class_among_others_matches() {
+    assert_eq!(
+        chan("<span class=\"other quote\">&gt;a</span>"),
+        (">a".to_string(), vec![quote(0, 2, 0)])
+    );
+}
+
+/// A dead link is struck through, its chevrons words.
+#[test]
+fn tags_strike() {
+    assert_eq!(
+        chan("<span class=\"deadlink\">&gt;&gt;123</span>"),
+        (">>123".to_string(), vec![span(0, 5, STRIKETHROUGH)])
+    );
+}
+
+/// Without the quote marks rule, a paragraph opening on `>` is words.
+#[test]
+fn tags_no_quote_marks_leaves_chevrons_as_words() {
+    assert_eq!(chan("&gt;&gt;123 agreed"), (">>123 agreed".to_string(), vec![]));
+}
+
+/// A spoiler is Lemmy's block: its title bold at a link's size, then its hidden words, each a
+/// paragraph of its own.
+#[test]
+fn tags_spoiler_is_a_spoiler_block() {
+    assert_eq!(
+        chan("a <s>b</s> c"),
+        (
+            "a\n\nSpoiler\n\nb\n\nc".to_string(),
+            vec![
+                span(3, 10, BOLD),
+                span(3, 10, LINK_SIZE),
+                span(3, 10, LEMMY_SPOILER_TITLE),
+                span(11, 13, LEMMY_SPOILER_CONTENT),
+            ]
+        )
+    );
+}
+
+/// A tag the rules name, of a class they do not, is words, and its end closes nothing else.
+#[test]
+fn tags_unmatched_class_closes_nothing_else() {
+    assert_eq!(
+        chan("<span class=\"deadlink\">a<span class=\"other\">b</span>c</span>"),
+        ("abc".to_string(), vec![span(0, 3, STRIKETHROUGH)])
+    );
+}
+
 // ── whole ────────────────────────────────────────────────────────────────
 
 /// A real comment, as Algolia returns it: entities, a paragraph and a link whose words are its
@@ -660,6 +770,29 @@ fn parity_html_reads_as_its_markdown() {
     for (html, md) in pairs {
         assert_eq!(
             shown(parse(html), html),
+            shown(markdown(md), md),
+            "{html:?} against {md:?}"
+        );
+    }
+}
+
+/// 4chan's tags where markdown can say what the site shows, as `ChanHtml` wrote them for
+/// comrak: a dead link, a lone quoted line, quoted lines in a row, a spoiler.
+#[test]
+fn parity_chan_tags_read_as_their_markdown() {
+    let pairs: &[(&str, &str)] = &[
+        ("<span class=\"deadlink\">&gt;&gt;123</span>", "~~\\>>123~~"),
+        ("<span class=\"quote\">&gt;implying</span>", ">\\>implying"),
+        (
+            "<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span>",
+            ">\\>a\n>\\>b",
+        ),
+        ("a <s>b</s> c", "a \n\n::: spoiler Spoiler\nb\n:::\n\n c"),
+        ("one<br>two<br><br>three", "one  \ntwo  \n  \nthree"),
+    ];
+    for (html, md) in pairs {
+        assert_eq!(
+            shown(render_html_blob(html, &CHAN), html),
             shown(markdown(md), md),
             "{html:?} against {md:?}"
         );
