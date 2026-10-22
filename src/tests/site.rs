@@ -233,6 +233,14 @@ fn lemmy_not_its_own() {
     ]);
 }
 
+/// A host typed in another script is read whole: its end, checked for reddit's, may fall inside
+/// a character, and Lemmy's shapes still hold on it.
+#[test]
+fn lemmy_non_ascii_host() {
+    own(LEMMY, &["https://ééééééé.com/c/rust", "https://ééééééé.reddit.com.example/c/rust"]);
+    not_own(LEMMY, &["https://éé.reddit.com/u/spez"]);
+}
+
 // ── the markdown walk ────────────────────────────────────────────────────
 
 /// Every link in `md` read as `site`, its kind and address, and the text shown.
