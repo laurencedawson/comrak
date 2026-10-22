@@ -305,6 +305,10 @@ impl<'a, 'o> Walk<'a, 'o> {
             if self.out.len > 0 {
                 self.out.nl((self.out.p + 1).min(2));
             }
+            // A blank line ends quoted lines, as it ends markdown's
+            if self.out.p == 2 {
+                self.end_line_quote();
+            }
             self.space = false;
             self.broken = true;
         } else if is("pre") {
@@ -491,17 +495,12 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
     }
 
-    /// A quoted line opens its own line, and the quote runs on from any quoted line just before it.
+    /// A quoted line opens its own line; its quote starts with its words, or runs on from the
+    /// quoted line just before it.
     fn start_line_quote(&mut self, name: &'a str) {
-        if self.line_quote.is_none() {
-            if self.out.len > 0 && self.out.p == 0 {
-                self.out.nl(1);
-            }
-            self.block_start = false;
+        if self.line_quote.is_none() && self.out.len > 0 && self.out.p == 0 {
+            self.out.nl(1);
             self.space = false;
-            self.broken = false;
-            self.out.quote_depth += 1;
-            self.line_quote = Some(self.out.pos());
         }
         self.open.push(Open::LineQuote(name));
     }
@@ -530,8 +529,16 @@ impl<'a, 'o> Walk<'a, 'o> {
 
     /// Before anything of a paragraph is written: opens its quote, or writes the space before it.
     fn begin(&mut self) {
-        if self.line_quote.is_some() && !self.open.iter().any(|o| matches!(o, Open::LineQuote(_))) {
+        let quoting = self.open.iter().any(|o| matches!(o, Open::LineQuote(_)));
+        if self.line_quote.is_some() && !quoting {
             self.end_line_quote();
+        }
+        if self.line_quote.is_none() && quoting {
+            self.block_start = false;
+            self.space = false;
+            self.broken = false;
+            self.out.quote_depth += 1;
+            self.line_quote = Some(self.out.pos());
         }
         if self.block_start {
             self.block_start = false;
