@@ -14,43 +14,31 @@
 //! - `emphasis`   : italic and bold
 //! - `code`       : preformatted code kept as written
 //! - `words`      : markdown's characters, tags no site rule reads, comments, typography
-//! - `tags`       : what a site's rules make a tag: a quoted line, a strike, a spoiler
+//! - `tags`       : what a site's rules make a tag: greentext, a strike, a spoiler
 //! - `site links` : relative links resolved against the page, the app's own pages its links
 //! - `typed addresses` : addresses among the words linked, as comrak's autolink links them
 //! - `whole`      : a real comment
 //! - `parity`     : the same comments as markdown and as HTML, read the same
 
 use crate::benchmarks::production_options;
-use crate::blob::html::render_html_blob_with;
 use crate::blob::sites;
 use crate::blob::{
-    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, HtmlRules, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE,
-    LINK, LINK_SIZE, QUOTE, Reads, STRIKETHROUGH, TagRule, render_blob, render_html_blob,
+    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE, LINK,
+    LINK_SIZE, QUOTE, STRIKETHROUGH, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
 
 /// The thread page 4chan's comments here sit on, which their relative links resolve against.
 const THREAD: &str = "https://boards.4chan.org/g/thread/100";
 
-/// 4chan's tags with greentext read as a quoted line, as markdown's `>` lines: the rule no site has
-/// now, kept for its own tests and its parity with markdown.
-const LINE_QUOTES: HtmlRules<'static> = HtmlRules {
-    quote_marks: false,
-    tags: &[
-        TagRule { tag: "span", class: Some("quote"), reads_as: Reads::LineQuote },
-        TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
-        TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
-    ],
-};
-
 /// The walk under test, by the name the tests were written against, read as Hacker News.
 fn parse(html: &str) -> Option<Vec<u8>> {
     render_html_blob(html, sites::HACKER_NEWS, None)
 }
 
-/// The comment's text and spans, read as 4chan on its thread, greentext a quoted line.
+/// The comment's text and spans, read as 4chan on its thread.
 fn chan(html: &str) -> (String, Vec<Span>) {
-    let blob = render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD));
+    let blob = render_html_blob(html, sites::CHAN, Some(THREAD));
     let b = read(&blob.unwrap_or_else(|| panic!("no blob for {html:?}")));
     (b.text, b.spans)
 }
@@ -577,73 +565,20 @@ fn words_prefer_ascii() {
 
 // ── tags ─────────────────────────────────────────────────────────────────
 
-/// A quoted line keeps its chevron, as the site shows it, inside the quote.
-#[test]
-fn tags_line_quote_keeps_its_chevron() {
-    assert_eq!(
-        chan("<span class=\"quote\">&gt;implying</span>"),
-        (">implying".to_string(), vec![quote(0, 9, 0)])
-    );
-}
-
-/// Quoted lines straight after one another are one quote, as markdown's `>` lines are.
-#[test]
-fn tags_line_quotes_in_a_row_are_one_quote() {
-    assert_eq!(
-        chan("<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span>"),
-        (">a\n>b".to_string(), vec![quote(0, 5, 0)])
-    );
-}
-
-/// A blank line between quoted lines makes two quotes, as it does in markdown.
-#[test]
-fn tags_blank_line_splits_line_quotes() {
-    assert_eq!(
-        chan("<span class=\"quote\">&gt;a</span><br><br><span class=\"quote\">&gt;b</span>"),
-        (">a\n\n>b".to_string(), vec![quote(0, 2, 0), quote(4, 6, 0)])
-    );
-}
-
-/// The poster's own line after a quoted one is theirs, never the quote's: markdown's lazy
-/// continuation took it into the quote, which a site's HTML never says.
-#[test]
-fn tags_line_quote_ends_at_the_next_line_of_words() {
-    assert_eq!(
-        chan("<span class=\"quote\">&gt;a</span><br>my reply"),
-        (">a\nmy reply".to_string(), vec![quote(0, 2, 0)])
-    );
-}
-
-/// A quoted line after words on the same line opens its own, one line down as the site shows it,
-/// not a paragraph down as markdown's block quote put it.
-#[test]
-fn tags_line_quote_after_words_opens_its_own_line() {
-    assert_eq!(
-        chan("x<span class=\"quote\">&gt;y</span>"),
-        ("x\n>y".to_string(), vec![quote(2, 4, 0)])
-    );
-}
-
 /// A tag with a class among others still matches.
 #[test]
 fn tags_class_among_others_matches() {
     assert_eq!(
         chan("<span class=\"other quote\">&gt;a</span>"),
-        (">a".to_string(), vec![quote(0, 2, 0)])
+        (">a".to_string(), vec![span(0, 2, GREENTEXT)])
     );
-}
-
-/// 4chan's greentext as the site shows it, coloured, rather than a quote.
-fn greentext(html: &str) -> (String, Vec<Span>) {
-    let b = read(&render_html_blob(html, sites::CHAN, Some(THREAD)).unwrap_or_else(|| panic!("no blob for {html:?}")));
-    (b.text, b.spans)
 }
 
 /// Greentext is its words, chevron and all, under one span.
 #[test]
 fn tags_greentext_covers_its_words() {
     assert_eq!(
-        greentext("<span class=\"quote\">&gt;implying</span>"),
+        chan("<span class=\"quote\">&gt;implying</span>"),
         (">implying".to_string(), vec![span(0, 9, GREENTEXT)])
     );
 }
@@ -652,7 +587,7 @@ fn tags_greentext_covers_its_words() {
 #[test]
 fn tags_greentext_line_by_line() {
     assert_eq!(
-        greentext("<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span><br>reply"),
+        chan("<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span><br>reply"),
         (">a\n>b\nreply".to_string(), vec![span(0, 2, GREENTEXT), span(3, 5, GREENTEXT)])
     );
 }
@@ -661,7 +596,7 @@ fn tags_greentext_line_by_line() {
 #[test]
 fn tags_greentext_opens_its_own_line() {
     assert_eq!(
-        greentext("x<span class=\"quote\">&gt;y</span>"),
+        chan("x<span class=\"quote\">&gt;y</span>"),
         ("x\n>y".to_string(), vec![span(2, 4, GREENTEXT)])
     );
 }
@@ -670,7 +605,7 @@ fn tags_greentext_opens_its_own_line() {
 /// colour is drawn over it.
 #[test]
 fn tags_greentext_holds_a_link() {
-    let (text, spans) = greentext("<span class=\"quote\">&gt;see <a href=\"#p5\">&gt;&gt;5</a></span>");
+    let (text, spans) = chan("<span class=\"quote\">&gt;see <a href=\"#p5\">&gt;&gt;5</a></span>");
     assert_eq!(text, ">see >>5");
     assert_eq!(spans[0], span(0, 8, GREENTEXT));
     assert!(spans.iter().any(|s| s.2 == APP_LINK && s.0 == 5));
@@ -1056,22 +991,13 @@ fn parity_html_reads_as_its_markdown() {
 }
 
 /// 4chan's tags where markdown can say what the site shows, as `ChanHtml` wrote them for
-/// comrak: a dead link, a lone quoted line, quoted lines in a row, a spoiler.
+/// comrak: a dead link, a spoiler, breaks and typed addresses. Greentext has no markdown.
 #[test]
 fn parity_chan_tags_read_as_their_markdown() {
     let pairs: &[(&str, &str)] = &[
         ("<span class=\"deadlink\">&gt;&gt;123</span>", "~~\\>>123~~"),
-        ("<span class=\"quote\">&gt;implying</span>", ">\\>implying"),
-        (
-            "<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span>",
-            ">\\>a\n>\\>b",
-        ),
         ("a <s>b</s> c", "a \n\n::: spoiler Spoiler\nb\n:::\n\n c"),
         ("one<br>two<br><br>three", "one  \ntwo  \n  \nthree"),
-        (
-            "<span class=\"quote\">&gt;a</span><br><br><span class=\"quote\">&gt;b</span>",
-            ">\\>a\n\n>\\>b",
-        ),
         ("see https://example.com/a now", "see https://example.com/a now"),
         ("go to www.example.com today", "go to www.example.com today"),
         ("(see https://example.com/a).", "(see https://example.com/a)."),
@@ -1079,7 +1005,7 @@ fn parity_chan_tags_read_as_their_markdown() {
     ];
     for (html, md) in pairs {
         assert_eq!(
-            shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
+            shown(render_html_blob(html, sites::CHAN, Some(THREAD)), html),
             shown(markdown_as(md, sites::CHAN), md),
             "{html:?} against {md:?}"
         );
@@ -1090,12 +1016,12 @@ fn parity_chan_tags_read_as_their_markdown() {
         "see https://boards.4chan.org/g/thread/123#p456 now",
     );
     assert_eq!(
-        shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
+        shown(render_html_blob(html, sites::CHAN, Some(THREAD)), html),
         shown(markdown_as(md, sites::CHAN), md)
     );
     for (html, md) in pairs {
         assert_eq!(
-            shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
+            shown(render_html_blob(html, sites::CHAN, Some(THREAD)), html),
             shown(markdown(md), md),
             "{html:?} against {md:?}"
         );
