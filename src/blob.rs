@@ -305,9 +305,16 @@ impl BlobWriter {
     }
 
     fn emit_image(&mut self, url: &ResolvedUrl) {
-        // A blank line before it, unless it opens the document
         if self.len != 0 {
-            self.nl(2);
+            // Separate the image from prior content by at least two newlines;
+            // existing trailing `\n` (past any trailing spaces/tabs) count.
+            let existing = self.blob[HEADER_SIZE..]
+                .iter()
+                .rev()
+                .skip_while(|&&b| matches!(b, b' ' | b'\t'))
+                .take_while(|&&b| b == b'\n')
+                .count();
+            self.nl(2_usize.saturating_sub(existing));
         }
         let start = self.pos();
         self.write_text("\u{0001}");
@@ -591,9 +598,13 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
         }
 
         CodeBlock(c) => {
-            out.write_text(c.literal.trim_end());
-            out.span(CODE_BLOCK, start);
-            out.nl(2);
+            // An empty block is nothing, with no gap of its own
+            let code = c.literal.trim_end();
+            if !code.is_empty() {
+                out.write_text(code);
+                out.span(CODE_BLOCK, start);
+                out.nl(2);
+            }
         }
 
         Table(_) => {
