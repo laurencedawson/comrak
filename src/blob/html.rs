@@ -54,26 +54,7 @@ pub enum Reads<'r> {
 /// (caller should use the raw input string directly).
 pub fn render_html_blob(input: &str, site: u8, base_url: Option<&str>) -> Option<Vec<u8>> {
     let rules = super::site::html(site);
-    // ASCII input is only a hint, as in render_blob: a decoded entity or a typographic symbol can
-    // write non-ASCII, so one scan of the output catches that and the rare violating document is
-    // re-rendered with the scanning writer, every span offset redone.
-    let mut b = if input.is_ascii() {
-        BlobWriter::new_ascii(input.len())
-    } else {
-        BlobWriter::new(input.len())
-    };
-    b.site = site;
-    visit(input, rules, base_url, &mut b);
-    if b.fast_path_ascii && !b.text().is_ascii() {
-        b = BlobWriter::new(input.len());
-        b.site = site;
-        visit(input, rules, base_url, &mut b);
-    }
-    if b.spans.is_empty() && b.text() == input {
-        None
-    } else {
-        Some(b.into_blob())
-    }
+    render(input, site, |b| visit(input, rules, base_url, b))
 }
 
 /// A tag open around words still to come.

@@ -9,6 +9,7 @@
 //! - `footnotes` — footnote refs and definitions
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
+use crate::blob::sites::PLAIN;
 use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, TABLE, visit};
 use crate::{Arena, Options, parse_document, parse_document_zerocopy};
 
@@ -39,7 +40,7 @@ fn test_opts() -> Options<'static> {
 fn render_raw(markdown: &str) -> BlobWriter {
     let opts = test_opts();
     parse_document_zerocopy(markdown.trim(), &opts, |root| {
-        let mut out = BlobWriter::new(256);
+        let mut out = BlobWriter::new(256, false, PLAIN);
         visit(root, &mut out);
         out
     })
@@ -61,7 +62,7 @@ fn render_test_full_parse(markdown: &str) -> BlobWriter {
     let opts = test_opts();
     let arena = Arena::new();
     let root = parse_document(&arena, markdown.trim(), &opts);
-    let mut out = BlobWriter::new(256);
+    let mut out = BlobWriter::new(256, false, PLAIN);
     visit(root, &mut out);
     out.append_footnotes();
     out.clear_pending();
@@ -171,7 +172,7 @@ mod format {
     /// Empty writer produces a valid 8-byte header-only blob.
     #[test]
     fn empty_writer_produces_valid_blob() {
-        let out = BlobWriter::new(0);
+        let out = BlobWriter::new(0, false, PLAIN);
         let blob = out.into_blob();
         assert_eq!(blob.len(), 8);
         assert_eq!(blob_text(&blob), "");
@@ -229,7 +230,7 @@ mod format {
     /// `clear_pending()` drops unflushed queued newlines.
     #[test]
     fn pending_newlines_dont_materialize_without_text() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         out.write_text("hello");
         out.nl(2);
         out.clear_pending();
@@ -239,7 +240,7 @@ mod format {
     /// `nl(n)` keeps only the maximum pending count across successive calls.
     #[test]
     fn queue_newlines_takes_max() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         out.write_text("a");
         out.nl(1);
         out.nl(3);
@@ -385,7 +386,7 @@ mod format {
     /// Zero-length spans (start == end) are skipped at emission time.
     #[test]
     fn zero_length_spans_skipped() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         let pos = out.pos();
         out.span(BOLD, pos);
         assert_eq!(out.span_iter().count(), 0);
@@ -395,7 +396,7 @@ mod format {
     /// but stores no URL bytes.
     #[test]
     fn span_url_empty_url() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         out.write_text("text");
         out.span_url(LINK, 0, &crate::resolve_url(""));
         let span = out.span_iter().find(|s| s.typ == LINK).unwrap();
@@ -405,7 +406,7 @@ mod format {
     /// `span_data()` skips zero-length spans (same check as `span()`).
     #[test]
     fn span_data_start_ge_end_skipped() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         let pos = out.pos();
         out.span_data(LIST_ITEM, pos, 42);
         assert_eq!(out.span_iter().count(), 0);
@@ -414,7 +415,7 @@ mod format {
     /// Multiple URLs pack sequentially in url_data with correct offsets.
     #[test]
     fn multiple_urls_correct_offsets() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         out.write_text("aaa");
         out.span_url(LINK, 0, &crate::resolve_url("https://first.com"));
         out.write_text("bbb");
@@ -426,7 +427,7 @@ mod format {
     /// Zero-length spans are excluded from the serialized blob too.
     #[test]
     fn blob_spans_exclude_zero_length() {
-        let mut out = BlobWriter::new(64);
+        let mut out = BlobWriter::new(64, false, PLAIN);
         out.write_text("hello");
         out.span(BOLD, 0);
         let pos = out.pos();
@@ -496,7 +497,7 @@ mod format {
     /// Empty writer: is_ascii vacuously true, no spoiler body.
     #[test]
     fn flags_empty_blob() {
-        let blob = BlobWriter::new(0).into_blob();
+        let blob = BlobWriter::new(0, false, PLAIN).into_blob();
         let flags = blob_flags(&blob);
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
         assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
@@ -590,7 +591,7 @@ mod format {
     }
 
     /// Render through `render_blob` proper so the ASCII-input writer
-    /// selection (`new_ascii` fast path) is exercised, unlike `render_raw`
+    /// selection (the ASCII fast path) is exercised, unlike `render_raw`
     /// which always constructs the scanning writer.
     fn render_blob_full(markdown: &str) -> Vec<u8> {
         let opts = test_opts();
@@ -1691,7 +1692,7 @@ mod production {
     fn render_prod(markdown: &str) -> BlobWriter {
         let opts = production_opts();
         parse_document_zerocopy(markdown.trim(), &opts, |root| {
-            let mut out = BlobWriter::new(256);
+            let mut out = BlobWriter::new(256, false, PLAIN);
             visit(root, &mut out);
             out.append_footnotes();
             out.clear_pending();
