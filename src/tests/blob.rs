@@ -961,28 +961,44 @@ mod images {
         }
     }
 
-    /// Consecutive inline images on one line → at most one blank line between them.
+    /// An image stands on a line of its own with one blank line before it, wherever it comes:
+    /// after words, a hard break, a paragraph, a heading, a quote, an item, a code block, a mention
+    /// or an email, a link, another image, or with words after it. Spaces alone between two images
+    /// earn no second blank line, and an empty code block no gap, so a document never opens on one.
     #[test]
-    fn consecutive_images_single_blank_line() {
-        let result = render_test("![](https://example.com/a.png) ![](https://example.com/b.png)");
-        assert!(!result.text().contains("\n\n\n"));
-    }
-
-    /// Images separated by a blank line → still no triple newline.
-    #[test]
-    fn consecutive_images_separate_paragraphs() {
-        let result =
-            render_test("![](https://example.com/a.png)\n\n![](https://example.com/b.png)");
-        assert!(!result.text().contains("\n\n\n"));
-    }
-
-    /// Image after text has a blank line before it, not three.
-    #[test]
-    fn image_after_text() {
-        let result = render_test("hello ![](https://example.com/a.png)");
-        let text = result.text();
-        assert!(text.contains("\n\n"));
-        assert!(!text.contains("\n\n\n"));
+    fn image_has_one_blank_line_before_it() {
+        for (md, text) in [
+            ("hello ![](https://example.com/a.png)", "hello \n\n\u{1}"),
+            ("text https://i.imgur.com/abc.png", "text \n\n\u{1}"),
+            ("**bold** https://i.imgur.com/abc.png", "bold \n\n\u{1}"),
+            ("https://e.com https://i.imgur.com/abc.png", "https://e.com \n\n\u{1}"),
+            ("para\n\n[x](https://e.com) https://i.imgur.com/abc.png", "para\n\nx (e.com) \n\n\u{1}"),
+            ("para  \nhttps://i.imgur.com/abc.png", "para\n\n\u{1}"),
+            ("para  \n![](https://i.imgur.com/abc.png)", "para\n\n\u{1}"),
+            ("para\n\nhttps://i.imgur.com/abc.png", "para\n\n\u{1}"),
+            ("para\n\n<https://i.imgur.com/abc.png>", "para\n\n\u{1}"),
+            ("para\n\nhttps://i.imgur.com/abc.png more", "para\n\n\u{1}\n\n more"),
+            ("para\n\n[![alt](https://i.imgur.com/abc.png)](https://e.com)", "para\n\n\u{1}"),
+            ("para\n\n<!-- c -->\n\nhttps://i.imgur.com/abc.png", "para\n\n<!-- c -->\n\n\u{1}"),
+            ("# Title\n\nhttps://i.imgur.com/abc.png", "Title\n\n\u{1}"),
+            ("> quote\n\nhttps://i.imgur.com/abc.png", "quote\n\n\u{1}"),
+            ("> quote\n>\n> https://i.imgur.com/abc.png", "quote\n\n\u{1}"),
+            ("- item\n\n  https://i.imgur.com/abc.png", "item\n\n\u{1}"),
+            ("- item\n- ![](https://i.imgur.com/abc.png)", "item\n\n\u{1}"),
+            ("```\ncode\n```\n\nhttps://i.imgur.com/abc.png", "code\n\n\u{1}"),
+            ("@user@lemmy.ml https://i.imgur.com/abc.png", "@user@lemmy.ml \n\n\u{1}"),
+            ("a@b.com https://i.imgur.com/abc.png", "a@b.com \n\n\u{1}"),
+            ("para\n\na@b.com\n\n![](https://i.imgur.com/abc.png)", "para\n\na@b.com\n\n\u{1}"),
+            ("![](https://example.com/a.png)\n\n![](https://example.com/b.png)", "\u{1}\n\n\u{1}"),
+            ("![](https://i.imgur.com/a.png)\nhttps://i.imgur.com/b.png", "\u{1}\n\n\u{1}"),
+            ("![](https://example.com/a.png) ![](https://example.com/b.png)", "\u{1}\n\n \u{1}"),
+            ("https://i.imgur.com/a.png https://i.imgur.com/b.png", "\u{1}\n\n \u{1}"),
+            ("```\n```\n\nhttps://i.imgur.com/abc.png", "\u{1}"),
+            ("a\n\n```\n```\n\nb", "a\n\nb"),
+            ("```\n```\n\n```\n```\n\nb", "b"),
+        ] {
+            assert_eq!(render_test(md).text(), text, "{md:?}");
+        }
     }
 }
 

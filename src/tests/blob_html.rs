@@ -376,6 +376,27 @@ fn a_without_an_address_is_words() {
     assert_eq!(plain("<a name=\"top\">x</a> y"), "x y");
 }
 
+/// A picture stands on a line of its own with one blank line before it: after words, a paragraph,
+/// a break or two, a quote, a code block, and whether typed, linked or beside another. Spaces alone
+/// between two pictures earn no second blank line, and an empty code block no gap.
+#[test]
+fn a_to_a_picture_has_one_blank_line_before_it() {
+    for (html, text) in [
+        ("<p>para</p><p>https://i.imgur.com/abc.png</p>", "para\n\n\u{1}"),
+        ("para<br>https://i.imgur.com/abc.png", "para\n\n\u{1}"),
+        ("para<br><br>https://i.imgur.com/abc.png", "para\n\n\u{1}"),
+        ("<i>x</i> https://i.imgur.com/abc.png", "x \n\n\u{1}"),
+        ("<p>&gt; q</p><p>https://i.imgur.com/abc.png</p>", "q\n\n\u{1}"),
+        ("<pre>code</pre><p>https://i.imgur.com/abc.png</p>", "code\n\n\u{1}"),
+        ("<pre></pre><p>https://i.imgur.com/abc.png</p>", "\u{1}"),
+        ("<p>para</p><p><a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a></p>", "para\n\n\u{1}"),
+        ("https://i.imgur.com/a.png<br>https://i.imgur.com/b.png", "\u{1}\n\n\u{1}"),
+        ("https://i.imgur.com/a.png https://i.imgur.com/b.png", "\u{1}\n\n \u{1}"),
+    ] {
+        assert_eq!(blob(html).text, text, "{html:?}");
+    }
+}
+
 /// A link whose words are its own address, to a picture, is the picture, as comrak's autolink.
 #[test]
 fn a_to_a_picture_named_by_its_address_is_the_picture() {
