@@ -28,6 +28,9 @@ mod span_types;
 #[allow(missing_docs, dead_code)]
 pub mod sites;
 
+/// What each site knows about itself: which of its links are its own pages.
+pub(crate) mod site;
+
 /// A site's HTML into the blob, the walk over HTML beside the one over comrak's tree.
 mod html;
 pub use html::{HtmlRules, Reads, TagRule, render_html_blob};
