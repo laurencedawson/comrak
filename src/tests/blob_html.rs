@@ -28,7 +28,7 @@ use crate::blob::{
 use crate::parse_document_zerocopy;
 
 /// Hacker News' rules: a paragraph opening on `>` is a quote.
-const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[], autolink: false, base: None, app_links: &[] };
+const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[], base: None, app_links: &[] };
 
 /// 4chan's tags: greentext a quoted line, a dead link struck through, a spoiler hidden. Its dead
 /// links open on `>>`, so a paragraph's marks are no quote.
@@ -39,7 +39,6 @@ const CHAN: HtmlRules<'static> = HtmlRules {
         TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
         TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
     ],
-    autolink: true,
     base: Some("https://boards.4chan.org/g/thread/100"),
     app_links: &["https://boards.4chan.org/*/thread/*"],
 };
@@ -872,12 +871,6 @@ fn typed_picture_address_is_the_picture() {
     let (text, spans) = chan("look https://i.imgur.com/abc.png here");
     assert_eq!(text, "look \n\n\u{1}\n\n here");
     assert_eq!(spans, vec![url(7, 8, IMAGE, "https://i.imgur.com/abc.png")]);
-}
-
-/// Without the rule, an address among the words is words: unchanged, so no blob at all.
-#[test]
-fn typed_address_without_the_rule_is_words() {
-    assert!(parse("see https://example.com/a now").is_none());
 }
 
 // ── whole ────────────────────────────────────────────────────────────────
