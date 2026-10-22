@@ -15,6 +15,7 @@
 //! - `code`       : preformatted code kept as written
 //! - `words`      : markdown's characters, tags no site rule reads, comments, typography
 //! - `tags`       : what a site's rules make a tag: a quoted line, a strike, a spoiler
+//! - `site links` : relative links resolved against the page, the app's own pages its links
 //! - `whole`      : a real comment
 //! - `parity`     : the same comments as markdown and as HTML, read the same
 
@@ -26,7 +27,7 @@ use crate::blob::{
 use crate::parse_document_zerocopy;
 
 /// Hacker News' rules: a paragraph opening on `>` is a quote.
-const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[] };
+const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[], base: None, app_links: &[] };
 
 /// 4chan's tags: greentext a quoted line, a dead link struck through, a spoiler hidden. Its dead
 /// links open on `>>`, so a paragraph's marks are no quote.
@@ -37,6 +38,8 @@ const CHAN: HtmlRules<'static> = HtmlRules {
         TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
         TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
     ],
+    base: Some("https://boards.4chan.org/g/thread/100"),
+    app_links: &["https://boards.4chan.org/*/thread/*"],
 };
 
 /// The walk under test, by the name the tests were written against, read by Hacker News' rules.
@@ -659,6 +662,112 @@ fn tags_unmatched_class_closes_nothing_else() {
         chan("<span class=\"deadlink\">a<span class=\"other\">b</span>c</span>"),
         ("abc".to_string(), vec![span(0, 3, STRIKETHROUGH)])
     );
+}
+
+// ── site links ───────────────────────────────────────────────────────────
+
+/// A link's words and its one address, read by 4chan's rules.
+fn chan_link(html: &str) -> (String, String) {
+    let (text, spans) = chan(html);
+    let links: Vec<String> = spans
+        .into_iter()
+        .filter_map(|s| match s {
+            Span(_, _, t, Data::Url(url)) if t == LINK => Some(url),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(links.len(), 1, "one link in {html:?}");
+    (text, links[0].clone())
+}
+
+/// A quotelink's anchor is on the thread's page, so it is the app's link to that post.
+#[test]
+fn site_link_anchor_on_the_page_is_the_apps() {
+    assert_eq!(
+        chan_link("<a href=\"#p123\" class=\"quotelink\">&gt;&gt;123</a>"),
+        (">>123".to_string(), "app-link://g/thread/100#p123".to_string())
+    );
+}
+
+/// A path on the site resolves against the page's host.
+#[test]
+fn site_link_path_resolves_against_the_host() {
+    assert_eq!(
+        chan_link("<a href=\"/g/thread/200#p201\" class=\"quotelink\">&gt;&gt;201</a>"),
+        (">>201".to_string(), "app-link://g/thread/200#p201".to_string())
+    );
+}
+
+/// An address with no scheme takes the page's.
+#[test]
+fn site_link_without_a_scheme_takes_the_pages() {
+    assert_eq!(
+        chan_link("<a href=\"//boards.4chan.org/v/thread/300#p301\" class=\"quotelink\">&gt;&gt;&gt;/v/301</a>"),
+        (">>>/v/301".to_string(), "app-link://v/thread/300#p301".to_string())
+    );
+    assert_eq!(
+        chan_link("<a href=\"//example.com/g/thread/1\">x</a>"),
+        ("x (example.com)".to_string(), "https://example.com/g/thread/1".to_string())
+    );
+}
+
+/// A post's page written in full is the app's all the same, the title after its number dropped.
+#[test]
+fn site_link_in_full_is_the_apps() {
+    assert_eq!(
+        chan_link("<a href=\"https://boards.4chan.org/g/thread/200#p201\">here</a>"),
+        ("here".to_string(), "app-link://g/thread/200#p201".to_string())
+    );
+    assert_eq!(
+        chan_link("<a href=\"https://boards.4chan.org/g/thread/200/a-title#p201\">here</a>"),
+        ("here".to_string(), "app-link://g/thread/200#p201".to_string())
+    );
+}
+
+/// A page no rule names, a board or a catalog search, stays an address on the site.
+#[test]
+fn site_link_other_pages_stay_addresses() {
+    assert_eq!(
+        chan_link("<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"),
+        (">>>/po/lft (boards.4chan.org)".to_string(), "https://boards.4chan.org/po/catalog#s=lft".to_string())
+    );
+    assert_eq!(
+        chan_link("<a href=\"/wsr/\">board</a>"),
+        ("board (boards.4chan.org)".to_string(), "https://boards.4chan.org/wsr/".to_string())
+    );
+}
+
+/// A link elsewhere is as written.
+#[test]
+fn site_link_elsewhere_is_as_written() {
+    assert_eq!(
+        chan_link("<a href=\"https://example.com/a\">x</a>"),
+        ("x (example.com)".to_string(), "https://example.com/a".to_string())
+    );
+}
+
+/// A relative path resolves beside the page; a query replaces the page's own; a fragment keeps
+/// the page's query. Read with a base and no app links, so resolving is all that happens.
+#[test]
+fn site_link_relative_path_query_and_fragment() {
+    let rules = HtmlRules { base: Some("https://example.com/a/page?q=1#top"), ..HACKER_NEWS };
+    let address = |html: &str| {
+        let b = read(&render_html_blob(html, &rules).unwrap());
+        match b.spans.into_iter().find(|s| s.2 == LINK) {
+            Some(Span(_, _, _, Data::Url(url))) => url,
+            _ => panic!("no link in {html:?}"),
+        }
+    };
+    assert_eq!(address("<a href=\"other\">x</a>"), "https://example.com/a/other");
+    assert_eq!(address("<a href=\"?q=2\">x</a>"), "https://example.com/a/page?q=2");
+    assert_eq!(address("<a href=\"#end\">x</a>"), "https://example.com/a/page?q=1#end");
+    assert_eq!(address("<a href=\"/root\">x</a>"), "https://example.com/root");
+}
+
+/// A relative link that resolves onto an app page is the app's.
+#[test]
+fn site_link_relative_onto_an_app_page_is_the_apps() {
+    assert_eq!(chan_link("<a href=\"201#p5\">x</a>").1, "app-link://g/thread/201#p5");
 }
 
 // ── whole ────────────────────────────────────────────────────────────────
