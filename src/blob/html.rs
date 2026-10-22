@@ -37,9 +37,6 @@ pub struct TagRule<'r> {
 /// What a tag's words read as, each written as the blob writer writes its markdown.
 #[derive(Debug, Clone, Copy)]
 pub enum Reads<'r> {
-    /// A quoted line, its words as written, chevron and all: a quote that opens its own line and
-    /// runs on through the quoted lines straight after it, as markdown's `>` lines.
-    LineQuote,
     /// Struck through, as markdown's `~~`.
     Strike,
     /// Greentext: its words as written, chevron and all, coloured and on a line of their own, as
@@ -56,16 +53,7 @@ pub enum Reads<'r> {
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
 pub fn render_html_blob(input: &str, site: u8, base_url: Option<&str>) -> Option<Vec<u8>> {
-    render_html_blob_with(input, super::site::html(site), site, base_url)
-}
-
-/// As [`render_html_blob`], read by `rules` in place of the site's: for a test of a rule no site has.
-pub(crate) fn render_html_blob_with(
-    input: &str,
-    rules: &HtmlRules<'_>,
-    site: u8,
-    base_url: Option<&str>,
-) -> Option<Vec<u8>> {
+    let rules = super::site::html(site);
     // ASCII input is only a hint, as in render_blob: a decoded entity or a typographic symbol can
     // write non-ASCII, so one scan of the output catches that and the rare violating document is
     // re-rendered with the scanning writer, every span offset redone.
@@ -95,8 +83,6 @@ enum Open<'a> {
     /// A link: where its span and its words' bytes start, and its address, borrowed from the
     /// input unless an entity was decoded in it.
     Link(usize, usize, Cow<'a, str>),
-    /// A quoted line's tag; the quote itself runs on past it, through the quoted lines after it.
-    LineQuote(&'a str),
     /// A spoiler's tag, and where its hidden words start.
     Spoiler(&'a str, usize),
     /// A tag a rule names that means nothing here, held so its end closes nothing else.
@@ -124,8 +110,6 @@ struct Walk<'a, 'o> {
     broken: bool,
     /// A `<pre>`'s words so far, written whole at its end.
     pre: Option<String>,
-    /// Where the quoted lines being read started, until something not quoted is written.
-    line_quote: Option<usize>,
 }
 
 pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, base_url: Option<&str>, out: &mut BlobWriter) {
@@ -142,7 +126,6 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, base_url: Option<&str>, o
         space: false,
         broken: false,
         pre: None,
-        line_quote: None,
     };
     let bytes = html.as_bytes();
     // Words a `<wbr>` broke, read as the one run they are
@@ -299,7 +282,6 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
         if let Some(reads) = self.rule(name, class) {
             match reads {
-                Some(Reads::LineQuote) => self.start_line_quote(name),
                 Some(Reads::Strike) => {
                     self.begin();
                     self.open.push(Open::Style(STRIKETHROUGH, name, self.out.pos()));
@@ -322,10 +304,6 @@ impl<'a, 'o> Walk<'a, 'o> {
             // Each break is a newline, a run of them a blank line at most; none before the first words
             if self.out.len > 0 {
                 self.out.nl((self.out.p + 1).min(2));
-            }
-            // A blank line ends quoted lines, as it ends markdown's
-            if self.out.p == 2 {
-                self.end_line_quote();
             }
             self.space = false;
             self.broken = true;
@@ -397,7 +375,7 @@ impl<'a, 'o> Walk<'a, 'o> {
                 self.end_open(link);
             }
         } else if let Some(at) = self.open.iter().rposition(|o| match o {
-            Open::Style(_, tag, _) | Open::LineQuote(tag) | Open::Spoiler(tag, _) | Open::Plain(tag) => is(tag),
+            Open::Style(_, tag, _) | Open::Spoiler(tag, _) | Open::Plain(tag) => is(tag),
             Open::Link(..) => false,
         }) {
             let open = self.open.remove(at);
@@ -408,7 +386,7 @@ impl<'a, 'o> Walk<'a, 'o> {
     fn end_open(&mut self, open: Open<'a>) {
         match open {
             Open::Style(span, _, start) => self.out.span(span, start),
-            Open::LineQuote(_) | Open::Plain(_) => {}
+            Open::Plain(_) => {}
             Open::Spoiler(_, start) => {
                 // The hidden words are a paragraph of their own, the spoiler a block after them
                 self.end_block();
@@ -503,24 +481,6 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
     }
 
-    /// A quoted line opens its own line; its quote starts with its words, or runs on from the
-    /// quoted line just before it.
-    fn start_line_quote(&mut self, name: &'a str) {
-        if self.line_quote.is_none() && self.out.len > 0 && self.out.p == 0 {
-            self.out.nl(1);
-            self.space = false;
-        }
-        self.open.push(Open::LineQuote(name));
-    }
-
-    /// Ends the quoted lines once anything not quoted is to be written.
-    fn end_line_quote(&mut self) {
-        if let Some(start) = self.line_quote.take() {
-            self.out.quote_depth -= 1;
-            self.out.span_data(QUOTE, start, self.out.quote_depth as i32);
-        }
-    }
-
     /// A spoiler, as Lemmy's block: its title in bold at the size of a link, then its hidden words.
     fn start_spoiler(&mut self, name: &'a str, title: &str) {
         self.end_block();
@@ -537,17 +497,6 @@ impl<'a, 'o> Walk<'a, 'o> {
 
     /// Before anything of a paragraph is written: opens its quote, or writes the space before it.
     fn begin(&mut self) {
-        let quoting = self.open.iter().any(|o| matches!(o, Open::LineQuote(_)));
-        if self.line_quote.is_some() && !quoting {
-            self.end_line_quote();
-        }
-        if self.line_quote.is_none() && quoting {
-            self.block_start = false;
-            self.space = false;
-            self.broken = false;
-            self.out.quote_depth += 1;
-            self.line_quote = Some(self.out.pos());
-        }
         if self.block_start {
             self.block_start = false;
             if self.marks > 0 {
@@ -563,7 +512,6 @@ impl<'a, 'o> Walk<'a, 'o> {
 
     /// Ends the paragraph: closes its quote, and leaves a blank line before whatever follows.
     fn end_block(&mut self) {
-        self.end_line_quote();
         if let Some((start, levels)) = self.quote.take() {
             // Innermost first, as comrak closes them
             for _ in 0..levels {
