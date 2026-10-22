@@ -71,6 +71,8 @@ struct Walk<'a, 'o> {
     quote: Option<(usize, usize)>,
     /// Whitespace read since the last word, written as one space before the next.
     space: bool,
+    /// A `<br>` was the last thing read: the next line's leading whitespace is no text.
+    broken: bool,
     /// A `<pre>`'s words so far, written whole at its end.
     pre: Option<String>,
 }
@@ -86,6 +88,7 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules, out: &mut BlobWriter) {
         marks: 0,
         quote: None,
         space: false,
+        broken: false,
         pre: None,
     };
     let bytes = html.as_bytes();
@@ -175,8 +178,12 @@ impl<'a> Walk<'a, '_> {
         if is("p") {
             self.end_block();
         } else if is("br") {
-            self.out.nl(1);
+            // Each break is a newline, a run of them a blank line at most; none before the first words
+            if self.out.len > 0 {
+                self.out.nl((self.out.p + 1).min(2));
+            }
             self.space = false;
+            self.broken = true;
         } else if is("pre") {
             self.end_block();
             self.pre = Some(String::new());
@@ -321,10 +328,11 @@ impl<'a> Walk<'a, '_> {
                 self.out.quote_depth += self.marks;
                 self.quote = Some((self.out.pos(), self.marks));
             }
-        } else if self.space {
+        } else if self.space && !self.broken {
             self.out.write_text(" ");
         }
         self.space = false;
+        self.broken = false;
     }
 
     /// Ends the paragraph: closes its quote, and leaves a blank line before whatever follows.
