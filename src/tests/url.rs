@@ -218,3 +218,13 @@ fn no_scheme() {
 fn plain_google() {
     unchanged("https://www.google.com/search?q=rust");
 }
+
+/// The short host's own `watch?v=` form expands by its id, not by the word `watch`.
+#[test]
+fn youtube_short_watch_form() {
+    assert_eq!(
+        &*resolve_url("https://youtu.be/watch?v=abc123"),
+        "https://www.youtube.com/watch?v=abc123"
+    );
+    unchanged("https://youtu.be/watch?v=");
+}

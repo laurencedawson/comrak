@@ -317,6 +317,8 @@ fn internal_is_the_sites_own_host_or_relative() {
     ] {
         assert_eq!(page(site, url), Page::Elsewhere, "{url} should not be internal to site {site}");
     }
+    // Relative under any site, the plain one too: on the page's own host, so no domain after it
+    assert_eq!(page(PLAIN, "/redirect?u=https://x.com/a"), Page::Internal);
 }
 
 // ── the markdown walk ────────────────────────────────────────────────────
@@ -423,4 +425,25 @@ fn markdown_internal_links_show_no_domain() {
 fn markdown_plain_marks_nothing() {
     let (_, found) = links("[a post](https://lemmy.ml/post/1)", PLAIN);
     assert_eq!(found, vec![(LINK, "https://lemmy.ml/post/1".to_string())]);
+}
+
+/// A relative link shows no domain after its words under any site, even one carrying an address
+/// in its query, which is not its host.
+#[test]
+fn markdown_relative_link_shows_no_domain() {
+    for site in [PLAIN, LEMMY, CHAN] {
+        let (text, _) = links("[x](/redirect?u=https://x.com/a) [y](/search)", site);
+        assert_eq!(text, "x y", "site {site}");
+    }
+}
+
+/// A footnote's links are the site's too: an own page in one is marked and shows no domain, as
+/// in the body.
+#[test]
+fn markdown_footnote_links_are_the_sites() {
+    let md = "text[^1]\n\n[^1]: see [post](https://lemmy.world/post/1) and [else](https://example.com/a)";
+    let (text, _) = links(md, LEMMY);
+    assert!(text.ends_with("1 see post and else (example.com)"), "{text:?}");
+    let (text, _) = links(md, PLAIN);
+    assert!(text.ends_with("1 see post (lemmy.world) and else (example.com)"), "{text:?}");
 }
