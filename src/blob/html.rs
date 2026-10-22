@@ -20,6 +20,12 @@ pub struct HtmlRules<'r> {
     pub quote_marks: bool,
     /// What a tag means, by its name and, where the rule names one, a class it has.
     pub tags: &'r [TagRule<'r>],
+    /// The page the HTML sits on, which a relative link resolves against, as a browser would.
+    pub base: Option<&'r str>,
+    /// The site's pages the app opens itself, as addresses whose `*` stands for one path segment:
+    /// a link matching one becomes `app-link://`, the path it matched and its fragment, for the
+    /// app's router, the rest of its path dropped.
+    pub app_links: &'r [&'r str],
 }
 
 /// A tag that means something on a site, as `<span class="quote">` is a quoted line on 4chan.
@@ -262,13 +268,28 @@ impl<'a, 'o> Walk<'a, 'o> {
             && !self.open.iter().any(|o| matches!(o, Open::Link(..)))
         {
             self.begin();
-            let href = decode_html_attribute_entities(href);
+            let href = self.address(decode_html_attribute_entities(href));
             if let Some(past) = self.picture(&href, after) {
                 return past;
             }
             self.open.push(Open::Link(self.out.pos(), self.out.blob.len(), href));
         }
         after
+    }
+
+    /// Where a link goes: resolved against the page, and the app's own where a rule says so.
+    fn address(&self, href: Cow<'a, str>) -> Cow<'a, str> {
+        let href = match self.rules.base {
+            Some(base) => match relative(&href, base) {
+                Some(resolved) => Cow::Owned(resolved),
+                None => href,
+            },
+            None => href,
+        };
+        match self.rules.app_links.iter().find_map(|pattern| app_link(&href, pattern)) {
+            Some(app) => Cow::Owned(app),
+            None => href,
+        }
     }
 
     /// A link whose only words are an address, to a picture, is the picture, as comrak's autolink
@@ -481,4 +502,60 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
         self.end_block();
     }
+}
+
+/// `href` resolved against `base` where it is relative, as a browser resolves it; none where it
+/// already names its scheme.
+fn relative(href: &str, base: &str) -> Option<String> {
+    let scheme_end = |s: &str| {
+        let colon = s.find(':')?;
+        let scheme = &s[..colon];
+        (!scheme.is_empty() && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')))
+            .then_some(colon)
+    };
+    if scheme_end(href).is_some() {
+        return None;
+    }
+    let colon = scheme_end(base)?;
+    if let Some(rest) = href.strip_prefix("//") {
+        return Some(format!("{}//{rest}", &base[..=colon]));
+    }
+    let authority = colon + 3;
+    let host_end = base[authority..].find(['/', '?', '#']).map_or(base.len(), |i| authority + i);
+    if href.starts_with('/') {
+        return Some(format!("{}{href}", &base[..host_end]));
+    }
+    let cut = |at: &[char]| base.find(at).unwrap_or(base.len());
+    if href.starts_with('#') {
+        return Some(format!("{}{href}", &base[..cut(&['#'])]));
+    }
+    if href.starts_with('?') {
+        return Some(format!("{}{href}", &base[..cut(&['?', '#'])]));
+    }
+    let path = &base[..cut(&['?', '#'])];
+    let dir = path[host_end..].rfind('/').map_or(host_end, |i| host_end + i);
+    Some(format!("{}/{href}", &path[..dir]))
+}
+
+/// `url` as the app's own link where it matches `pattern`, each `*` one path segment: the path it
+/// matched, after the host, and the url's fragment.
+fn app_link(url: &str, pattern: &str) -> Option<String> {
+    let (mut at, mut pieces) = (0, pattern.split('*').peekable());
+    while let Some(piece) = pieces.next() {
+        if !url[at..].starts_with(piece) {
+            return None;
+        }
+        at += piece.len();
+        if pieces.peek().is_some() {
+            let segment = url[at..].find(['/', '?', '#']).unwrap_or(url.len() - at);
+            if segment == 0 {
+                return None;
+            }
+            at += segment;
+        }
+    }
+    let host = url.find("://")? + 3;
+    let path_start = host + url[host..].find('/')? + 1;
+    let fragment = url[at..].find('#').map_or("", |i| &url[at + i..]);
+    Some(format!("app-link://{}{fragment}", &url[path_start..at]))
 }
