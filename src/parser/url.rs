@@ -10,10 +10,6 @@ static API_V: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new("/api/v")
 static PICTRS_IMAGE: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new("/pictrs/image/"));
 static SCHEME_SEP: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new("://"));
 
-/// The scheme an app writes its own links under. Such a link names a place in
-/// the app, not an address: it is never resolved and has no host to show.
-const APP_LINK: &str = "app-link://";
-
 /// A URL that has been through [`resolve_url`]. Its only constructor is
 /// `resolve_url`, so holding one is proof the URL was finalized exactly once.
 /// The blob writer accepts `&ResolvedUrl`, never a raw `&str`, which makes
@@ -43,9 +39,6 @@ impl AsRef<str> for ResolvedUrl<'_> {
 /// thumbnails pict-rs URLs even on links, not just inline images; harmless because the
 /// host strips the query for full-res (see image_url::pictrs_preview).
 pub fn resolve_url(url: &str) -> ResolvedUrl<'_> {
-    if url.starts_with(APP_LINK) {
-        return ResolvedUrl(Cow::Borrowed(url));
-    }
     let resolved = resolve_target(url);
     let finalized = match pictrs_preview(&resolved) {
         Cow::Owned(s) => Cow::Owned(s),
@@ -289,9 +282,6 @@ pub(crate) fn percent_decode(raw: &str) -> Option<String> {
 /// links in practice — avoiding an allocation per link render. Strips a
 /// leading `www.` prefix; returns `None` when scheme or host is missing.
 pub fn extract_domain(url: &str) -> Option<Cow<'_, str>> {
-    if url.starts_with(APP_LINK) {
-        return None;
-    }
     let start = SCHEME_SEP.find(url.as_bytes())? + 3;
     let after = &url.as_bytes()[start..];
     let end = memchr::memchr(b'/', after)
