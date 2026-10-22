@@ -15,7 +15,7 @@ history still resolve. Highlights:
 | [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
 | [URL resolution](#url-resolution) | `resolve_url()` — proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint. [App links](#app-links-1b09a35) (`app-link://`) are exempt from all of it |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
-| [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan |
+| [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags and links as data |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -254,6 +254,8 @@ an enhancement to the writer reaches both.
 - The same shape as `render_blob`: the ASCII fast path, the re-render when the
   output is not ASCII, `None` for unchanged text. No plain-text gate: as for
   markdown's `needs_parse`, that is syncdown's
+- `<br>` is a newline and a run of them a blank line at most, as markdown caps
+  them; a `<wbr>` inside a word is read through
 - From mdream 2.0.3 (MIT, `src/blob/html/mdream/`): `entities.rs` and
   `entities_generated.rs` as written, every WHATWG entity with the standard's
   text and attribute rules; `scan.rs` cut to a whole string, its chunk carries,
@@ -265,8 +267,28 @@ an enhancement to the writer reaches both.
 - `tests/blob_html.rs` ([b2f39fe]): htmlrak's tests, and a parity table of 28
   comments as HTML and as markdown, parsed both ways and asserted to read the
   same, so the two walks cannot drift
-- Not yet: the invisible-character strip `sanitize_input` gives markdown, and
-  4chan's tags (greentext, spoilers, links to posts)
+- Not yet: the invisible-character strip `sanitize_input` gives markdown
+
+#### `HtmlRules` ([bca01f9], [29b28a5], [50226a9], [2090141], [10e87cf])
+
+How a site's HTML reads, passed as data, so no site's rules live in the walk;
+each app builds its own.
+
+| Field | Reads |
+|---|---|
+| `quote_marks` | A paragraph opening on `>` is a quote, its marks no text (Hacker News) |
+| `tags` | `TagRule`s by tag and optional class: a quoted line (its chevron kept, a quote opening its own line and running on through the quoted lines after it, ended by the next unquoted words or a blank line), a strike, a spoiler under a title (Lemmy's block) |
+| `autolink` | `scheme://` and `www.` addresses among the words linked, their bounds read by `parser::autolink::url_in` and `www_in`, string-level forms of `url_match` and `www_match` sharing their domain and delimiter checks |
+| `base` | The page a relative link resolves against, as a browser resolves it |
+| `app_links` | The site's pages the app opens itself, `*` one path segment: a match becomes `app-link://`, the path it matched and its fragment |
+
+Built for 4chan, checked on 3,808 real comments from three boards. The 3,040
+without greentext or spoilers read byte-identical to the markdown 4chan's Java
+converter wrote, with each `<br>` a hard break, except 25 where that converter
+escaped a `_` inside a typed address, leaving a backslash in the link. The 768
+with greentext keep every word, and their quotes cover exactly the quoted
+lines; markdown cannot say those, since its lazy continuation takes the line
+after a quote into it. About 2 us a comment.
 
 ### Standalone use (without the fork's parse-side changes)
 
@@ -837,3 +859,8 @@ Pixel 9 Pro XL).
 [2f00ef6]: https://github.com/laurencedawson/comrak/commit/2f00ef6
 [b2f39fe]: https://github.com/laurencedawson/comrak/commit/b2f39fe
 [c392115]: https://github.com/laurencedawson/comrak/commit/c392115
+[bca01f9]: https://github.com/laurencedawson/comrak/commit/bca01f9
+[29b28a5]: https://github.com/laurencedawson/comrak/commit/29b28a5
+[50226a9]: https://github.com/laurencedawson/comrak/commit/50226a9
+[2090141]: https://github.com/laurencedawson/comrak/commit/2090141
+[10e87cf]: https://github.com/laurencedawson/comrak/commit/10e87cf
