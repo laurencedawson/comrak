@@ -5,8 +5,11 @@
 
 use super::{Url, digits};
 
+/// The site's one host.
+pub(super) const HOSTS: &[&str] = &["lobste.rs"];
+
 pub(super) fn is_own(url: &Url<'_>) -> bool {
-    if !url.host_is("lobste.rs") {
+    if !url.on(HOSTS) {
         return false;
     }
     let path = url.path.strip_suffix('/').unwrap_or(url.path);

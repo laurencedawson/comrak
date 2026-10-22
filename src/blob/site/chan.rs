@@ -16,8 +16,11 @@ pub(super) const HTML: HtmlRules<'static> = HtmlRules {
     ],
 };
 
+/// The site's board hosts, where its threads are.
+pub(super) const HOSTS: &[&str] = &["boards.4chan.org", "boards.4channel.org"];
+
 pub(super) fn is_own(url: &Url<'_>) -> bool {
-    if !url.host_is("boards.4chan.org") && !url.host_is("boards.4channel.org") {
+    if !url.on(HOSTS) {
         return false;
     }
     let mut path = url.path.split('/');
