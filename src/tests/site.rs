@@ -241,6 +241,23 @@ fn lemmy_non_ascii_host() {
     not_own(LEMMY, &["https://éé.reddit.com/u/spez"]);
 }
 
+/// Hosts whose own pages share Lemmy's shapes are not its own, under any subdomain and in any
+/// case; a host that only ends in one's letters is an instance like any other.
+#[test]
+fn lemmy_not_on_hosts_sharing_its_shapes() {
+    not_own(LEMMY, &[
+        "https://www.youtube.com/c/veritasium",
+        "https://m.youtube.com/c/veritasium",
+        "https://YouTube.com/c/veritasium",
+        "https://www.patreon.com/c/somecreator",
+        "https://rumble.com/c/SomeChannel",
+        "https://staff.tumblr.com/post/123456",
+        "https://medium.com/m/signin",
+        "https://lobste.rs/c/523dmc",
+    ]);
+    own(LEMMY, &["https://myyoutube.com/c/rust", "https://youtube.com.example/c/rust"]);
+}
+
 // ── the markdown walk ────────────────────────────────────────────────────
 
 /// Every link in `md` read as `site`, its kind and address, and the text shown.
@@ -306,15 +323,15 @@ fn markdown_lemmy_autolinks_and_reddit() {
     );
 }
 
-/// Lobsters' stories and comments are the app's. Read as Lemmy, a story is a link, but a comment's
-/// `/c/{id}` is a community's shape on any instance, so Lemmy, federated, takes it for its own.
+/// Lobsters' stories and comments are the app's. Read as Lemmy, neither is: a comment's `/c/{id}`
+/// shares a community's shape, so `lobste.rs` is among the hosts Lemmy leaves out.
 #[test]
 fn markdown_lobsters_links() {
     let md = "[story](https://lobste.rs/s/cdnepk/passkeys) and https://lobste.rs/c/523dmc";
     let (_, found) = links(md, LOBSTERS);
     assert!(found.iter().all(|(t, _)| *t == APP_LINK), "{found:?}");
     let (_, found) = links(md, LEMMY);
-    assert_eq!(found.iter().map(|(t, _)| *t).collect::<Vec<_>>(), vec![LINK, APP_LINK]);
+    assert!(found.iter().all(|(t, _)| *t == LINK), "{found:?}");
 }
 
 /// The plain site marks nothing.
