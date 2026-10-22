@@ -15,16 +15,41 @@ use mdream::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
 
 /// How a site's HTML reads, as data, so no site's rules live here: each app builds its own.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct HtmlRules {
+pub struct HtmlRules<'r> {
     /// A paragraph opening on `>` is a quote, its marks no text, as Hacker News' posters write one.
     pub quote_marks: bool,
+    /// What a tag means, by its name and, where the rule names one, a class it has.
+    pub tags: &'r [TagRule<'r>],
+}
+
+/// A tag that means something on a site, as `<span class="quote">` is a quoted line on 4chan.
+#[derive(Debug, Clone, Copy)]
+pub struct TagRule<'r> {
+    /// The tag's name, in any case.
+    pub tag: &'r str,
+    /// A class the tag must have, or none for every tag of that name.
+    pub class: Option<&'r str>,
+    /// What its words read as.
+    pub reads_as: Reads<'r>,
+}
+
+/// What a tag's words read as, each written as the blob writer writes its markdown.
+#[derive(Debug, Clone, Copy)]
+pub enum Reads<'r> {
+    /// A quoted line, its words as written, chevron and all: a quote that opens its own line and
+    /// runs on through the quoted lines straight after it, as markdown's `>` lines.
+    LineQuote,
+    /// Struck through, as markdown's `~~`.
+    Strike,
+    /// Hidden behind a spoiler under this title, as Lemmy's `::: spoiler` block.
+    Spoiler(&'r str),
 }
 
 /// Render a site's HTML into a binary blob, read by `rules`.
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-pub fn render_html_blob(input: &str, rules: &HtmlRules) -> Option<Vec<u8>> {
+pub fn render_html_blob(input: &str, rules: &HtmlRules<'_>) -> Option<Vec<u8>> {
     // ASCII input is only a hint, as in render_blob: a decoded entity or a typographic symbol can
     // write non-ASCII, so one scan of the output catches that and the rare violating document is
     // re-rendered with the scanning writer, every span offset redone.
@@ -49,16 +74,22 @@ pub fn render_html_blob(input: &str, rules: &HtmlRules) -> Option<Vec<u8>> {
 
 /// A tag open around words still to come.
 enum Open<'a> {
-    /// Bold or italic: the span it closes with and the tag that closes it.
-    Style(i32, &'static str, usize),
+    /// Bold, italic or struck: the span it closes with, the tag that closes it, where it starts.
+    Style(i32, &'a str, usize),
     /// A link: where its span and its words' bytes start, and its address, borrowed from the
     /// input unless an entity was decoded in it.
     Link(usize, usize, Cow<'a, str>),
+    /// A quoted line's tag; the quote itself runs on past it, through the quoted lines after it.
+    LineQuote(&'a str),
+    /// A spoiler's tag, and where its hidden words start.
+    Spoiler(&'a str, usize),
+    /// A tag a rule names that means nothing here, held so its end closes nothing else.
+    Plain(&'a str),
 }
 
 struct Walk<'a, 'o> {
     html: &'a str,
-    rules: &'o HtmlRules,
+    rules: &'o HtmlRules<'o>,
     out: &'o mut BlobWriter,
     open: Vec<Open<'a>>,
     /// The words between two tags with their entities decoded, one buffer for the whole walk.
@@ -75,9 +106,11 @@ struct Walk<'a, 'o> {
     broken: bool,
     /// A `<pre>`'s words so far, written whole at its end.
     pre: Option<String>,
+    /// Where the quoted lines being read started, until something not quoted is written.
+    line_quote: Option<usize>,
 }
 
-pub(crate) fn visit(html: &str, rules: &HtmlRules, out: &mut BlobWriter) {
+pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, out: &mut BlobWriter) {
     let mut w = Walk {
         html,
         rules,
@@ -90,6 +123,7 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules, out: &mut BlobWriter) {
         space: false,
         broken: false,
         pre: None,
+        line_quote: None,
     };
     let bytes = html.as_bytes();
     let (mut i, mut from) = (0, 0);
@@ -135,7 +169,7 @@ fn collapse(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-impl<'a> Walk<'a, '_> {
+impl<'a, 'o> Walk<'a, 'o> {
     /// Reads the tag opening at `at`, and answers where the words after it begin. A tag the input
     /// ends inside is no text, as HTML drops it.
     fn tag(&mut self, at: usize) -> usize {
@@ -158,16 +192,38 @@ impl<'a> Walk<'a, '_> {
             self.close(name);
             return name_end + end + 1;
         }
-        let mut href = None;
-        let scan = scan_tag(html, name_end, &["href"], |_, value| href = Some(value));
+        let (mut href, mut class) = (None, None);
+        let scan = scan_tag(html, name_end, &["href", "class"], |name, value| {
+            if name.eq_ignore_ascii_case("href") {
+                href = Some(value);
+            } else {
+                class = Some(value);
+            }
+        });
         if !scan.complete {
             return html.len();
         }
-        self.start(name, href, scan.new_position)
+        self.start(name, href, class, scan.new_position)
+    }
+
+    /// What the rules say a tag means: the first rule for its name whose class it has, or, where
+    /// rules name it but none matches, nothing, held so its end closes nothing else.
+    fn rule(&self, name: &str, class: Option<&str>) -> Option<Option<Reads<'o>>> {
+        let mut named = false;
+        for rule in self.rules.tags {
+            if rule.tag.eq_ignore_ascii_case(name) {
+                named = true;
+                let has = |want: &str| class.is_some_and(|c| c.split(is_space).any(|c| c == want));
+                if rule.class.is_none_or(has) {
+                    return Some(Some(rule.reads_as));
+                }
+            }
+        }
+        named.then_some(None)
     }
 
     /// Opens a tag, answering where the words after it begin: past the link for a picture.
-    fn start(&mut self, name: &str, href: Option<&'a str>, after: usize) -> usize {
+    fn start(&mut self, name: &'a str, href: Option<&'a str>, class: Option<&str>, after: usize) -> usize {
         let is = |tag: &str| name.eq_ignore_ascii_case(tag);
         if let Some(pre) = &mut self.pre {
             if is("br") {
@@ -175,7 +231,17 @@ impl<'a> Walk<'a, '_> {
             }
             return after;
         }
-        if is("p") {
+        if let Some(reads) = self.rule(name, class) {
+            match reads {
+                Some(Reads::LineQuote) => self.start_line_quote(name),
+                Some(Reads::Strike) => {
+                    self.begin();
+                    self.open.push(Open::Style(STRIKETHROUGH, name, self.out.pos()));
+                }
+                Some(Reads::Spoiler(title)) => self.start_spoiler(name, title),
+                None => self.open.push(Open::Plain(name)),
+            }
+        } else if is("p") {
             self.end_block();
         } else if is("br") {
             // Each break is a newline, a run of them a blank line at most; none before the first words
@@ -189,13 +255,8 @@ impl<'a> Walk<'a, '_> {
             self.pre = Some(String::new());
         } else if is("b") || is("strong") || is("i") || is("em") {
             self.begin();
-            let (span, closer) = match name.len() {
-                1 if is("b") => (BOLD, "b"),
-                6 => (BOLD, "strong"),
-                1 => (ITALIC, "i"),
-                _ => (ITALIC, "em"),
-            };
-            self.open.push(Open::Style(span, closer, self.out.pos()));
+            let span = if is("b") || is("strong") { BOLD } else { ITALIC };
+            self.open.push(Open::Style(span, name, self.out.pos()));
         } else if is("a")
             && let Some(href) = href
             && !self.open.iter().any(|o| matches!(o, Open::Link(..)))
@@ -248,19 +309,25 @@ impl<'a> Walk<'a, '_> {
                 let link = self.open.remove(at);
                 self.end_open(link);
             }
-        } else if let Some(at) = self
-            .open
-            .iter()
-            .rposition(|o| matches!(o, Open::Style(_, closer, _) if is(closer)))
-        {
-            let style = self.open.remove(at);
-            self.end_open(style);
+        } else if let Some(at) = self.open.iter().rposition(|o| match o {
+            Open::Style(_, tag, _) | Open::LineQuote(tag) | Open::Spoiler(tag, _) | Open::Plain(tag) => is(tag),
+            Open::Link(..) => false,
+        }) {
+            let open = self.open.remove(at);
+            self.end_open(open);
         }
     }
 
     fn end_open(&mut self, open: Open<'a>) {
         match open {
             Open::Style(span, _, start) => self.out.span(span, start),
+            Open::LineQuote(_) | Open::Plain(_) => {}
+            Open::Spoiler(_, start) => {
+                // The hidden words are a paragraph of their own, the spoiler a block after them
+                self.end_block();
+                self.out.span(LEMMY_SPOILER_CONTENT, start);
+                self.out.nl(2);
+            }
             Open::Link(start, text_start, href) => {
                 let url = resolve_url(&href);
                 self.out.span_url(LINK, start, &url);
@@ -320,8 +387,48 @@ impl<'a> Walk<'a, '_> {
         }
     }
 
+    /// A quoted line opens its own line, and the quote runs on from any quoted line just before it.
+    fn start_line_quote(&mut self, name: &'a str) {
+        if self.line_quote.is_none() {
+            if self.out.len > 0 && self.out.p == 0 {
+                self.out.nl(1);
+            }
+            self.block_start = false;
+            self.space = false;
+            self.broken = false;
+            self.out.quote_depth += 1;
+            self.line_quote = Some(self.out.pos());
+        }
+        self.open.push(Open::LineQuote(name));
+    }
+
+    /// Ends the quoted lines once anything not quoted is to be written.
+    fn end_line_quote(&mut self) {
+        if let Some(start) = self.line_quote.take() {
+            self.out.quote_depth -= 1;
+            self.out.span_data(QUOTE, start, self.out.quote_depth as i32);
+        }
+    }
+
+    /// A spoiler, as Lemmy's block: its title in bold at the size of a link, then its hidden words.
+    fn start_spoiler(&mut self, name: &'a str, title: &str) {
+        self.end_block();
+        let start = self.out.pos();
+        self.out.write_text(title);
+        self.out.span(BOLD, start);
+        self.out.span(LINK_SIZE, start);
+        self.out.span(LEMMY_SPOILER_TITLE, start);
+        // The hidden words' span owns one leading newline, so the blank line collapses with it
+        self.out.nl(1);
+        self.open.push(Open::Spoiler(name, self.out.pos()));
+        self.out.nl(2);
+    }
+
     /// Before anything of a paragraph is written: opens its quote, or writes the space before it.
     fn begin(&mut self) {
+        if self.line_quote.is_some() && !self.open.iter().any(|o| matches!(o, Open::LineQuote(_))) {
+            self.end_line_quote();
+        }
         if self.block_start {
             self.block_start = false;
             if self.marks > 0 {
@@ -337,6 +444,7 @@ impl<'a> Walk<'a, '_> {
 
     /// Ends the paragraph: closes its quote, and leaves a blank line before whatever follows.
     fn end_block(&mut self) {
+        self.end_line_quote();
         if let Some((start, levels)) = self.quote.take() {
             // Innermost first, as comrak closes them
             for _ in 0..levels {

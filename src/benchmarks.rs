@@ -146,7 +146,7 @@ pub fn prose_doc() -> String {
 /// heading, list, rule, table or strike yet, so those tags are scanned and their words kept.
 pub mod html {
     /// The rules the corpora are read by: Hacker News', a paragraph opening on `>` a quote.
-    pub const RULES: crate::blob::HtmlRules = crate::blob::HtmlRules { quote_marks: true };
+    pub const RULES: crate::blob::HtmlRules<'static> = crate::blob::HtmlRules { quote_marks: true, tags: &[] };
 
     /// Plain text with no markdown syntax.
     pub const PLAIN: &str = "Just some plain text with no markdown formatting at all.";
