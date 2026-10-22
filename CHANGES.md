@@ -299,7 +299,7 @@ of `url_match` and `www_match` sharing their domain and delimiter checks.
 | Field | Reads |
 |---|---|
 | `quote_marks` | A paragraph opening on `>` is a quote, its marks no text (Hacker News) |
-| `tags` | `TagRule`s by tag and optional class: a quoted line (its chevron kept, a quote opening its own line and running on through the quoted lines after it, ended by the next unquoted words or a blank line), greentext (a `GREENTEXT` span over its words, on a line of its own, as 4chan colours a line opened on `>`), a strike, a spoiler under a title (Lemmy's block) |
+| `tags` | `TagRule`s by tag and optional class: greentext (a `GREENTEXT` span over its words, on a line of its own, as 4chan colours a line opened on `>`), a strike, a spoiler under a title (Lemmy's block) |
 
 Hacker News reads `quote_marks`; 4chan its greentext, dead links and spoilers
 as tags; every other site neither.
