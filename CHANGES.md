@@ -120,7 +120,7 @@ It does three things:
 | Google redirect | `google.com/url?q=<url>` | unwrapped URL |
 | Google AMP | `google.com/amp/s/<url>` | `https://<url>` |
 | YouTube redirect | `youtube.com/redirect?q=<url>` | unwrapped URL |
-| YouTube short | `youtu.be/<id>` | `youtube.com/watch?v=<id>` |
+| YouTube short | `youtu.be/<id>`, `youtu.be/watch?v=<id>` | `youtube.com/watch?v=<id>` |
 | YouTube mobile | `m.youtube.com/...` | `www.youtube.com/...` |
 | Facebook redirect | `l.facebook.com/l.php?u=<url>` | unwrapped URL |
 | DuckDuckGo proxy | `external-content.duckduckgo.com/iu/?u=<url>` | unwrapped URL |
