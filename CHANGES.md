@@ -272,13 +272,15 @@ an enhancement to the writer reaches both.
 #### `HtmlRules` ([bca01f9], [29b28a5], [50226a9], [2090141], [10e87cf])
 
 How a site's HTML reads, passed as data, so no site's rules live in the walk;
-each app builds its own.
+each app builds its own. Whatever the rules, `scheme://` and `www.` addresses
+among the words are links, as the autolink makes them in markdown: their
+bounds are read by `parser::autolink::url_in` and `www_in`, string-level forms
+of `url_match` and `www_match` sharing their domain and delimiter checks.
 
 | Field | Reads |
 |---|---|
 | `quote_marks` | A paragraph opening on `>` is a quote, its marks no text (Hacker News) |
 | `tags` | `TagRule`s by tag and optional class: a quoted line (its chevron kept, a quote opening its own line and running on through the quoted lines after it, ended by the next unquoted words or a blank line), a strike, a spoiler under a title (Lemmy's block) |
-| `autolink` | `scheme://` and `www.` addresses among the words linked, their bounds read by `parser::autolink::url_in` and `www_in`, string-level forms of `url_match` and `www_match` sharing their domain and delimiter checks |
 | `base` | The page a relative link resolves against, as a browser resolves it |
 | `app_links` | The site's pages the app opens itself, `*` one path segment: a match becomes `app-link://`, the path it matched and its fragment |
 
