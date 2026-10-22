@@ -62,17 +62,11 @@ fn resolve_target(url: &str) -> Cow<'_, str> {
             return Cow::Owned(u);
         }
     } else if host.ends_with("google.com") {
-        if let Some(u) = unwrap_redirect(&url, "www.google.com/url?", "q")
-            .or_else(|| unwrap_redirect(&url, "google.com/url?", "q"))
-            .or_else(|| unwrap_google_amp(&url))
-        {
+        if let Some(u) = unwrap_redirect(&url, "google.com/url?", "q").or_else(|| unwrap_google_amp(&url)) {
             return Cow::Owned(u);
         }
     } else if host.ends_with("youtube.com") {
-        if let Some(u) = unwrap_redirect(&url, "www.youtube.com/redirect?", "q")
-            .or_else(|| unwrap_redirect(&url, "youtube.com/redirect?", "q"))
-            .or_else(|| normalize_mobile_youtube(&url))
-        {
+        if let Some(u) = unwrap_redirect(&url, "youtube.com/redirect?", "q").or_else(|| normalize_mobile_youtube(&url)) {
             return Cow::Owned(u);
         }
     } else if host.ends_with("facebook.com") {
@@ -131,8 +125,7 @@ fn pictrs_preview(url: &str) -> Cow<'_, str> {
 }
 
 fn unwrap_redirect(url: &str, prefix: &str, param: &str) -> Option<String> {
-    let rest = strip_scheme(url)?;
-    if !rest.starts_with(prefix) {
+    if !past_www(url)?.starts_with(prefix) {
         return None;
     }
     let dest = query_param(url, param)?;
@@ -143,10 +136,7 @@ fn unwrap_redirect(url: &str, prefix: &str, param: &str) -> Option<String> {
 }
 
 fn unwrap_path_prefix(url: &str, prefix: &str) -> Option<String> {
-    let rest = strip_scheme(url)?;
-    let path = rest
-        .strip_prefix(prefix)
-        .or_else(|| rest.strip_prefix(&format!("www.{prefix}")))?;
+    let path = past_www(url)?.strip_prefix(prefix)?;
     if path.is_empty() {
         return None;
     }
@@ -154,10 +144,7 @@ fn unwrap_path_prefix(url: &str, prefix: &str) -> Option<String> {
 }
 
 fn unwrap_google_amp(url: &str) -> Option<String> {
-    let rest = strip_scheme(url)?;
-    let path = rest
-        .strip_prefix("www.google.com/amp/s/")
-        .or_else(|| rest.strip_prefix("google.com/amp/s/"))?;
+    let path = past_www(url)?.strip_prefix("google.com/amp/s/")?;
     if path.is_empty() {
         return None;
     }
@@ -191,13 +178,6 @@ fn expand_youtube_short(url: &str) -> Option<String> {
     if !host.eq_ignore_ascii_case("youtu.be") {
         return None;
     }
-    if path.starts_with("watch") {
-        let id = query_param(url, "v")?;
-        if id.is_empty() {
-            return None;
-        }
-        return Some(format!("https://www.youtube.com/watch?v={id}"));
-    }
     let id = path.split(['?', '&', '#', '/']).next()?;
     if id.is_empty() {
         return None;
@@ -211,9 +191,15 @@ fn normalize_mobile_youtube(url: &str) -> Option<String> {
         .map(|path| format!("https://www.youtube.com/{path}"))
 }
 
-fn strip_scheme(url: &str) -> Option<&str> {
+pub(crate) fn strip_scheme(url: &str) -> Option<&str> {
     url.strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
+}
+
+/// The address past its scheme and a leading `www.`, so a host's two spellings read as one.
+fn past_www(url: &str) -> Option<&str> {
+    let rest = strip_scheme(url)?;
+    Some(rest.strip_prefix("www.").unwrap_or(rest))
 }
 
 /// The extension of a URL's last path segment, with any query/fragment stripped.

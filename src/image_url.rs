@@ -4,11 +4,7 @@
 //! resources into inline image embeds, and exposed to callers so they can
 //! make the same decision at their own layer.
 
-/// Strip `http://` / `https://`, returning the rest of the URL.
-fn strip_scheme(url: &str) -> Option<&str> {
-    url.strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-}
+use crate::parser::url::strip_scheme;
 
 /// Returns `true` if the URL points to an image (by known host, path pattern,
 /// or file extension). Conservative: may return false for actual images with
