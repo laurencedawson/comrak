@@ -3,6 +3,18 @@
 //! The catalog and a board's own pages hold no one post, so are not the app's.
 
 use super::{Url, digits};
+use crate::blob::html::{HtmlRules, Reads, TagRule};
+
+/// Greentext in the site's green, a dead link struck through, a spoiler hidden; its dead links open
+/// on `>>`, so a paragraph's marks are words.
+pub(super) const HTML: HtmlRules<'static> = HtmlRules {
+    quote_marks: false,
+    tags: &[
+        TagRule { tag: "span", class: Some("quote"), reads_as: Reads::Greentext },
+        TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
+        TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
+    ],
+};
 
 pub(super) fn is_own(url: &Url<'_>) -> bool {
     if !url.host_is("boards.4chan.org") && !url.host_is("boards.4channel.org") {

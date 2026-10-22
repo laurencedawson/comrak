@@ -14,19 +14,13 @@ use crate::parser::url::resolve_url;
 use mdream::entities::{decode_html_attribute_entities, decode_html_entities_into};
 use mdream::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
 
-/// How a site's HTML reads, as data, so no site's rules live here: each app builds its own.
+/// How a site's HTML reads: each site's are in [`super::site`], the walk itself naming none.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HtmlRules<'r> {
     /// A paragraph opening on `>` is a quote, its marks no text, as Hacker News' posters write one.
     pub quote_marks: bool,
     /// What a tag means, by its name and, where the rule names one, a class it has.
     pub tags: &'r [TagRule<'r>],
-    /// The page the HTML sits on, which a relative link resolves against, as a browser would.
-    pub base: Option<&'r str>,
-    /// The site's pages the app opens itself, as addresses whose `*` stands for one path segment:
-    /// a link matching one becomes `app-link://`, the path it matched and its fragment, for the
-    /// app's router, the rest of its path dropped.
-    pub app_links: &'r [&'r str],
 }
 
 /// A tag that means something on a site, as `<span class="quote">` is a quoted line on 4chan.
@@ -55,11 +49,23 @@ pub enum Reads<'r> {
     Spoiler(&'r str),
 }
 
-/// Render a site's HTML into a binary blob, read by `rules`.
+/// Render `site`'s HTML into a binary blob: read by the site's rules, a relative link resolved
+/// against `base_url`, the page the HTML sits on, and a link to one of the site's own pages
+/// written as an `APP_LINK`.
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-pub fn render_html_blob(input: &str, rules: &HtmlRules<'_>) -> Option<Vec<u8>> {
+pub fn render_html_blob(input: &str, site: u8, base_url: Option<&str>) -> Option<Vec<u8>> {
+    render_html_blob_with(input, super::site::html(site), site, base_url)
+}
+
+/// As [`render_html_blob`], read by `rules` in place of the site's: for a test of a rule no site has.
+pub(crate) fn render_html_blob_with(
+    input: &str,
+    rules: &HtmlRules<'_>,
+    site: u8,
+    base_url: Option<&str>,
+) -> Option<Vec<u8>> {
     // ASCII input is only a hint, as in render_blob: a decoded entity or a typographic symbol can
     // write non-ASCII, so one scan of the output catches that and the rare violating document is
     // re-rendered with the scanning writer, every span offset redone.
@@ -68,11 +74,11 @@ pub fn render_html_blob(input: &str, rules: &HtmlRules<'_>) -> Option<Vec<u8>> {
     } else {
         BlobWriter::new(input.len())
     };
-    visit(input, rules, &mut b);
+    visit(input, rules, site, base_url, &mut b);
     b.append_footnotes();
     if b.fast_path_ascii && !b.text().is_ascii() {
         b = BlobWriter::new(input.len());
-        visit(input, rules, &mut b);
+        visit(input, rules, site, base_url, &mut b);
         b.append_footnotes();
     }
     if b.spans.is_empty() && b.text() == input {
@@ -100,6 +106,10 @@ enum Open<'a> {
 struct Walk<'a, 'o> {
     html: &'a str,
     rules: &'o HtmlRules<'o>,
+    /// The site the HTML is from, which knows its own pages.
+    site: u8,
+    /// The page the HTML sits on, which a relative link resolves against.
+    base_url: Option<&'o str>,
     out: &'o mut BlobWriter,
     open: Vec<Open<'a>>,
     /// The words between two tags with their entities decoded, one buffer for the whole walk.
@@ -120,10 +130,12 @@ struct Walk<'a, 'o> {
     line_quote: Option<usize>,
 }
 
-pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, out: &mut BlobWriter) {
+pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, site: u8, base_url: Option<&str>, out: &mut BlobWriter) {
     let mut w = Walk {
         html,
         rules,
+        site,
+        base_url,
         out,
         open: Vec::new(),
         decoded: String::new(),
@@ -341,18 +353,23 @@ impl<'a, 'o> Walk<'a, 'o> {
         after
     }
 
-    /// Where a link goes: resolved against the page, and the app's own where a rule says so.
+    /// Where a link goes: resolved against the page where it is relative.
     fn address(&self, href: Cow<'a, str>) -> Cow<'a, str> {
-        let href = match self.rules.base {
-            Some(base) => match relative(&href, base) {
-                Some(resolved) => Cow::Owned(resolved),
-                None => href,
-            },
+        match self.base_url.and_then(|base| relative(&href, base)) {
+            Some(resolved) => Cow::Owned(resolved),
             None => href,
-        };
-        match self.rules.app_links.iter().find_map(|pattern| app_link(&href, pattern)) {
-            Some(app) => Cow::Owned(app),
-            None => href,
+        }
+    }
+
+    /// A link's spans over the words written since `start`: an `APP_LINK` where the url is one of
+    /// the site's own pages, which shows no domain after its words, a `LINK` with the domain where
+    /// the words lack it otherwise.
+    fn write_link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
+        let own = super::site::is_own(self.site, url);
+        self.out.span_url(if own { APP_LINK } else { LINK }, start, url);
+        self.out.span(LINK_SIZE, start);
+        if !own {
+            self.out.append_domain_suffix(text_start, url);
         }
     }
 
@@ -415,9 +432,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             }
             Open::Link(start, text_start, href) => {
                 let url = resolve_url(&href);
-                self.out.span_url(LINK, start, &url);
-                self.out.span(LINK_SIZE, start);
-                self.out.append_domain_suffix(text_start, &url);
+                self.write_link(start, text_start, &url);
             }
         }
     }
@@ -494,9 +509,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             } else {
                 let (start, text_start) = (self.out.pos(), self.out.blob.len());
                 self.out.write_prose(words);
-                self.out.span_url(LINK, start, &url);
-                self.out.span(LINK_SIZE, start);
-                self.out.append_domain_suffix(text_start, &url);
+                self.write_link(start, text_start, &url);
             }
             from = end;
         }
@@ -635,27 +648,4 @@ fn relative(href: &str, base: &str) -> Option<String> {
     let path = &base[..cut(&['?', '#'])];
     let dir = path[host_end..].rfind('/').map_or(host_end, |i| host_end + i);
     Some(format!("{}/{href}", &path[..dir]))
-}
-
-/// `url` as the app's own link where it matches `pattern`, each `*` one path segment: the path it
-/// matched, after the host, and the url's fragment.
-fn app_link(url: &str, pattern: &str) -> Option<String> {
-    let (mut at, mut pieces) = (0, pattern.split('*').peekable());
-    while let Some(piece) = pieces.next() {
-        if !url[at..].starts_with(piece) {
-            return None;
-        }
-        at += piece.len();
-        if pieces.peek().is_some() {
-            let segment = url[at..].find(['/', '?', '#']).unwrap_or(url.len() - at);
-            if segment == 0 {
-                return None;
-            }
-            at += segment;
-        }
-    }
-    let host = url.find("://")? + 3;
-    let path_start = host + url[host..].find('/')? + 1;
-    let fragment = url[at..].find('#').map_or("", |i| &url[at + i..]);
-    Some(format!("app-link://{}{fragment}", &url[path_start..at]))
 }

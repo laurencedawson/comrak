@@ -32,7 +32,7 @@ pub mod sites;
 pub(crate) mod site;
 
 /// A site's HTML into the blob, the walk over HTML beside the one over comrak's tree.
-mod html;
+pub(crate) mod html;
 pub use html::{HtmlRules, Reads, TagRule, render_html_blob};
 
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)

@@ -9,7 +9,20 @@ mod hacker_news;
 mod lemmy;
 mod lobsters;
 
+use super::html::HtmlRules;
 use super::sites;
+
+/// How `site`'s HTML reads; a site that sends none reads as plain HTML.
+pub(crate) fn html(site: u8) -> &'static HtmlRules<'static> {
+    match site {
+        sites::HACKER_NEWS => &hacker_news::HTML,
+        sites::CHAN => &chan::HTML,
+        _ => &PLAIN,
+    }
+}
+
+/// Plain HTML: no site's tags, and a paragraph opening on `>` is words.
+const PLAIN: HtmlRules<'static> = HtmlRules { quote_marks: false, tags: &[] };
 
 /// Whether `url`, already resolved, is one of `site`'s own pages, for the app to open itself.
 pub(crate) fn is_own(site: u8, url: &str) -> bool {

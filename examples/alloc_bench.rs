@@ -206,13 +206,13 @@ fn main() {
         ("html/prose", html::prose_doc()),
     ];
     for (_, input) in &html_inputs {
-        let _ = blob::render_html_blob(input.trim(), &html::RULES);
+        let _ = blob::render_html_blob(input.trim(), html::SITE, None);
     }
     println!();
     for (name, input) in &html_inputs {
         let trimmed = input.trim();
         start_tracking();
-        let _ = blob::render_html_blob(trimmed, &html::RULES);
+        let _ = blob::render_html_blob(trimmed, html::SITE, None);
         let (count, bytes) = stop_tracking();
         println!(
             "{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input)",
@@ -229,7 +229,7 @@ fn main() {
     let md_comments = html::hn_comments_markdown();
     start_tracking();
     for c in &html_comments {
-        let _ = blob::render_html_blob(c, &html::RULES);
+        let _ = blob::render_html_blob(c, html::SITE, None);
     }
     let (html_count, html_bytes) = stop_tracking();
     start_tracking();
