@@ -595,7 +595,7 @@ mod format {
     fn render_blob_full(markdown: &str) -> Vec<u8> {
         let opts = test_opts();
         let md = markdown.trim();
-        parse_document_zerocopy(md, &opts, |root| crate::blob::render_blob(root, md))
+        parse_document_zerocopy(md, &opts, |root| crate::blob::render_blob(root, md, crate::blob::sites::PLAIN))
             .expect("expected a blob")
     }
 

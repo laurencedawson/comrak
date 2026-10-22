@@ -1,8 +1,11 @@
 //! Tests for each site's own pages (`blob::site::is_own`), each site's shapes from its own API
 //! documentation or routes: what must be the site's, and what must not, lookalikes among them.
 
+use crate::benchmarks::production_options;
 use crate::blob::site::is_own;
 use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN};
+use crate::blob::{APP_LINK, LINK, render_blob};
+use crate::parse_document_zerocopy;
 
 fn own(site: u8, urls: &[&str]) {
     for url in urls {
@@ -228,4 +231,87 @@ fn lemmy_not_its_own() {
         "https://old.REDDIT.com/c/x",
         "https://example.com/blog/post",
     ]);
+}
+
+// ── the markdown walk ────────────────────────────────────────────────────
+
+/// Every link in `md` read as `site`, its kind and address, and the text shown.
+fn links(md: &str, site: u8) -> (String, Vec<(i32, String)>) {
+    let opts = production_options();
+    let blob = parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).expect("a blob");
+    let int = |at: usize| i32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
+    let len = int(0) as usize;
+    let count = (int(4) & 0xFF_FFFF) as usize;
+    let spans = 8 + len + (4 - len % 4) % 4;
+    let urls = &blob[spans + count * 16..];
+    let text = String::from_utf8(blob[8..8 + len].to_vec()).unwrap();
+    let found = (0..count)
+        .map(|i| (int(spans + i * 16 + 8), int(spans + i * 16 + 12)))
+        .filter(|&(t, _)| t == LINK || t == APP_LINK)
+        .map(|(t, d)| {
+            let (at, n) = ((d >> 12) as usize, (d & 0xFFF) as usize);
+            (t, String::from_utf8(urls[at..at + n].to_vec()).unwrap())
+        })
+        .collect();
+    (text, found)
+}
+
+/// A Lemmy post, comment, community or user linked from any instance is the app's; a link
+/// elsewhere is a link, its domain after its words, the app's none.
+#[test]
+fn markdown_lemmy_links() {
+    let (text, found) = links(
+        "[a post](https://lemmy.ml/post/1) [a comment](https://sh.itjust.works/comment/2) \
+         [rust](https://programming.dev/c/rust) [elsewhere](https://example.com/a)",
+        LEMMY,
+    );
+    assert_eq!(text, "a post a comment rust elsewhere (example.com)");
+    assert_eq!(
+        found,
+        vec![
+            (APP_LINK, "https://lemmy.ml/post/1".to_string()),
+            (APP_LINK, "https://sh.itjust.works/comment/2".to_string()),
+            (APP_LINK, "https://programming.dev/c/rust".to_string()),
+            (LINK, "https://example.com/a".to_string()),
+        ]
+    );
+}
+
+/// A Lemmy mention, a link comrak makes of `@user@instance` and `!community@instance`, is the app's.
+#[test]
+fn markdown_lemmy_mentions() {
+    let (_, found) = links("hi @someone@lemmy.ml, see !rust@programming.dev", LEMMY);
+    assert_eq!(found.len(), 2);
+    assert!(found.iter().all(|(t, _)| *t == APP_LINK), "{found:?}");
+}
+
+/// A bare address is autolinked and marked the same, reddit's `/u/` left a link.
+#[test]
+fn markdown_lemmy_autolinks_and_reddit() {
+    let (_, found) = links("https://lemmy.world/post/9 and https://www.reddit.com/u/spez", LEMMY);
+    assert_eq!(
+        found,
+        vec![
+            (APP_LINK, "https://lemmy.world/post/9".to_string()),
+            (LINK, "https://www.reddit.com/u/spez".to_string()),
+        ]
+    );
+}
+
+/// Lobsters' stories and comments are the app's. Read as Lemmy, a story is a link, but a comment's
+/// `/c/{id}` is a community's shape on any instance, so Lemmy, federated, takes it for its own.
+#[test]
+fn markdown_lobsters_links() {
+    let md = "[story](https://lobste.rs/s/cdnepk/passkeys) and https://lobste.rs/c/523dmc";
+    let (_, found) = links(md, LOBSTERS);
+    assert!(found.iter().all(|(t, _)| *t == APP_LINK), "{found:?}");
+    let (_, found) = links(md, LEMMY);
+    assert_eq!(found.iter().map(|(t, _)| *t).collect::<Vec<_>>(), vec![LINK, APP_LINK]);
+}
+
+/// The plain site marks nothing.
+#[test]
+fn markdown_plain_marks_nothing() {
+    let (_, found) = links("[a post](https://lemmy.ml/post/1)", PLAIN);
+    assert_eq!(found, vec![(LINK, "https://lemmy.ml/post/1".to_string())]);
 }

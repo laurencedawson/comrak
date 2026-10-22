@@ -42,7 +42,7 @@ fn opts() -> Options<'static> {
 /// raw input as plain text (the fast path the JNI shim exposes as null).
 fn parity(markdown: &str) -> Option<Vec<u8>> {
     let trimmed = markdown.trim();
-    parse_document_zerocopy(trimmed, &opts(), |root| render_blob(root, trimmed))
+    parse_document_zerocopy(trimmed, &opts(), |root| render_blob(root, trimmed, crate::blob::sites::PLAIN))
 }
 
 fn render(markdown: &str) -> Vec<u8> {

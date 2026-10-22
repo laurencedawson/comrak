@@ -957,10 +957,15 @@ fn whole_real_comment() {
 
 // ── parity ───────────────────────────────────────────────────────────────
 
-/// The same comment written as markdown, through the walk over comrak's tree.
+/// The same comment written as markdown, through the walk over comrak's tree, as the plain site.
 fn markdown(md: &str) -> Option<Vec<u8>> {
+    markdown_as(md, sites::PLAIN)
+}
+
+/// The same comment written as markdown, read as `site`.
+fn markdown_as(md: &str, site: u8) -> Option<Vec<u8>> {
     let opts = production_options();
-    parse_document_zerocopy(md, &opts, |root| render_blob(root, md))
+    parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site))
 }
 
 /// What a reader shows: the blob read back, or, with none, its source as it is.
@@ -1072,6 +1077,22 @@ fn parity_chan_tags_read_as_their_markdown() {
         ("(see https://example.com/a).", "(see https://example.com/a)."),
         ("look https://i.imgur.com/abc.png here", "look https://i.imgur.com/abc.png here"),
     ];
+    for (html, md) in pairs {
+        assert_eq!(
+            shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
+            shown(markdown_as(md, sites::CHAN), md),
+            "{html:?} against {md:?}"
+        );
+    }
+    // A post's address typed among the words is the app's either way
+    let (html, md) = (
+        "see https://boards.4chan.org/g/thread/123#p456 now",
+        "see https://boards.4chan.org/g/thread/123#p456 now",
+    );
+    assert_eq!(
+        shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
+        shown(markdown_as(md, sites::CHAN), md)
+    );
     for (html, md) in pairs {
         assert_eq!(
             shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
