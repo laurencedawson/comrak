@@ -24,33 +24,37 @@ pub(crate) fn html(site: u8) -> &'static HtmlRules<'static> {
 /// Plain HTML: no site's tags, and a paragraph opening on `>` is words.
 const PLAIN: HtmlRules<'static> = HtmlRules { quote_marks: false, tags: &[] };
 
-/// Whether `url`, already resolved, is one of `site`'s own pages, for the app to open itself. A
-/// relative address is on the site's own host.
-pub(crate) fn is_own(site: u8, url: &str) -> bool {
-    let Some(url) = Url::parse(url) else {
-        return false;
-    };
-    match site {
-        sites::HACKER_NEWS => hacker_news::is_own(&url),
-        sites::CHAN => chan::is_own(&url),
-        sites::LEMMY => lemmy::is_own(&url),
-        sites::LOBSTERS => lobsters::is_own(&url),
-        _ => false,
-    }
+/// What a resolved address is to a site, read once for both questions a link asks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Page {
+    /// One of the site's own pages, for the app to open itself.
+    Own,
+    /// On the site's own host, where the domain after a link's words tells its reader nothing.
+    Internal,
+    /// Any other address.
+    Elsewhere,
 }
 
-/// Whether `url`, already resolved, is on `site`'s own host, where the domain after a link's
-/// words tells its reader nothing; a relative address is. Lemmy, federated, has no host of its own.
-pub(crate) fn is_internal(site: u8, url: &str) -> bool {
+/// What `url`, already resolved, is to `site`. A relative address is on the site's own host;
+/// Lemmy, federated, has no host of its own, so an address of its that is no page is elsewhere.
+pub fn page(site: u8, url: &str) -> Page {
     let Some(url) = Url::parse(url) else {
-        return false;
+        return Page::Elsewhere;
     };
-    url.on(match site {
-        sites::HACKER_NEWS => hacker_news::HOSTS,
-        sites::CHAN => chan::HOSTS,
-        sites::LOBSTERS => lobsters::HOSTS,
-        _ => &[],
-    })
+    let (own, hosts): (bool, &[&str]) = match site {
+        sites::HACKER_NEWS => (hacker_news::is_own(&url), hacker_news::HOSTS),
+        sites::CHAN => (chan::is_own(&url), chan::HOSTS),
+        sites::LEMMY => (lemmy::is_own(&url), &[]),
+        sites::LOBSTERS => (lobsters::is_own(&url), lobsters::HOSTS),
+        _ => return Page::Elsewhere,
+    };
+    if own {
+        Page::Own
+    } else if url.on(hosts) {
+        Page::Internal
+    } else {
+        Page::Elsewhere
+    }
 }
 
 /// An address as borrowed slices of itself: its host, its path without the leading slash, its

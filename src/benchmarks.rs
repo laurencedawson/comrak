@@ -141,8 +141,7 @@ pub fn prose_doc() -> String {
     s
 }
 
-/// Each site's own pages and their lookalikes, for `alloc_bench` to read through [`is_own`] and
-/// [`is_internal`].
+/// Each site's own pages and their lookalikes, for `alloc_bench` to read through `blob::site::page`.
 pub const SITE_LINKS: &[(u8, &str)] = {
     use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS};
     &[
@@ -163,16 +162,6 @@ pub const SITE_LINKS: &[(u8, &str)] = {
         (LOBSTERS, "https://lobste.rs/about"),
     ]
 };
-
-/// Whether `url` is `site`'s own page, `blob::site::is_own` open to the benches.
-pub fn is_own(site: u8, url: &str) -> bool {
-    crate::blob::site::is_own(site, url)
-}
-
-/// Whether `url` is on `site`'s own host, `blob::site::is_internal` open to the benches.
-pub fn is_internal(site: u8, url: &str) -> bool {
-    crate::blob::site::is_internal(site, url)
-}
 
 /// The same corpora written as the HTML a site would send for them, for the walk over HTML
 /// (`blob::render_html_blob`), so the two walks are timed on the same comments. The walk reads no

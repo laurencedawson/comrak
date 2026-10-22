@@ -28,11 +28,12 @@ mod span_types;
 pub mod sites;
 
 /// What each site knows about itself: how its HTML reads, and which of its links are its own pages.
-pub(crate) mod site;
+pub mod site;
+use site::Page;
 
 /// A site's HTML into the blob, the walk over HTML beside the one over comrak's tree.
 pub(crate) mod html;
-pub use html::{HtmlRules, Reads, TagRule, render_html_blob};
+pub use html::render_html_blob;
 
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
 // can reference span type ids without reaching into `span_types` directly.
@@ -324,10 +325,10 @@ impl BlobWriter {
     /// the site's own pages, a `LINK` otherwise, with the domain after the words where they lack
     /// it, unless it is the site's own, which tells its reader nothing.
     fn link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
-        let own = site::is_own(self.site, url);
-        self.span_url(if own { APP_LINK } else { LINK }, start, url);
+        let page = site::page(self.site, url);
+        self.span_url(if page == Page::Own { APP_LINK } else { LINK }, start, url);
         self.span(LINK_SIZE, start);
-        if !own && !site::is_internal(self.site, url) {
+        if page == Page::Elsewhere {
             self.append_domain_suffix(text_start, url);
         }
     }

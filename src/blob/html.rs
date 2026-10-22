@@ -15,8 +15,8 @@ use mdream::entities::{decode_html_attribute_entities, decode_html_entities_into
 use mdream::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
 
 /// How a site's HTML reads: each site's are in [`super::site`], the walk itself naming none.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HtmlRules<'r> {
+#[derive(Clone, Copy)]
+pub(crate) struct HtmlRules<'r> {
     /// A paragraph opening on `>` is a quote, its marks no text, as Hacker News' posters write one.
     pub quote_marks: bool,
     /// What a tag means, by its name and, where the rule names one, a class it has.
@@ -24,8 +24,8 @@ pub struct HtmlRules<'r> {
 }
 
 /// A tag that means something on a site, as `<span class="quote">` is a quoted line on 4chan.
-#[derive(Debug, Clone, Copy)]
-pub struct TagRule<'r> {
+#[derive(Clone, Copy)]
+pub(crate) struct TagRule<'r> {
     /// The tag's name, in any case.
     pub tag: &'r str,
     /// A class the tag must have, or none for every tag of that name.
@@ -35,8 +35,8 @@ pub struct TagRule<'r> {
 }
 
 /// What a tag's words read as, each written as the blob writer writes its markdown.
-#[derive(Debug, Clone, Copy)]
-pub enum Reads<'r> {
+#[derive(Clone, Copy)]
+pub(crate) enum Reads<'r> {
     /// Struck through, as markdown's `~~`.
     Strike,
     /// Greentext: its words as written, chevron and all, coloured and on a line of their own, as

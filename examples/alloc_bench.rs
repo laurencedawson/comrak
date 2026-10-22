@@ -9,11 +9,6 @@ struct TrackingAlloc;
 static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 static ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
 static TRACKING: AtomicUsize = AtomicUsize::new(0);
-// Size buckets: tiny (1-32), small (33-128), medium (129-1024), large (1025+)
-static BUCKET_TINY: AtomicUsize = AtomicUsize::new(0);
-static BUCKET_SMALL: AtomicUsize = AtomicUsize::new(0);
-static BUCKET_MEDIUM: AtomicUsize = AtomicUsize::new(0);
-static BUCKET_LARGE: AtomicUsize = AtomicUsize::new(0);
 
 // Fine-grained histogram: 16 buckets (powers of 2: 1-2, 3-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129-256, 257-512, 513-1024, 1025-2048, 2049-4096, 4097-8192, 8193-16384, 16385-32768, 32769+)
 #[rustfmt::skip]
@@ -46,20 +41,6 @@ unsafe impl GlobalAlloc for TrackingAlloc {
                     layout.align()
                 );
             }
-            match layout.size() {
-                1..=32 => {
-                    BUCKET_TINY.fetch_add(1, Ordering::Relaxed);
-                }
-                33..=128 => {
-                    BUCKET_SMALL.fetch_add(1, Ordering::Relaxed);
-                }
-                129..=1024 => {
-                    BUCKET_MEDIUM.fetch_add(1, Ordering::Relaxed);
-                }
-                _ => {
-                    BUCKET_LARGE.fetch_add(1, Ordering::Relaxed);
-                }
-            }
             HISTOGRAM[size_to_bucket(layout.size())].fetch_add(1, Ordering::Relaxed);
         }
         unsafe { System.alloc(layout) }
@@ -75,10 +56,6 @@ static GLOBAL: TrackingAlloc = TrackingAlloc;
 fn reset() {
     ALLOC_COUNT.store(0, Ordering::Relaxed);
     ALLOC_BYTES.store(0, Ordering::Relaxed);
-    BUCKET_TINY.store(0, Ordering::Relaxed);
-    BUCKET_SMALL.store(0, Ordering::Relaxed);
-    BUCKET_MEDIUM.store(0, Ordering::Relaxed);
-    BUCKET_LARGE.store(0, Ordering::Relaxed);
     for h in &HISTOGRAM {
         h.store(0, Ordering::Relaxed);
     }
@@ -181,14 +158,6 @@ fn main() {
         );
 
         if name == &"long-doc" || name == &"heavy-inline" {
-            let tiny = BUCKET_TINY.load(Ordering::Relaxed);
-            let small = BUCKET_SMALL.load(Ordering::Relaxed);
-            let medium = BUCKET_MEDIUM.load(Ordering::Relaxed);
-            let large = BUCKET_LARGE.load(Ordering::Relaxed);
-            println!(
-                "  buckets: tiny(1-32)={} small(33-128)={} medium(129-1K)={} large(1K+)={}",
-                tiny, small, medium, large
-            );
             print_histogram();
         }
     }
@@ -249,16 +218,11 @@ fn main() {
     );
 
     // Each site's own pages and their lookalikes, read as borrowed slices
+    use comrak::blob::site::{Page, page};
     let links = comrak::benchmarks::SITE_LINKS;
     start_tracking();
-    let own = links
-        .iter()
-        .filter(|(site, url)| comrak::benchmarks::is_own(*site, url))
-        .count();
-    let internal = links
-        .iter()
-        .filter(|(site, url)| comrak::benchmarks::is_internal(*site, url))
-        .count();
+    let own = links.iter().filter(|(site, url)| page(*site, url) == Page::Own).count();
+    let internal = links.iter().filter(|(site, url)| page(*site, url) != Page::Elsewhere).count();
     let (count, bytes) = stop_tracking();
     println!(
         "{:<20} {:>2} links, {:>2} own, {:>2} on site | {:>5} allocs {:>6} bytes",

@@ -1,22 +1,22 @@
-//! Tests for each site's own pages (`blob::site::is_own`), each site's shapes from its own API
+//! Tests for each site's own pages (`blob::site::page`), each site's shapes from its own API
 //! documentation or routes: what must be the site's, and what must not, lookalikes among them;
-//! and for its own host (`blob::site::is_internal`), after whose links no domain is written.
+//! and for its own host, after whose links no domain is written.
 
 use crate::benchmarks::production_options;
-use crate::blob::site::{is_internal, is_own};
+use crate::blob::site::{Page, page};
 use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN};
 use crate::blob::{APP_LINK, LINK, render_blob};
 use crate::parse_document_zerocopy;
 
 fn own(site: u8, urls: &[&str]) {
     for url in urls {
-        assert!(is_own(site, url), "{url} should be the site's own");
+        assert_eq!(page(site, url), Page::Own, "{url} should be the site's own");
     }
 }
 
 fn not_own(site: u8, urls: &[&str]) {
     for url in urls {
-        assert!(!is_own(site, url), "{url} should not be the site's own");
+        assert_ne!(page(site, url), Page::Own, "{url} should not be the site's own");
     }
 }
 
@@ -302,7 +302,7 @@ fn internal_is_the_sites_own_host_or_relative() {
         (LOBSTERS, "https://lobste.rs/newest"),
         (LEMMY, "/communities"),
     ] {
-        assert!(is_internal(site, url), "{url} should be internal to site {site}");
+        assert_ne!(page(site, url), Page::Elsewhere, "{url} should be internal to site {site}");
     }
     for (site, url) in [
         (HACKER_NEWS, "https://ycombinator.com/"),
@@ -314,7 +314,7 @@ fn internal_is_the_sites_own_host_or_relative() {
         (LEMMY, "https://lemmy.world/communities"),
         (PLAIN, "https://news.ycombinator.com/newest"),
     ] {
-        assert!(!is_internal(site, url), "{url} should not be internal to site {site}");
+        assert_eq!(page(site, url), Page::Elsewhere, "{url} should not be internal to site {site}");
     }
 }
 
