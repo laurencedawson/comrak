@@ -247,4 +247,21 @@ fn main() {
         md_count,
         md_bytes / 1024
     );
+
+    // Each site's own pages and their lookalikes, read as borrowed slices
+    let links = comrak::benchmarks::SITE_LINKS;
+    start_tracking();
+    let own = links
+        .iter()
+        .filter(|(site, url)| comrak::benchmarks::is_own(*site, url))
+        .count();
+    let (count, bytes) = stop_tracking();
+    println!(
+        "{:<20} {:>2} links, {:>2} own | {:>5} allocs {:>6} bytes",
+        "site/is-own",
+        links.len(),
+        own,
+        count,
+        bytes
+    );
 }

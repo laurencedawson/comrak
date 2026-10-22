@@ -141,6 +141,30 @@ pub fn prose_doc() -> String {
     s
 }
 
+/// Each site's own pages and their lookalikes, for `alloc_bench` to read through [`is_own`].
+pub const SITE_LINKS: &[(u8, &str)] = {
+    use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS};
+    &[
+        (HACKER_NEWS, "https://news.ycombinator.com/item?id=45678901"),
+        (HACKER_NEWS, "https://news.ycombinator.com/user?id=dang"),
+        (HACKER_NEWS, "https://news.ycombinator.com/newest"),
+        (CHAN, "https://boards.4chan.org/g/thread/110063208/some-title#p110072890"),
+        (CHAN, "https://boards.4channel.org/g/thread/110063208"),
+        (CHAN, "https://boards.4chan.org/g/catalog#s=sqt"),
+        (LEMMY, "https://lemmy.ml/post/123/456"),
+        (LEMMY, "https://lemmy.world/c/rust@programming.dev"),
+        (LEMMY, "https://www.reddit.com/u/spez"),
+        (LOBSTERS, "https://lobste.rs/s/abc123/a_title/comments/def456"),
+        (LOBSTERS, "https://lobste.rs/t/rust,go/page/2"),
+        (LOBSTERS, "https://lobste.rs/about"),
+    ]
+};
+
+/// Whether `url` is `site`'s own page, `blob::site::is_own` open to the benches.
+pub fn is_own(site: u8, url: &str) -> bool {
+    crate::blob::site::is_own(site, url)
+}
+
 /// The same corpora written as the HTML a site would send for them, for the walk over HTML
 /// (`blob::render_html_blob`), so the two walks are timed on the same comments. The walk reads no
 /// heading, list, rule, table or strike yet, so those tags are scanned and their words kept.
