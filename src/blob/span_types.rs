@@ -21,9 +21,10 @@ pub const SUPERSCRIPT_SIZE: i32 = 18;
 pub const SUBSCRIPT_SIZE: i32 = 19;
 pub const GREENTEXT: i32 = 20;
 pub const LINK: i32 = 21;
-pub const LINK_SIZE: i32 = 22;
-pub const LEMMY_SPOILER_TITLE: i32 = 23;
-pub const LEMMY_SPOILER_CONTENT: i32 = 24;
+pub const APP_LINK: i32 = 22;
+pub const LINK_SIZE: i32 = 23;
+pub const LEMMY_SPOILER_TITLE: i32 = 24;
+pub const LEMMY_SPOILER_CONTENT: i32 = 25;
 
 pub const HEADINGS: [i32; 6] = [
     HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6,
