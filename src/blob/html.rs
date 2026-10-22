@@ -21,9 +21,6 @@ pub struct HtmlRules<'r> {
     pub quote_marks: bool,
     /// What a tag means, by its name and, where the rule names one, a class it has.
     pub tags: &'r [TagRule<'r>],
-    /// Addresses typed among the words are links, `scheme://` and `www.` ones as comrak's autolink
-    /// reads them, one broken by a `<wbr>` read whole.
-    pub autolink: bool,
     /// The page the HTML sits on, which a relative link resolves against, as a browser would.
     pub base: Option<&'r str>,
     /// The site's pages the app opens itself, as addresses whose `*` stands for one path segment:
@@ -459,7 +456,8 @@ impl<'a, 'o> Walk<'a, 'o> {
         if !words.is_empty() {
             self.begin();
             let words = collapse(words);
-            if self.rules.autolink && !self.open.iter().any(|o| matches!(o, Open::Link(..))) {
+            // Addresses typed among the words are links, as comrak's autolink makes them in markdown
+            if !self.open.iter().any(|o| matches!(o, Open::Link(..))) {
                 self.autolinked(&words);
             } else {
                 self.out.write_prose(&words);
