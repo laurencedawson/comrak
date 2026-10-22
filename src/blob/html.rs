@@ -358,7 +358,6 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
     }
 
-
     /// A link whose only words are an address, to a picture, is the picture, as comrak's autolink
     /// is. Answers where the words after its `</a>` begin.
     fn picture(&mut self, href: &str, after: usize) -> Option<usize> {
@@ -445,11 +444,11 @@ impl<'a, 'o> Walk<'a, 'o> {
     fn words(&mut self, text: &str) {
         if let Some(pre) = &mut self.pre {
             // HTML drops the newline straight after `<pre>`
-            let text = if pre.is_empty() { text.strip_prefix('\n').unwrap_or(&text) } else { &text };
+            let text = if pre.is_empty() { text.strip_prefix('\n').unwrap_or(text) } else { text };
             pre.push_str(text);
             return;
         }
-        let mut run: &str = &text;
+        let mut run = text;
         if self.block_start && self.rules.quote_marks {
             // A paragraph opening on `>` is a quote, the marks no text
             loop {
