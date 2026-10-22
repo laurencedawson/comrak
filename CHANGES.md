@@ -14,7 +14,7 @@ history still resolve. Highlights:
 |---|---|
 | [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
 | [URL resolution](#url-resolution) | `resolve_url()`: proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint |
-| [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd) | Each site syncdown reads compiled in, one function per question: its HTML's rules, and its own pages, written as `APP_LINK` spans for the app to open itself |
+| [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
@@ -140,7 +140,7 @@ It does three things:
 
 > **Naming note.** The fork's resolver was renamed `clean_url` → `resolve_url` (and the old `NodeLink::cleaned_url()` accessor removed in favour of the `span_url` chokepoint) so it no longer collides with upstream's spec-unescaping `strings::clean_url` ([7c60125]).
 
-## Sites and app links ([df385a7], [3edc676], [5fc6ff3], [b381692], [736f5cd])
+## Sites and app links ([df385a7], [3edc676], [5fc6ff3], [b381692], [736f5cd], [a721133], [89a23ad], [e277031], [94bb2f6])
 
 Both walks take the site they read for: a `u8` from `blob::sites` (`PLAIN`,
 `HACKER_NEWS`, `CHAN`, `LEMMY`, `LOBSTERS`), generated from syncdown's
@@ -153,23 +153,36 @@ matching on the id, every other site taking the default, and each site's code in
 |---|---|
 | `site::html(site)` | How its HTML reads: its [`HtmlRules`](#htmlrules-bca01f9-29b28a5-50226a9-2090141-10e87cf-5fc6ff3) |
 | `site::is_own(site, url)` | Whether a resolved address is one of its own pages, for the app to open itself |
+| `site::is_internal(site, url)` | Whether a resolved address is on its own host, where the domain after a link's words tells its reader nothing |
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
-a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK` with
-its domain suffix. An `APP_LINK` carries its real address in `url_data` as a
-`LINK` does, and has no suffix, since the app shows the page itself.
+a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
+its domain after the words where they lack it, unless the link is on the site's
+own host, which tells its reader nothing: a 4chan board's archive or
+`lobste.rs/newest` carry none. An `APP_LINK` carries its real address in
+`url_data` as a `LINK` does, and has no suffix, since the app shows the page
+itself.
 
 Each site's own pages, from its own documentation:
 
 | Site | Own pages | From |
 |---|---|---|
 | Hacker News | `item?id={id}`, `user?id={name}`, on `news.ycombinator.com` | its API's README |
-| 4chan | `/{board}/thread/{op}`, its title after it, a trailing slash, a post `#p{no}`, on `boards.4chan.org` and `boards.4channel.org` | its API's documentation |
+| 4chan | `/{board}/thread/{op}`, its title after it, a trailing slash, a post `#p{no}`; a board's index `/{board}/` and its catalog `/{board}/catalog`, a search after `#s=`, where a `>>>/g/` quotelink goes; on `boards.4chan.org` and `boards.4channel.org` | its API's documentation |
 | Lobsters | `/s/{id}`, its title after it, `/s/{id}/{title}/comments/{id}`, `/stories/{id}`, `/c/{id}`, `/comments/{id}`, `/~{name}`, `/u/{name}`, `/t/{tags}` and its pages, on `lobste.rs` | its `config/routes.rb` |
-| Lemmy | `/post/{id}`, `/post/{id}/{comment}`, `/comment/{id}`, `/c/{name}`, `/m/{name}`, `/u/{name}`, a name with `@{instance}`, on any host but reddit.com's | lemmy-ui's routes |
+| Lemmy | `/post/{id}`, `/post/{id}/{comment}`, `/comment/{id}`, `/c/{name}`, `/m/{name}`, `/u/{name}`, a name with `@{instance}`, on any host but those whose own pages share the shapes | lemmy-ui's routes |
 
-- Lemmy is federated, so its host never decides; reddit's users share the `/u/`
-  shape, so its hosts are left out. The others are on their own hosts alone
+- Lemmy is federated, so its host never decides; the hosts whose own pages share
+  its shapes are left out, each with its subdomains: reddit's `/u/{name}`,
+  YouTube's, Patreon's and Rumble's `/c/{channel}`, Tumblr's `/post/{id}`,
+  Medium's `/m/`, Lobsters' `/c/{id}`. The list can only name what it knows
+  (PeerTube's channels are `/c/{name}` on any host), so an `APP_LINK` the app
+  cannot resolve should open as the address it carries. The other sites are on
+  their own hosts alone
+- A relative address, opening on `/`, is on the site's own host, so the site's
+  shapes are its own there too: lemmy-ui writes a completed community as
+  `[!rust@lemmy.ml](/c/rust@lemmy.ml)`, and the markdown walk has no page to
+  resolve it against. `//host` names another host, so is none
 - An address with a user, a port or a scheme other than `http` and `https` is
   no site's page. `PLAIN` owns none
 - Nothing is copied or allocated: `site::Url` reads an address as borrowed
@@ -179,12 +192,15 @@ Each site's own pages, from its own documentation:
   link the walks write for 3,808 4chan comments, 1,528 Hacker News comments, 58
   Lemmy and 362 Lobsters texts: 3,849 links, 3,370 of them own pages, none
   disagreeing, and no allocation reading all of them as each of the five sites.
-  Every 4chan quotelink to a thread is an `APP_LINK`, and nothing else is
+  Every 4chan quotelink to a thread was an `APP_LINK`, and nothing else. Boards
+  and catalogs, the hosts list, relative addresses and `is_internal` came after
+  that run
 
 This replaces the `app-link://` scheme a host wrote into markdown for its own
 screens ([1b09a35]): `resolve_url` and `extract_domain` now treat it as any
 other text. Pinned by `src/tests/site.rs`, and in `src/tests/blob_html.rs` by
-`site_link_own_pages_are_app_links`.
+`site_link_own_pages_are_app_links`, `site_link_boards_and_catalogs_are_the_apps`
+and `site_link_other_pages_stay_addresses`.
 
 ## Blob rendering
 
@@ -248,7 +264,7 @@ offsets remain exact because everything before the substitution was ASCII.
 
 `comrak::blob::render_blob(root, input, site) -> Option<Vec<u8>>` renders the
 AST at `root` against the original source `input`, its links marked as
-[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd). Returns `None` when the
+[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6). Returns `None` when the
 document has no spans and the output text equals the input (the caller can
 then use the raw input string directly and skip allocating a blob).
 
@@ -570,10 +586,10 @@ prose     12938 chars |  94 allocs  168 KB (13.4x input) | parse  88 blob   6 | 
 ```
 
 The last line reads each site's own pages and their lookalikes through
-`site::is_own`, which must allocate nothing:
+`site::is_own` and `site::is_internal`, which must allocate nothing:
 
 ```
-site/is-own          12 links,  8 own |     0 allocs      0 bytes
+site/is-own          15 links, 10 own, 11 on site |     0 allocs      0 bytes
 ```
 
 These are a thread's second parse: the first also allocates the block contents
@@ -898,3 +914,7 @@ Pixel 9 Pro XL).
 [5fc6ff3]: https://github.com/laurencedawson/comrak/commit/5fc6ff3
 [b381692]: https://github.com/laurencedawson/comrak/commit/b381692
 [736f5cd]: https://github.com/laurencedawson/comrak/commit/736f5cd
+[a721133]: https://github.com/laurencedawson/comrak/commit/a721133
+[89a23ad]: https://github.com/laurencedawson/comrak/commit/89a23ad
+[e277031]: https://github.com/laurencedawson/comrak/commit/e277031
+[94bb2f6]: https://github.com/laurencedawson/comrak/commit/94bb2f6
