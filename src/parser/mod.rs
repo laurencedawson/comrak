@@ -262,15 +262,13 @@ where
     }
 
     fn parse(mut self, s: &str) -> Node<'a> {
-        let stripped = if self.options.parse.sanitize_input {
-            strings::strip_invisible(s)
+        let stripped;
+        let mut s = if self.options.parse.sanitize_input {
+            stripped = strings::strip_invisible(s);
+            strings::strip_leading_breaks(&stripped)
         } else {
-            Cow::Borrowed(s)
+            s
         };
-        let mut s: &str = &stripped;
-        if self.options.parse.sanitize_input {
-            s = strings::strip_leading_breaks(s);
-        }
         if let Some(delimiter) = &self.options.extension.front_matter_delimiter
             && let Some((front_matter, rest)) = split_off_front_matter(s, delimiter)
         {
@@ -961,7 +959,10 @@ where
     }
 
     fn handle_lemmy_spoiler(&mut self, container: &mut Node<'a>, line: &str) -> bool {
-        let Some(matched) = self.detect_lemmy_spoiler(line) else {
+        if !self.options.extension.lemmy_spoiler {
+            return false;
+        }
+        let Some(matched) = scanners::open_block_directive_fence(&line[self.first_nonspace..]) else {
             return false;
         };
 
@@ -1009,14 +1010,6 @@ where
         self.advance_offset(line, line_to_consume, false);
 
         true
-    }
-
-    fn detect_lemmy_spoiler(&self, line: &str) -> Option<usize> {
-        if self.options.extension.lemmy_spoiler {
-            scanners::open_block_directive_fence(&line[self.first_nonspace..])
-        } else {
-            None
-        }
     }
 
     fn handle_alert(&mut self, container: &mut Node<'a>, line: &str) -> bool {
