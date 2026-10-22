@@ -731,16 +731,17 @@ fn site_link_in_full_is_the_apps() {
     );
 }
 
-/// A page no rule names, a board or a catalog search, stays an address on the site.
+/// A page no rule names, a board or a catalog search, stays an address on the site, with no domain
+/// after its words: the site's reader knows where they are.
 #[test]
 fn site_link_other_pages_stay_addresses() {
     assert_eq!(
         chan_link("<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"),
-        (">>>/po/lft (boards.4chan.org)".to_string(), "https://boards.4chan.org/po/catalog#s=lft".to_string())
+        (">>>/po/lft".to_string(), "https://boards.4chan.org/po/catalog#s=lft".to_string())
     );
     assert_eq!(
         chan_link("<a href=\"/wsr/\">board</a>"),
-        ("board (boards.4chan.org)".to_string(), "https://boards.4chan.org/wsr/".to_string())
+        ("board".to_string(), "https://boards.4chan.org/wsr/".to_string())
     );
 }
 

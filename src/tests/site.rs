@@ -1,8 +1,9 @@
 //! Tests for each site's own pages (`blob::site::is_own`), each site's shapes from its own API
-//! documentation or routes: what must be the site's, and what must not, lookalikes among them.
+//! documentation or routes: what must be the site's, and what must not, lookalikes among them;
+//! and for its own host (`blob::site::is_internal`), after whose links no domain is written.
 
 use crate::benchmarks::production_options;
-use crate::blob::site::is_own;
+use crate::blob::site::{is_internal, is_own};
 use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN};
 use crate::blob::{APP_LINK, LINK, render_blob};
 use crate::parse_document_zerocopy;
@@ -271,6 +272,38 @@ fn relative_address_is_on_the_sites_own_host() {
     not_own(PLAIN, &["/post/1"]);
 }
 
+// ── internal ─────────────────────────────────────────────────────────────
+
+/// A link on the site's own host, in any case, or relative, is internal: the domain after its
+/// words would tell the site's reader nothing. Another host, a lookalike among them, is not, and
+/// Lemmy, federated, has no host of its own.
+#[test]
+fn internal_is_the_sites_own_host_or_relative() {
+    for (site, url) in [
+        (HACKER_NEWS, "https://news.ycombinator.com/newest"),
+        (HACKER_NEWS, "https://NEWS.ycombinator.com/from?site=x"),
+        (HACKER_NEWS, "/newest"),
+        (CHAN, "https://boards.4chan.org/g/"),
+        (CHAN, "https://boards.4channel.org/po/catalog#s=lft"),
+        (LOBSTERS, "https://lobste.rs/newest"),
+        (LEMMY, "/communities"),
+    ] {
+        assert!(is_internal(site, url), "{url} should be internal to site {site}");
+    }
+    for (site, url) in [
+        (HACKER_NEWS, "https://ycombinator.com/"),
+        (HACKER_NEWS, "https://news.ycombinator.com.evil.com/"),
+        (HACKER_NEWS, "//news.ycombinator.com/newest"),
+        (CHAN, "https://4chan.org/"),
+        (CHAN, "https://i.4cdn.org/g/1.png"),
+        (LOBSTERS, "https://www.lobste.rs/"),
+        (LEMMY, "https://lemmy.world/communities"),
+        (PLAIN, "https://news.ycombinator.com/newest"),
+    ] {
+        assert!(!is_internal(site, url), "{url} should not be internal to site {site}");
+    }
+}
+
 // ── the markdown walk ────────────────────────────────────────────────────
 
 /// Every link in `md` read as `site`, its kind and address, and the text shown.
@@ -365,6 +398,18 @@ fn markdown_lemmy_relative_links() {
             (LINK, "/search".to_string()),
         ]
     );
+}
+
+/// A link on the site's own host shows no domain after its words, the site's reader knowing where
+/// they are; read as another site, the same link does.
+#[test]
+fn markdown_internal_links_show_no_domain() {
+    let md = "[newest](https://lobste.rs/newest) [story](https://lobste.rs/s/cdnepk) [else](https://example.com/a)";
+    let (text, found) = links(md, LOBSTERS);
+    assert_eq!(text, "newest story else (example.com)");
+    assert_eq!(found.iter().map(|(t, _)| *t).collect::<Vec<_>>(), vec![LINK, APP_LINK, LINK]);
+    let (text, _) = links(md, PLAIN);
+    assert_eq!(text, "newest (lobste.rs) story (lobste.rs) else (example.com)");
 }
 
 /// The plain site marks nothing.
