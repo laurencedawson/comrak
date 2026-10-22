@@ -15,6 +15,7 @@ history still resolve. Highlights:
 | [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
 | [URL resolution](#url-resolution) | `resolve_url()` — proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint. [App links](#app-links-1b09a35) (`app-link://`) are exempt from all of it |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
+| [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -234,6 +235,39 @@ AST at `root` against the original source `input`. Returns `None` when the
 document has no spans and the output text equals the input (the caller can
 then use the raw input string directly and skip allocating a blob).
 
+### HTML into the blob ([b6d9a01], [2f00ef6])
+
+`comrak::blob::render_html_blob(input) -> Option<Vec<u8>>` reads a site's
+comment HTML, Hacker News' as its API sends it, into the same blob, with no
+markdown between. A second walk, over the HTML in place of comrak's tree,
+writes through the one `BlobWriter`, so a comment reads the same either way and
+an enhancement to the writer reaches both.
+
+- One pass, no tree: `src/blob/html.rs`, a child of `blob` so the writer stays
+  private. Each tag is written as the writer writes the markdown it stands for
+- Read so far: `<p>` (Hacker News opens every paragraph but the first with a
+  bare one, closing none), `<br>`, `<b>`/`<strong>`, `<i>`/`<em>`, `<a href>`
+  (resolved, the domain suffix, a link whose words are its own picture address
+  as the picture), `<pre>` kept as written, comments, every entity, HTML
+  whitespace. A paragraph opening on `>` is a quote, `>>` nested, as the site's
+  posters write one. Other tags keep their words
+- The same shape as `render_blob`: the ASCII fast path, the re-render when the
+  output is not ASCII, `None` for unchanged text. No plain-text gate: as for
+  markdown's `needs_parse`, that is syncdown's
+- From mdream 2.0.3 (MIT, `src/blob/html/mdream/`): `entities.rs` and
+  `entities_generated.rs` as written, every WHATWG entity with the standard's
+  text and attribute rules; `scan.rs` cut to a whole string, its chunk carries,
+  discarded-byte scans and attribute budgets left behind. Its markdown writer,
+  selectors, Tailwind, URL and plugin code are not here
+- Built as htmlrak, a crate of its own mirroring this writer, and moved in
+  whole: blobs byte-identical to htmlrak over 1,551 inputs, 1,528 of them
+  fetched Hacker News comments
+- `tests/blob_html.rs` ([b2f39fe]): htmlrak's tests, and a parity table of 28
+  comments as HTML and as markdown, parsed both ways and asserted to read the
+  same, so the two walks cannot drift
+- Not yet: the invisible-character strip `sanitize_input` gives markdown, and
+  4chan's tags (greentext, spoilers, links to posts)
+
 ### Standalone use (without the fork's parse-side changes)
 
 The blob renderer is decoupled from how the AST is built. `render_blob` walks a
@@ -430,6 +464,10 @@ prose parse for two optimisation passes without showing.
 
 ### `src/benchmarks.rs`
 
+`benchmarks::html` ([c392115]) holds the same corpora written as the HTML a
+site would send, and ten real Hacker News comments as HTML and as markdown;
+`bench_all` and `alloc_bench` report both walks side by side.
+
 Public module exposing a range of synthetic inputs: `PLAIN`, `SIMPLE`,
 `MEDIUM`, plus generators `deep_nesting()`, `heavy_inline()`, `complex()`,
 `long_doc()` (a realistic ~13 KB post), and `prose_doc()` (~13 KB of
@@ -506,6 +544,12 @@ src/
 │                                cold-path grow, documented soundness invariants, drain() for the
 │                                parse entry to take back what the next parse reuses
 ├── blob.rs                    ← binary blob renderer: BlobWriter + visit + render_blob
+├── blob/
+│   ├── html.rs                ← the walk over a site's HTML + render_html_blob
+│   └── html/
+│       ├── mdream.rs          ← where the mdream files come from, what was cut
+│       └── mdream/            ← entities.rs, entities_generated.rs, scan.rs, LICENSE (MIT)
+├── benchmarks/                ← hn_comments.html and .md, ten real comments both ways
 ├── image_url.rs               ← is_image_url heuristic (used by blob autolink-to-image)
 ├── text.rs                    ← the blob text-normalization policy: collapse_whitespace,
 │                                prefer_ascii, typographic_symbols
@@ -516,6 +560,7 @@ src/
 └── tests/
     ├── blob.rs                ← blob renderer tests (format/inline/links/images/block/
     │                            footnotes/edge/production sub-modules)
+    ├── blob_html.rs           ← the walk over HTML, and its parity with markdown
     ├── image_url.rs           ← is_image_url tests
     ├── lemmy.rs               ← lemmy_mention + lemmy_spoiler tests
     ├── smart_parity.rs        ← the smartypants-retirement contract: invariants that must
@@ -788,3 +833,7 @@ Pixel 9 Pro XL).
 [6ef2dfb]: https://github.com/laurencedawson/comrak/commit/6ef2dfb
 [0bda756]: https://github.com/laurencedawson/comrak/commit/0bda756
 [710d6a9]: https://github.com/laurencedawson/comrak/commit/710d6a9
+[b6d9a01]: https://github.com/laurencedawson/comrak/commit/b6d9a01
+[2f00ef6]: https://github.com/laurencedawson/comrak/commit/2f00ef6
+[b2f39fe]: https://github.com/laurencedawson/comrak/commit/b2f39fe
+[c392115]: https://github.com/laurencedawson/comrak/commit/c392115
