@@ -35,8 +35,8 @@ pub enum Page {
     Elsewhere,
 }
 
-/// What `url`, already resolved, is to `site`. A relative address is on the site's own host;
-/// Lemmy, federated, has no host of its own, so an address of its that is no page is elsewhere.
+/// What `url`, already resolved, is to `site`. A relative address is on the site's own host,
+/// whatever the site; Lemmy, federated, has no host of its own beyond that, and `PLAIN` no pages.
 pub fn page(site: u8, url: &str) -> Page {
     let Some(url) = Url::parse(url) else {
         return Page::Elsewhere;
@@ -46,7 +46,7 @@ pub fn page(site: u8, url: &str) -> Page {
         sites::CHAN => (chan::is_own(&url), chan::HOSTS),
         sites::LEMMY => (lemmy::is_own(&url), &[]),
         sites::LOBSTERS => (lobsters::is_own(&url), lobsters::HOSTS),
-        _ => return Page::Elsewhere,
+        _ => (false, &[]),
     };
     if own {
         Page::Own
