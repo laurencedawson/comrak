@@ -25,7 +25,7 @@ mod span_types;
 
 /// A site's HTML into the blob, the walk over HTML beside the one over comrak's tree.
 mod html;
-pub use html::render_html_blob;
+pub use html::{HtmlRules, render_html_blob};
 
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
 // can reference span type ids without reaching into `span_types` directly.

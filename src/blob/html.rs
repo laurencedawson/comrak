@@ -13,11 +13,18 @@ use crate::parser::url::resolve_url;
 use mdream::entities::{decode_html_attribute_entities, decode_html_entities_into};
 use mdream::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
 
-/// Render a site's HTML into a binary blob.
+/// How a site's HTML reads, as data, so no site's rules live here: each app builds its own.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HtmlRules {
+    /// A paragraph opening on `>` is a quote, its marks no text, as Hacker News' posters write one.
+    pub quote_marks: bool,
+}
+
+/// Render a site's HTML into a binary blob, read by `rules`.
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-pub fn render_html_blob(input: &str) -> Option<Vec<u8>> {
+pub fn render_html_blob(input: &str, rules: &HtmlRules) -> Option<Vec<u8>> {
     // ASCII input is only a hint, as in render_blob: a decoded entity or a typographic symbol can
     // write non-ASCII, so one scan of the output catches that and the rare violating document is
     // re-rendered with the scanning writer, every span offset redone.
@@ -26,11 +33,11 @@ pub fn render_html_blob(input: &str) -> Option<Vec<u8>> {
     } else {
         BlobWriter::new(input.len())
     };
-    visit(input, &mut b);
+    visit(input, rules, &mut b);
     b.append_footnotes();
     if b.fast_path_ascii && !b.text().is_ascii() {
         b = BlobWriter::new(input.len());
-        visit(input, &mut b);
+        visit(input, rules, &mut b);
         b.append_footnotes();
     }
     if b.spans.is_empty() && b.text() == input {
@@ -51,6 +58,7 @@ enum Open<'a> {
 
 struct Walk<'a, 'o> {
     html: &'a str,
+    rules: &'o HtmlRules,
     out: &'o mut BlobWriter,
     open: Vec<Open<'a>>,
     /// The words between two tags with their entities decoded, one buffer for the whole walk.
@@ -67,9 +75,10 @@ struct Walk<'a, 'o> {
     pre: Option<String>,
 }
 
-pub(crate) fn visit(html: &str, out: &mut BlobWriter) {
+pub(crate) fn visit(html: &str, rules: &HtmlRules, out: &mut BlobWriter) {
     let mut w = Walk {
         html,
+        rules,
         out,
         open: Vec::new(),
         decoded: String::new(),
@@ -281,7 +290,7 @@ impl<'a> Walk<'a, '_> {
             return;
         }
         let mut run: &str = &text;
-        if self.block_start {
+        if self.block_start && self.rules.quote_marks {
             // A paragraph opening on `>` is a quote, the marks no text
             loop {
                 run = run.trim_start_matches(is_space);

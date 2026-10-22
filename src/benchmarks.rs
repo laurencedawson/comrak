@@ -145,6 +145,9 @@ pub fn prose_doc() -> String {
 /// (`blob::render_html_blob`), so the two walks are timed on the same comments. The walk reads no
 /// heading, list, rule, table or strike yet, so those tags are scanned and their words kept.
 pub mod html {
+    /// The rules the corpora are read by: Hacker News', a paragraph opening on `>` a quote.
+    pub const RULES: crate::blob::HtmlRules = crate::blob::HtmlRules { quote_marks: true };
+
     /// Plain text with no markdown syntax.
     pub const PLAIN: &str = "Just some plain text with no markdown formatting at all.";
 
@@ -404,12 +407,12 @@ mod tests {
         for (name, input) in &html_inputs {
             let trimmed = input.trim();
             for _ in 0..100 {
-                let _ = blob::render_html_blob(trimmed);
+                let _ = blob::render_html_blob(trimmed, &html::RULES);
             }
             let iterations = 500;
             let start = std::time::Instant::now();
             for _ in 0..iterations {
-                let _ = blob::render_html_blob(trimmed);
+                let _ = blob::render_html_blob(trimmed, &html::RULES);
             }
             let elapsed = start.elapsed() / iterations;
             eprintln!(
@@ -425,11 +428,11 @@ mod tests {
         let md_comments = html::hn_comments_markdown();
         let iterations = 500;
         for _ in 0..100 {
-            html_comments.iter().for_each(|c| drop(blob::render_html_blob(c)));
+            html_comments.iter().for_each(|c| drop(blob::render_html_blob(c, &html::RULES)));
         }
         let start = std::time::Instant::now();
         for _ in 0..iterations {
-            html_comments.iter().for_each(|c| drop(blob::render_html_blob(c)));
+            html_comments.iter().for_each(|c| drop(blob::render_html_blob(c, &html::RULES)));
         }
         let html_elapsed = start.elapsed() / iterations;
         for _ in 0..100 {
@@ -449,8 +452,8 @@ mod tests {
 
     #[test]
     fn html_corpora_produce_blobs() {
-        assert!(blob::render_html_blob(html::SIMPLE).is_some());
-        assert!(blob::render_html_blob(&html::long_doc()).is_some());
+        assert!(blob::render_html_blob(html::SIMPLE, &html::RULES).is_some());
+        assert!(blob::render_html_blob(&html::long_doc(), &html::RULES).is_some());
         assert_eq!(html::hn_comments().len(), 10);
         assert_eq!(html::hn_comments_markdown().len(), 10);
     }

@@ -17,12 +17,17 @@
 //! - `parity`     : the same comments as markdown and as HTML, read the same
 
 use crate::benchmarks::production_options;
-use crate::blob::{BOLD, CODE_BLOCK, IMAGE, ITALIC, LINK, LINK_SIZE, QUOTE, render_blob, render_html_blob};
+use crate::blob::{
+    BOLD, CODE_BLOCK, HtmlRules, IMAGE, ITALIC, LINK, LINK_SIZE, QUOTE, render_blob, render_html_blob,
+};
 use crate::parse_document_zerocopy;
 
-/// The walk under test, by the name the tests were written against.
+/// Hacker News' rules: a paragraph opening on `>` is a quote.
+const HACKER_NEWS: HtmlRules = HtmlRules { quote_marks: true };
+
+/// The walk under test, by the name the tests were written against, read by Hacker News' rules.
 fn parse(html: &str) -> Option<Vec<u8>> {
-    render_html_blob(html)
+    render_html_blob(html, &HACKER_NEWS)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -627,7 +632,7 @@ fn parity_html_reads_as_its_markdown() {
     ];
     for (html, md) in pairs {
         assert_eq!(
-            shown(render_html_blob(html), html),
+            shown(parse(html), html),
             shown(markdown(md), md),
             "{html:?} against {md:?}"
         );
