@@ -6,9 +6,10 @@
 use super::{Url, digits};
 
 pub(super) fn is_own(url: &Url<'_>) -> bool {
-    let host = url.host;
-    let reddit = host.eq_ignore_ascii_case("reddit.com")
-        || host.len() > 11 && host[host.len() - 11..].eq_ignore_ascii_case(".reddit.com");
+    // Bytes, so a host's end falling inside a character is no panic
+    let host = url.host.as_bytes();
+    let reddit = host.eq_ignore_ascii_case(b"reddit.com")
+        || host.len() > 11 && host[host.len() - 11..].eq_ignore_ascii_case(b".reddit.com");
     if reddit {
         return false;
     }
