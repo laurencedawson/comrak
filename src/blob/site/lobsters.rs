@@ -10,17 +10,15 @@ pub(super) fn is_own(url: &Url<'_>) -> bool {
         return false;
     }
     let path = url.path.strip_suffix('/').unwrap_or(url.path);
-    let segments: [&str; 5] = {
-        let mut s = path.split('/');
-        [0; 5].map(|_| s.next().unwrap_or(""))
-    };
-    if path.split('/').count() > 5 {
+    let mut split = path.split('/');
+    let segments: [&str; 5] = [0; 5].map(|_| split.next().unwrap_or(""));
+    if split.next().is_some() {
         return false;
     }
     let id = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric());
     match segments {
         // A story, its title, and a comment on it
-        ["s", story, "", "", ""] | ["s", story, _, "", ""] => id(story),
+        ["s", story, _, "", ""] => id(story),
         ["s", story, _, "comments", comment] => id(story) && id(comment),
         ["stories", story, "", "", ""] => id(story),
         ["c", comment, "", "", ""] | ["comments", comment, "", "", ""] => id(comment),
