@@ -13,9 +13,10 @@ history still resolve. Highlights:
 | Area | What |
 |---|---|
 | [Extensions](#extensions) | Lemmy mentions + spoiler directive, `sanitize_input` (invisible-char + leading-hard-break stripping). Smartypants is retired — see [below](#retired-parsesmart-and-the-forks-smart-additions) |
-| [URL resolution](#url-resolution) | `resolve_url()` — proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint. [App links](#app-links-1b09a35) (`app-link://`) are exempt from all of it |
+| [URL resolution](#url-resolution) | `resolve_url()`: proxy/redirect unwrap, pict-rs thumbnail rewrite, video exclusion; runs once at the blob's single emission chokepoint |
+| [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd) | Each site syncdown reads compiled in, one function per question: its HTML's rules, and its own pages, written as `APP_LINK` spans for the app to open itself |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
-| [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags and links as data |
+| [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -137,38 +138,53 @@ It does three things:
 - The thumbnail rewrite skips them (no still frame from a video).
 - `![](…/clip.mp4)` image syntax is downgraded to an inline link — the alt text, or the URL when there is no alt — pointing at the original video.
 
-### App links ([1b09a35])
-
-A host app writes links to its own screens under the `app-link://` scheme, for
-example `[>>123](app-link://g/thread/100#p123)` for a quoted post. Such a link
-names a place in the app, not an address, so the fork treats it as opaque:
-
-| Rule | Where | Without it |
-|---|---|---|
-| Never resolved: no proxy unwrap, no redirect unwrap, no pict-rs thumbnail rewrite | `resolve_url` returns the URL borrowed, before any gate runs | A path holding `/pictrs/image/` gained `?thumbnail=400&format=webp`; one holding `/api/v3/image_proxy?url=` was replaced by the address it carried |
-| No domain suffix | `extract_domain` answers `None`, so the blob writer's `append_domain_suffix` writes nothing | The path's first segment was taken for a host: `>>123` rendered as `>>123 (g)` |
-
-What does not change:
-
-- The span is still a `LINK` (with its `LINK_SIZE`), and its `url_data` holds the
-  URL exactly as written, scheme included. The blob format is untouched, so a blob
-  stored before this change decodes as it did.
-- The scheme is matched at the start of the URL, whole and case-sensitively.
-  `app-link:/x`, `APP-LINK://x` and a web URL that carries one in its query are
-  ordinary links.
-- Bare `app-link://...` typed in prose is not autolinked. It becomes a link only
-  through explicit link syntax (`[text](app-link://...)`) or an angle autolink
-  (`<app-link://...>`).
-
-What the host does with one is its own business: it reads the scheme off the
-span's URL and hands its router a typed target in place of a plain link. Since
-anyone who can write markdown can write the scheme, a host treats the path as
-untrusted input.
-
-Pinned by `app_link_*` in `src/tests/url.rs` (resolution) and in the `links`
-module of `src/tests/blob.rs` (suffix, span, an app link beside a web link).
-
 > **Naming note.** The fork's resolver was renamed `clean_url` → `resolve_url` (and the old `NodeLink::cleaned_url()` accessor removed in favour of the `span_url` chokepoint) so it no longer collides with upstream's spec-unescaping `strings::clean_url` ([7c60125]).
+
+## Sites and app links ([df385a7], [3edc676], [5fc6ff3], [b381692], [736f5cd])
+
+Both walks take the site they read for: a `u8` from `blob::sites` (`PLAIN`,
+`HACKER_NEWS`, `CHAN`, `LEMMY`, `LOBSTERS`), generated from syncdown's
+`sites.toml` by its Gradle `generateSites`, as the span types are. Everything a
+site knows about itself is in `src/blob/site.rs`, one function per question
+matching on the id, every other site taking the default, and each site's code in
+`src/blob/site/`:
+
+| Question | Answers |
+|---|---|
+| `site::html(site)` | How its HTML reads: its [`HtmlRules`](#htmlrules-bca01f9-29b28a5-50226a9-2090141-10e87cf-5fc6ff3) |
+| `site::is_own(site, url)` | Whether a resolved address is one of its own pages, for the app to open itself |
+
+One `BlobWriter::link` writes every link for both walks, written, autolinked or
+a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK` with
+its domain suffix. An `APP_LINK` carries its real address in `url_data` as a
+`LINK` does, and has no suffix, since the app shows the page itself.
+
+Each site's own pages, from its own documentation:
+
+| Site | Own pages | From |
+|---|---|---|
+| Hacker News | `item?id={id}`, `user?id={name}`, on `news.ycombinator.com` | its API's README |
+| 4chan | `/{board}/thread/{op}`, its title after it, a trailing slash, a post `#p{no}`, on `boards.4chan.org` and `boards.4channel.org` | its API's documentation |
+| Lobsters | `/s/{id}`, its title after it, `/s/{id}/{title}/comments/{id}`, `/stories/{id}`, `/c/{id}`, `/comments/{id}`, `/~{name}`, `/u/{name}`, `/t/{tags}` and its pages, on `lobste.rs` | its `config/routes.rb` |
+| Lemmy | `/post/{id}`, `/post/{id}/{comment}`, `/comment/{id}`, `/c/{name}`, `/m/{name}`, `/u/{name}`, a name with `@{instance}`, on any host but reddit.com's | lemmy-ui's routes |
+
+- Lemmy is federated, so its host never decides; reddit's users share the `/u/`
+  shape, so its hosts are left out. The others are on their own hosts alone
+- An address with a user, a port or a scheme other than `http` and `https` is
+  no site's page. `PLAIN` owns none
+- Nothing is copied or allocated: `site::Url` reads an address as borrowed
+  slices of itself, and compares bytes, so a host in another script is read
+  whole. `alloc_bench`'s `site/is-own` line counts 0 allocations
+- Checked against an oracle written from the same documentation over every
+  link the walks write for 3,808 4chan comments, 1,528 Hacker News comments, 58
+  Lemmy and 362 Lobsters texts: 3,849 links, 3,370 of them own pages, none
+  disagreeing, and no allocation reading all of them as each of the five sites.
+  Every 4chan quotelink to a thread is an `APP_LINK`, and nothing else is
+
+This replaces the `app-link://` scheme a host wrote into markdown for its own
+screens ([1b09a35]): `resolve_url` and `extract_domain` now treat it as any
+other text. Pinned by `src/tests/site.rs`, and in `src/tests/blob_html.rs` by
+`site_link_own_pages_are_app_links`.
 
 ## Blob rendering
 
@@ -194,7 +210,7 @@ third of the allocations it did.
 
 ```rust
 let blob = comrak::parse_document_zerocopy(md, &opts, |root| {
-    comrak::blob::render_blob(root, md)
+    comrak::blob::render_blob(root, md, comrak::blob::sites::PLAIN)
 });
 ```
 
@@ -206,7 +222,7 @@ callers can reuse the same logic elsewhere.
 | Function | Returns | Notes |
 |---|---|---|
 | `comrak::resolve_url(&str)` | `ResolvedUrl<'_>` | Re-export of `comrak::parser::url::resolve_url`. URL finalization (proxy unwrap, short-URL expansion, pict-rs thumbnail, video exclusion). Returns a newtype that derefs to `str`; the only way to obtain one, so the blob writer can require it. See [URL resolution](#url-resolution) for the full table. |
-| `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. `None` for an [app link](#app-links-1b09a35), which has no host. |
+| `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. |
 | `comrak::image_url::is_image_url(&str)` | `bool` | Heuristic URL → image detection (by known host, path pattern, or file extension). |
 | `comrak::text::collapse_whitespace(&str)` | `Cow<'_, str>` | Collapses runs of spaces to a single space. Zero-copy when the input has no double-space. |
 | `comrak::text::prefer_ascii(&str)` | `Cow<'_, str>` | Typed typographic Unicode (curly quotes, en/em dashes, ellipsis) → ASCII. Zero-copy when none present. |
@@ -230,15 +246,17 @@ offsets remain exact because everything before the substitution was ASCII.
 
 ### Render entry point
 
-`comrak::blob::render_blob(root, input) -> Option<Vec<u8>>` — renders the
-AST at `root` against the original source `input`. Returns `None` when the
+`comrak::blob::render_blob(root, input, site) -> Option<Vec<u8>>` renders the
+AST at `root` against the original source `input`, its links marked as
+[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd). Returns `None` when the
 document has no spans and the output text equals the input (the caller can
 then use the raw input string directly and skip allocating a blob).
 
 ### HTML into the blob ([b6d9a01], [2f00ef6])
 
-`comrak::blob::render_html_blob(input) -> Option<Vec<u8>>` reads a site's
-comment HTML, Hacker News' as its API sends it, into the same blob, with no
+`comrak::blob::render_html_blob(input, site, base_url) -> Option<Vec<u8>>`
+reads a site's comment HTML, as its API sends it, into the same blob, its
+relative links resolved against `base_url` as a browser resolves them, with no
 markdown between. A second walk, over the HTML in place of comrak's tree,
 writes through the one `BlobWriter`, so a comment reads the same either way and
 an enhancement to the writer reaches both.
@@ -269,10 +287,11 @@ an enhancement to the writer reaches both.
   same, so the two walks cannot drift
 - Not yet: the invisible-character strip `sanitize_input` gives markdown
 
-#### `HtmlRules` ([bca01f9], [29b28a5], [50226a9], [2090141], [10e87cf])
+#### `HtmlRules` ([bca01f9], [29b28a5], [50226a9], [2090141], [10e87cf], [5fc6ff3])
 
-How a site's HTML reads, passed as data, so no site's rules live in the walk;
-each app builds its own. Whatever the rules, `scheme://` and `www.` addresses
+How a site's HTML reads, compiled in with the site: each site's `HTML` in
+`src/blob/site/`, found by `site::html`, so the walk itself names no site.
+Whatever the site, `scheme://` and `www.` addresses
 among the words are links, as the autolink makes them in markdown: their
 bounds are read by `parser::autolink::url_in` and `www_in`, string-level forms
 of `url_match` and `www_match` sharing their domain and delimiter checks.
@@ -281,8 +300,9 @@ of `url_match` and `www_match` sharing their domain and delimiter checks.
 |---|---|
 | `quote_marks` | A paragraph opening on `>` is a quote, its marks no text (Hacker News) |
 | `tags` | `TagRule`s by tag and optional class: a quoted line (its chevron kept, a quote opening its own line and running on through the quoted lines after it, ended by the next unquoted words or a blank line), greentext (a `GREENTEXT` span over its words, on a line of its own, as 4chan colours a line opened on `>`), a strike, a spoiler under a title (Lemmy's block) |
-| `base` | The page a relative link resolves against, as a browser resolves it |
-| `app_links` | The site's pages the app opens itself, `*` one path segment: a match becomes `app-link://`, the path it matched and its fragment |
+
+Hacker News reads `quote_marks`; 4chan its greentext, dead links and spoilers
+as tags; every other site neither.
 
 Built for 4chan, checked on 3,808 real comments from three boards. The 3,040
 without greentext or spoilers read byte-identical to the markdown 4chan's Java
@@ -302,7 +322,7 @@ parse just as well as the optimized one:
 ```rust
 let arena = comrak::Arena::new();
 let root = comrak::parse_document(&arena, md, &options); // vanilla entry, no zero-copy pooling
-let blob = comrak::blob::render_blob(root, md);          // identical bytes to the zerocopy path
+let blob = comrak::blob::render_blob(root, md, sites::PLAIN); // identical bytes to the zerocopy path
 ```
 
 [`parse_document_zerocopy`](#parse-entry-point) and the fork's allocation/throughput
@@ -353,7 +373,7 @@ Byte offsets, in order:
 - `8..8 + text_len` — text bytes (UTF-8)
 - next — zero padding to align to a 4-byte boundary (0..3 bytes)
 - next — `span_count × 16` bytes of packed span records
-- next — URL bytes referenced by `LINK`/`IMAGE` spans (rest of blob)
+- next: URL bytes referenced by `LINK`/`APP_LINK`/`IMAGE` spans (rest of blob)
 
 ### Span record (16 bytes each)
 
@@ -374,7 +394,7 @@ Each span is four packed i32 fields, stored in a contiguous array sorted by
 
 The `data` field is a 32-bit slot whose meaning depends on `type`:
 
-**URL-carrying spans** (`LINK`, `IMAGE`) — offset + length into the trailing
+**URL-carrying spans** (`LINK`, `APP_LINK`, `IMAGE`): offset + length into the trailing
 `url_data` section:
 
 ```
@@ -480,11 +500,10 @@ allocation pressure across changes. All three parse with
 hides what production pays, which is how `sanitize_input`'s scan cost 30% of a
 prose parse for two optimisation passes without showing.
 
-> **First-time builds.** `src/blob/span_types.rs` is generated by syncdown's
-> Gradle `generateSpanTypes` task and gitignored here. Run
-> `./gradlew :syncdown:generateSpanTypes` from the syncdown repo once before
-> running `cargo` commands in isolation — or copy a previously generated
-> file.
+> **Generated files.** `src/blob/span_types.rs` and `src/blob/sites.rs` are
+> written by syncdown's Gradle `generateSpanTypes` and `generateSites` tasks
+> and committed here, so `cargo` runs in isolation. Change the ids in
+> syncdown's `span_types.toml` and `sites.toml`, never in these files.
 
 ### `src/benchmarks.rs`
 
@@ -550,6 +569,13 @@ prose     12938 chars |  94 allocs  168 KB (13.4x input) | parse  88 blob   6 | 
   buckets: tiny(1-32)=10 small(33-128)=67 medium(129-1K)=35 large(1K+)=13
 ```
 
+The last line reads each site's own pages and their lookalikes through
+`site::is_own`, which must allocate nothing:
+
+```
+site/is-own          12 links,  8 own |     0 allocs      0 bytes
+```
+
 These are a thread's second parse: the first also allocates the block contents
 and paragraph strings the thread then keeps.
 
@@ -570,6 +596,9 @@ src/
 ├── blob.rs                    ← binary blob renderer: BlobWriter + visit + render_blob
 ├── blob/
 │   ├── html.rs                ← the walk over a site's HTML + render_html_blob
+│   ├── site.rs                ← what each site knows about itself: html, is_own, Url
+│   ├── site/                  ← chan.rs, hacker_news.rs, lemmy.rs, lobsters.rs, from each site's docs
+│   ├── sites.rs, span_types.rs ← the site and span type ids, generated by syncdown
 │   └── html/
 │       ├── mdream.rs          ← where the mdream files come from, what was cut
 │       └── mdream/            ← entities.rs, entities_generated.rs, scan.rs, LICENSE (MIT)
@@ -580,13 +609,14 @@ src/
 ├── benchmarks.rs              ← shared bench corpus + bench_all smoke test
 ├── parser/
 │   └── url.rs                 ← resolve_url (proxy unwrap, short URL expansion, pict-rs thumbnail,
-│                                video exclusion, app-link exemption) + extract_domain + path_ext
+│                                video exclusion) + extract_domain + path_ext
 └── tests/
     ├── blob.rs                ← blob renderer tests (format/inline/links/images/block/
     │                            footnotes/edge/production sub-modules)
     ├── blob_html.rs           ← the walk over HTML, and its parity with markdown
     ├── image_url.rs           ← is_image_url tests
     ├── lemmy.rs               ← lemmy_mention + lemmy_spoiler tests
+    ├── site.rs                ← each site's own pages, and the markdown walk's links by site
     ├── smart_parity.rs        ← the smartypants-retirement contract: invariants that must
     │                            never break + the verbatim rules for retired transforms
     ├── strip_invisible.rs     ← sanitize_input invisible-char tests
@@ -598,9 +628,6 @@ examples/
 ├── alloc_bench.rs             ← alloc count / bytes / bucket histogram
 └── sample_parse.rs            ← parse + blob loop for a sampling profiler
 ```
-
-`src/blob/span_types.rs` is generated externally (see Benchmarking note
-above) and not tracked in this repo.
 
 ### Modified upstream files
 
@@ -866,3 +893,8 @@ Pixel 9 Pro XL).
 [50226a9]: https://github.com/laurencedawson/comrak/commit/50226a9
 [2090141]: https://github.com/laurencedawson/comrak/commit/2090141
 [10e87cf]: https://github.com/laurencedawson/comrak/commit/10e87cf
+[df385a7]: https://github.com/laurencedawson/comrak/commit/df385a7
+[3edc676]: https://github.com/laurencedawson/comrak/commit/3edc676
+[5fc6ff3]: https://github.com/laurencedawson/comrak/commit/5fc6ff3
+[b381692]: https://github.com/laurencedawson/comrak/commit/b381692
+[736f5cd]: https://github.com/laurencedawson/comrak/commit/736f5cd
