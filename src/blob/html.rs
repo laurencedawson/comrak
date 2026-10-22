@@ -48,6 +48,9 @@ pub enum Reads<'r> {
     LineQuote,
     /// Struck through, as markdown's `~~`.
     Strike,
+    /// Greentext: its words as written, chevron and all, coloured and on a line of their own, as
+    /// 4chan shows a line its poster opened on `>`.
+    Greentext,
     /// Hidden behind a spoiler under this title, as Lemmy's `::: spoiler` block.
     Spoiler(&'r str),
 }
@@ -291,6 +294,15 @@ impl<'a, 'o> Walk<'a, 'o> {
                 Some(Reads::Strike) => {
                     self.begin();
                     self.open.push(Open::Style(STRIKETHROUGH, name, self.out.pos()));
+                }
+                Some(Reads::Greentext) => {
+                    // A line of its own, as the site only colours a line its poster opened on `>`
+                    if self.out.len > 0 && self.out.p == 0 {
+                        self.out.nl(1);
+                        self.space = false;
+                    }
+                    self.begin();
+                    self.open.push(Open::Style(GREENTEXT, name, self.out.pos()));
                 }
                 Some(Reads::Spoiler(title)) => self.start_spoiler(name, title),
                 None => self.open.push(Open::Plain(name)),
