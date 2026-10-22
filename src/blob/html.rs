@@ -76,12 +76,10 @@ pub(crate) fn render_html_blob_with(
     };
     b.site = site;
     visit(input, rules, base_url, &mut b);
-    b.append_footnotes();
     if b.fast_path_ascii && !b.text().is_ascii() {
         b = BlobWriter::new(input.len());
         b.site = site;
         visit(input, rules, base_url, &mut b);
-        b.append_footnotes();
     }
     if b.spans.is_empty() && b.text() == input {
         None
