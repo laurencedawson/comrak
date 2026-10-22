@@ -178,6 +178,13 @@ fn expand_youtube_short(url: &str) -> Option<String> {
     if !host.eq_ignore_ascii_case("youtu.be") {
         return None;
     }
+    if path.starts_with("watch") {
+        let id = query_param(url, "v")?;
+        if id.is_empty() {
+            return None;
+        }
+        return Some(format!("https://www.youtube.com/watch?v={id}"));
+    }
     let id = path.split(['?', '&', '#', '/']).next()?;
     if id.is_empty() {
         return None;
