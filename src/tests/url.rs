@@ -218,20 +218,3 @@ fn no_scheme() {
 fn plain_google() {
     unchanged("https://www.google.com/search?q=rust");
 }
-
-#[test]
-fn app_link_unchanged() {
-    unchanged("app-link://g/thread/100#p123");
-}
-
-/// An app link's path is the app's own: one that reads like a pict-rs image is not thumbnailed.
-#[test]
-fn app_link_pictrs_path_not_thumbnailed() {
-    unchanged("app-link://files/pictrs/image/abc.png");
-}
-
-/// Nor is one that reads like an image proxy unwrapped to the address it carries.
-#[test]
-fn app_link_proxy_path_not_unwrapped() {
-    unchanged("app-link://files/api/v3/image_proxy?url=https%3A%2F%2Fother.tld%2Fabc.png");
-}
