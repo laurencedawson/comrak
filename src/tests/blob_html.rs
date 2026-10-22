@@ -6,7 +6,8 @@
 //! read the same, so the walks cannot drift apart. The plain-text gate is syncdown's, tested there.
 //!
 //! - `nothing`    : no blob for unchanged text, an empty one for HTML with no words
-//! - `paragraphs` : a bare `<p>` opens every paragraph but the first; whitespace collapses
+//! - `paragraphs` : a bare `<p>` opens every paragraph but the first; whitespace collapses; a `<br>`
+//!   is a newline, a run of them a blank line at most
 //! - `entities`   : decoded after the tags are read, in UTF-16 positions
 //! - `quotes`     : a paragraph opening on `>` is a quote, as the site's posters write one
 //! - `links`      : the address resolved, the domain added where the words lack it, pictures
@@ -180,6 +181,32 @@ fn whitespace_at_a_paragraph_edge_is_dropped() {
 #[test]
 fn br_is_a_newline() {
     assert_eq!(plain("one<br>two"), "one\ntwo");
+}
+
+/// Two breaks are a blank line, and more are no more than one: a site breaks lines with the tag.
+#[test]
+fn br_run_is_a_blank_line_at_most() {
+    assert_eq!(plain("one<br><br>two"), "one\n\ntwo");
+    assert_eq!(plain("one<br><br><br><br>two"), "one\n\ntwo");
+}
+
+/// A newline some boards write after a break tag is the next line's leading whitespace, no text.
+#[test]
+fn br_raw_newline_after_it_is_dropped() {
+    assert_eq!(plain("one<br>\ntwo"), "one\ntwo");
+    assert_eq!(plain("one <br> two"), "one\ntwo");
+}
+
+/// Breaks before the first words open nothing.
+#[test]
+fn br_before_any_words_is_dropped() {
+    assert_eq!(plain("<br><br>one"), "one");
+}
+
+/// A word-break hint inside a long word is no character.
+#[test]
+fn wbr_joins_the_words() {
+    assert_eq!(plain("long<wbr>word<wbr/>s"), "longwords");
 }
 
 // ── entities ─────────────────────────────────────────────────────────────
