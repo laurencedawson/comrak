@@ -12,6 +12,7 @@ mod alerts;
 mod attributes;
 mod autolink;
 mod blob;
+mod blob_html;
 mod block_directive;
 mod cjk_friendly_emphasis;
 mod code;
