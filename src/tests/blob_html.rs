@@ -21,37 +21,37 @@
 //! - `parity`     : the same comments as markdown and as HTML, read the same
 
 use crate::benchmarks::production_options;
+use crate::blob::html::render_html_blob_with;
+use crate::blob::sites;
 use crate::blob::{
-    BOLD, CODE_BLOCK, GREENTEXT, HtmlRules, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE, LINK,
-    LINK_SIZE,
-    QUOTE, Reads, STRIKETHROUGH, TagRule, render_blob, render_html_blob,
+    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, HtmlRules, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE,
+    LINK, LINK_SIZE, QUOTE, Reads, STRIKETHROUGH, TagRule, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
 
-/// Hacker News' rules: a paragraph opening on `>` is a quote.
-const HACKER_NEWS: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[], base: None, app_links: &[] };
+/// The thread page 4chan's comments here sit on, which their relative links resolve against.
+const THREAD: &str = "https://boards.4chan.org/g/thread/100";
 
-/// 4chan's tags: greentext a quoted line, a dead link struck through, a spoiler hidden. Its dead
-/// links open on `>>`, so a paragraph's marks are no quote.
-const CHAN: HtmlRules<'static> = HtmlRules {
+/// 4chan's tags with greentext read as a quoted line, as markdown's `>` lines: the rule no site has
+/// now, kept for its own tests and its parity with markdown.
+const LINE_QUOTES: HtmlRules<'static> = HtmlRules {
     quote_marks: false,
     tags: &[
         TagRule { tag: "span", class: Some("quote"), reads_as: Reads::LineQuote },
         TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
         TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
     ],
-    base: Some("https://boards.4chan.org/g/thread/100"),
-    app_links: &["https://boards.4chan.org/*/thread/*"],
 };
 
-/// The walk under test, by the name the tests were written against, read by Hacker News' rules.
+/// The walk under test, by the name the tests were written against, read as Hacker News.
 fn parse(html: &str) -> Option<Vec<u8>> {
-    render_html_blob(html, &HACKER_NEWS)
+    render_html_blob(html, sites::HACKER_NEWS, None)
 }
 
-/// The comment's text and spans, read by 4chan's rules.
+/// The comment's text and spans, read as 4chan on its thread, greentext a quoted line.
 fn chan(html: &str) -> (String, Vec<Span>) {
-    let b = read(&render_html_blob(html, &CHAN).unwrap_or_else(|| panic!("no blob for {html:?}")));
+    let blob = render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD));
+    let b = read(&blob.unwrap_or_else(|| panic!("no blob for {html:?}")));
     (b.text, b.spans)
 }
 
@@ -103,7 +103,7 @@ fn read(blob: &[u8]) -> Blob {
         .map(|i| {
             let at = spans_at + i * 16;
             let (start, end, t, data) = (int(at), int(at + 4), int(at + 8), int(at + 12));
-            let data = if t == LINK || t == IMAGE {
+            let data = if t == LINK || t == APP_LINK || t == IMAGE {
                 let (offset, len) = ((data >> 12) as usize, (data & 0xFFF) as usize);
                 Data::Url(std::str::from_utf8(&urls[offset..offset + len]).unwrap().to_string())
             } else {
@@ -635,11 +635,7 @@ fn tags_class_among_others_matches() {
 
 /// 4chan's greentext as the site shows it, coloured, rather than a quote.
 fn greentext(html: &str) -> (String, Vec<Span>) {
-    let rules = HtmlRules {
-        tags: &[TagRule { tag: "span", class: Some("quote"), reads_as: Reads::Greentext }],
-        ..CHAN
-    };
-    let b = read(&render_html_blob(html, &rules).unwrap_or_else(|| panic!("no blob for {html:?}")));
+    let b = read(&render_html_blob(html, sites::CHAN, Some(THREAD)).unwrap_or_else(|| panic!("no blob for {html:?}")));
     (b.text, b.spans)
 }
 
@@ -677,7 +673,7 @@ fn tags_greentext_holds_a_link() {
     let (text, spans) = greentext("<span class=\"quote\">&gt;see <a href=\"#p5\">&gt;&gt;5</a></span>");
     assert_eq!(text, ">see >>5");
     assert_eq!(spans[0], span(0, 8, GREENTEXT));
-    assert!(spans.iter().any(|s| s.2 == LINK && s.0 == 5));
+    assert!(spans.iter().any(|s| s.2 == APP_LINK && s.0 == 5));
 }
 
 /// A dead link is struck through, its chevrons words.
@@ -730,7 +726,7 @@ fn chan_link(html: &str) -> (String, String) {
     let links: Vec<String> = spans
         .into_iter()
         .filter_map(|s| match s {
-            Span(_, _, t, Data::Url(url)) if t == LINK => Some(url),
+            Span(_, _, t, Data::Url(url)) if t == LINK || t == APP_LINK => Some(url),
             _ => None,
         })
         .collect();
@@ -738,12 +734,30 @@ fn chan_link(html: &str) -> (String, String) {
     (text, links[0].clone())
 }
 
+/// Whether the comment's one link is the site's own, an `APP_LINK`, or a `LINK`.
+fn own(html: &str) -> bool {
+    let (_, spans) = chan(html);
+    let kinds: Vec<i32> = spans.iter().map(|s| s.2).filter(|&t| t == LINK || t == APP_LINK).collect();
+    assert_eq!(kinds.len(), 1, "one link in {html:?}");
+    kinds[0] == APP_LINK
+}
+
+/// The site's own links are APP_LINKs, its other pages and other sites LINKs, the address the same.
+#[test]
+fn site_link_own_pages_are_app_links() {
+    assert!(own("<a href=\"#p123\" class=\"quotelink\">&gt;&gt;123</a>"));
+    assert!(own("<a href=\"//boards.4channel.org/po/thread/570368#p570370\">x</a>"));
+    assert!(own("see https://boards.4chan.org/g/thread/123#p456 now"));
+    assert!(!own("<a href=\"//boards.4chan.org/po/catalog#s=lft\">x</a>"));
+    assert!(!own("<a href=\"https://example.com/g/thread/1\">x</a>"));
+}
+
 /// A quotelink's anchor is on the thread's page, so it is the app's link to that post.
 #[test]
 fn site_link_anchor_on_the_page_is_the_apps() {
     assert_eq!(
         chan_link("<a href=\"#p123\" class=\"quotelink\">&gt;&gt;123</a>"),
-        (">>123".to_string(), "app-link://g/thread/100#p123".to_string())
+        (">>123".to_string(), "https://boards.4chan.org/g/thread/100#p123".to_string())
     );
 }
 
@@ -752,7 +766,7 @@ fn site_link_anchor_on_the_page_is_the_apps() {
 fn site_link_path_resolves_against_the_host() {
     assert_eq!(
         chan_link("<a href=\"/g/thread/200#p201\" class=\"quotelink\">&gt;&gt;201</a>"),
-        (">>201".to_string(), "app-link://g/thread/200#p201".to_string())
+        (">>201".to_string(), "https://boards.4chan.org/g/thread/200#p201".to_string())
     );
 }
 
@@ -761,7 +775,7 @@ fn site_link_path_resolves_against_the_host() {
 fn site_link_without_a_scheme_takes_the_pages() {
     assert_eq!(
         chan_link("<a href=\"//boards.4chan.org/v/thread/300#p301\" class=\"quotelink\">&gt;&gt;&gt;/v/301</a>"),
-        (">>>/v/301".to_string(), "app-link://v/thread/300#p301".to_string())
+        (">>>/v/301".to_string(), "https://boards.4chan.org/v/thread/300#p301".to_string())
     );
     assert_eq!(
         chan_link("<a href=\"//example.com/g/thread/1\">x</a>"),
@@ -774,11 +788,11 @@ fn site_link_without_a_scheme_takes_the_pages() {
 fn site_link_in_full_is_the_apps() {
     assert_eq!(
         chan_link("<a href=\"https://boards.4chan.org/g/thread/200#p201\">here</a>"),
-        ("here".to_string(), "app-link://g/thread/200#p201".to_string())
+        ("here".to_string(), "https://boards.4chan.org/g/thread/200#p201".to_string())
     );
     assert_eq!(
         chan_link("<a href=\"https://boards.4chan.org/g/thread/200/a-title#p201\">here</a>"),
-        ("here".to_string(), "app-link://g/thread/200#p201".to_string())
+        ("here".to_string(), "https://boards.4chan.org/g/thread/200/a-title#p201".to_string())
     );
 }
 
@@ -808,10 +822,10 @@ fn site_link_elsewhere_is_as_written() {
 /// the page's query. Read with a base and no app links, so resolving is all that happens.
 #[test]
 fn site_link_relative_path_query_and_fragment() {
-    let rules = HtmlRules { base: Some("https://example.com/a/page?q=1#top"), ..HACKER_NEWS };
+    let base = Some("https://example.com/a/page?q=1#top");
     let address = |html: &str| {
-        let b = read(&render_html_blob(html, &rules).unwrap());
-        match b.spans.into_iter().find(|s| s.2 == LINK) {
+        let b = read(&render_html_blob(html, sites::HACKER_NEWS, base).unwrap());
+        match b.spans.into_iter().find(|s| s.2 == LINK || s.2 == APP_LINK) {
             Some(Span(_, _, _, Data::Url(url))) => url,
             _ => panic!("no link in {html:?}"),
         }
@@ -825,7 +839,7 @@ fn site_link_relative_path_query_and_fragment() {
 /// A relative link that resolves onto an app page is the app's.
 #[test]
 fn site_link_relative_onto_an_app_page_is_the_apps() {
-    assert_eq!(chan_link("<a href=\"201#p5\">x</a>").1, "app-link://g/thread/201#p5");
+    assert_eq!(chan_link("<a href=\"201#p5\">x</a>").1, "https://boards.4chan.org/g/thread/201#p5");
 }
 
 // ── typed addresses ──────────────────────────────────────────────────────
@@ -836,7 +850,7 @@ fn chan_links(html: &str) -> Vec<(String, String)> {
     spans
         .into_iter()
         .filter_map(|s| match s {
-            Span(start, end, t, Data::Url(url)) if t == LINK => {
+            Span(start, end, t, Data::Url(url)) if t == LINK || t == APP_LINK => {
                 let units: Vec<u16> = text.encode_utf16().collect();
                 Some((String::from_utf16(&units[start as usize..end as usize]).unwrap(), url))
             }
@@ -852,7 +866,7 @@ fn typed_post_address_is_the_apps() {
         chan_links("see https://boards.4chan.org/g/thread/123#p456 now"),
         vec![(
             "https://boards.4chan.org/g/thread/123#p456".to_string(),
-            "app-link://g/thread/123#p456".to_string()
+            "https://boards.4chan.org/g/thread/123#p456".to_string()
         )]
     );
     assert_eq!(chan("see https://boards.4chan.org/g/thread/123#p456 now").0, "see https://boards.4chan.org/g/thread/123#p456 now");
@@ -863,7 +877,7 @@ fn typed_post_address_is_the_apps() {
 fn typed_address_broken_by_wbr_is_read_whole() {
     assert_eq!(
         chan_links("https://boards.4chan.org/g/thr<wbr>ead/123"),
-        vec![("https://boards.4chan.org/g/thread/123".to_string(), "app-link://g/thread/123".to_string())]
+        vec![("https://boards.4chan.org/g/thread/123".to_string(), "https://boards.4chan.org/g/thread/123".to_string())]
     );
 }
 
@@ -1057,14 +1071,10 @@ fn parity_chan_tags_read_as_their_markdown() {
         ("go to www.example.com today", "go to www.example.com today"),
         ("(see https://example.com/a).", "(see https://example.com/a)."),
         ("look https://i.imgur.com/abc.png here", "look https://i.imgur.com/abc.png here"),
-        (
-            "see https://boards.4chan.org/g/thread/123#p456 now",
-            "see [https://boards.4chan.org/g/thread/123#p456](app-link://g/thread/123#p456) now",
-        ),
     ];
     for (html, md) in pairs {
         assert_eq!(
-            shown(render_html_blob(html, &CHAN), html),
+            shown(render_html_blob_with(html, &LINE_QUOTES, sites::CHAN, Some(THREAD)), html),
             shown(markdown(md), md),
             "{html:?} against {md:?}"
         );
