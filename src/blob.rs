@@ -213,12 +213,6 @@ impl BlobWriter {
         self.p > 0 || self.len == 0 || self.blob.last() == Some(&b'\n')
     }
 
-    /// Drop pending (unflushed) newlines. Test-only.
-    #[cfg(test)]
-    pub(crate) fn clear_pending(&mut self) {
-        self.p = 0;
-    }
-
     /// Rendered text bytes so far (excluding header). Used during render and by tests.
     pub(crate) fn text(&self) -> &str {
         // Only `&str` slices and newlines are ever written past the header, so the bytes are UTF-8 by construction

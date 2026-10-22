@@ -10,7 +10,8 @@
 //! - `edge`      — unicode, pathological inputs, empty, deep nesting
 
 use crate::blob::sites::PLAIN;
-use crate::blob::{BlobWriter, LEMMY_SPOILER_TITLE, LIST_ITEM, QUOTE, TABLE, visit};
+use crate::blob::{BlobWriter, visit};
+use crate::tests::blob_read::{Blob, read};
 use crate::{Arena, Options, parse_document, parse_document_zerocopy};
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -46,27 +47,25 @@ fn render_raw(markdown: &str) -> BlobWriter {
     })
 }
 
-/// `render_raw` plus footnote append and pending-newline flush — what most
-/// rendering assertions want.
-fn render_test(markdown: &str) -> BlobWriter {
+/// `render_raw` with its footnotes appended, serialized and read back: what most rendering
+/// assertions want.
+fn render_test(markdown: &str) -> Blob {
     let mut out = render_raw(markdown);
     out.append_footnotes();
-    out.clear_pending();
-    out
+    read(&out.into_blob())
 }
 
 /// Render via the arena-managed full-postprocess path. Required by tasklist
 /// tests because `parse_document_zerocopy` skips the text coalescing pass
 /// that `[ ]` detection needs.
-fn render_test_full_parse(markdown: &str) -> BlobWriter {
+fn render_test_full_parse(markdown: &str) -> Blob {
     let opts = test_opts();
     let arena = Arena::new();
     let root = parse_document(&arena, markdown.trim(), &opts);
     let mut out = BlobWriter::new(256, false, PLAIN);
     visit(root, &mut out);
     out.append_footnotes();
-    out.clear_pending();
-    out
+    read(&out.into_blob())
 }
 
 /// Render + serialize to the final blob byte representation.
@@ -74,94 +73,6 @@ fn blob_bytes(markdown: &str) -> Vec<u8> {
     render_raw(markdown).into_blob()
 }
 
-/// Text section of a raw blob (after the 8-byte header).
-fn blob_text(blob: &[u8]) -> &str {
-    let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-    std::str::from_utf8(&blob[8..8 + text_len]).unwrap()
-}
-
-fn blob_span_count(blob: &[u8]) -> usize {
-    // High byte of the span_count word carries flags; mask it off for the count.
-    (i32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) & 0x00FF_FFFF) as usize
-}
-
-#[allow(dead_code)]
-fn blob_flags(blob: &[u8]) -> u8 {
-    blob[7]
-}
-
-/// Decoded view of one span in the BlobWriter (not the serialized blob).
-struct SpanView {
-    typ: i32,
-    start: usize,
-    end: usize,
-    data: i32,
-    url: Option<String>,
-}
-
-impl SpanView {
-    fn indent(&self) -> i32 {
-        self.data >> 16
-    }
-    fn number(&self) -> i32 {
-        self.data & 0xFFFF
-    }
-}
-
-struct SpanIter<'a> {
-    spans: &'a [i32],
-    url_data: &'a [u8],
-    idx: usize,
-}
-
-impl<'a> Iterator for SpanIter<'a> {
-    type Item = SpanView;
-    fn next(&mut self) -> Option<Self::Item> {
-        let base = self.idx * 4;
-        if base + 3 >= self.spans.len() {
-            return None;
-        }
-        self.idx += 1;
-        let typ = self.spans[base + 2];
-        let raw_data = self.spans[base + 3];
-        // The data field packs offset(20)|len(12) for URL-carrying spans;
-        // LIST_ITEM and QUOTE reuse the slot for (indent<<16)|number and depth;
-        // LEMMY_SPOILER_TITLE reuses it for the title byte length.
-        let url_len = (raw_data & 0xFFF) as usize;
-        let offset = (raw_data >> 12) as usize;
-        let url = if url_len > 0
-            && typ != LIST_ITEM
-            && typ != QUOTE
-            && typ != LEMMY_SPOILER_TITLE
-            && typ != TABLE
-        {
-            Some(String::from_utf8_lossy(&self.url_data[offset..offset + url_len]).into_owned())
-        } else {
-            None
-        };
-        Some(SpanView {
-            start: self.spans[base] as usize,
-            end: self.spans[base + 1] as usize,
-            typ,
-            data: raw_data,
-            url,
-        })
-    }
-}
-
-trait BlobWriterExt {
-    fn span_iter(&self) -> SpanIter<'_>;
-}
-
-impl BlobWriterExt for BlobWriter {
-    fn span_iter(&self) -> SpanIter<'_> {
-        SpanIter {
-            spans: &self.spans,
-            url_data: &self.url_data,
-            idx: 0,
-        }
-    }
-}
 
 // ── format ───────────────────────────────────────────────────────────────
 
@@ -175,8 +86,8 @@ mod format {
         let out = BlobWriter::new(0, false, PLAIN);
         let blob = out.into_blob();
         assert_eq!(blob.len(), 8);
-        assert_eq!(blob_text(&blob), "");
-        assert_eq!(blob_span_count(&blob), 0);
+        assert_eq!(read(&blob).text, "");
+        assert_eq!(read(&blob).spans.len(), 0);
     }
 
     /// Text is padded to 4-byte alignment before span data. Covers text
@@ -186,7 +97,7 @@ mod format {
         for md in &["a", "ab", "abc", "abcd", "abcde"] {
             let blob = blob_bytes(md);
             let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-            let span_count = blob_span_count(&blob);
+            let span_count = read(&blob).spans.len();
             let span_start = 8 + text_len + (4 - text_len % 4) % 4;
             if span_count > 0 {
                 assert!(blob.len() >= span_start + span_count * 16);
@@ -194,16 +105,12 @@ mod format {
         }
     }
 
-    /// URL data field packs as offset(20)|len(12); roundtrip recovers bytes.
+    /// URL data field packs as offset(20)|len(12); the reader unpacks it to the address written.
     #[test]
     fn url_offset_len_packing_roundtrips() {
         let result = render_test("[click](https://example.com)");
         let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
         assert_eq!(span.url.as_deref(), Some("https://example.com"));
-        let url_len = (span.data & 0xFFF) as usize;
-        let offset = (span.data >> 12) as usize;
-        let unpacked = std::str::from_utf8(&result.url_data[offset..offset + url_len]).unwrap();
-        assert_eq!(unpacked, "https://example.com");
     }
 
     /// 12-bit length field limits URLs to 4095 bytes.
@@ -213,7 +120,7 @@ mod format {
         let md = format!("[click](https://example.com/{long_path})");
         let result = render_test(&md);
         let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
-        assert!(span.url.unwrap().len() <= 4095);
+        assert!(span.url.as_deref().unwrap().len() <= 4095);
     }
 
     /// The cap cut must land on a char boundary: the host decodes the url_data
@@ -222,19 +129,9 @@ mod format {
     fn url_truncation_keeps_utf8_boundary() {
         let md = format!("[click](https://example.com/{})", "€".repeat(2000));
         let result = render_test(&md);
+        // The reader decodes the slice strictly, so a split codepoint would have failed there
         let span = result.span_iter().find(|s| s.typ == LINK).unwrap();
-        let (offset, len) = ((span.data >> 12) as usize, (span.data & 0xFFF) as usize);
-        assert!(std::str::from_utf8(&result.url_data[offset..offset + len]).is_ok());
-    }
-
-    /// `clear_pending()` drops unflushed queued newlines.
-    #[test]
-    fn pending_newlines_dont_materialize_without_text() {
-        let mut out = BlobWriter::new(64, false, PLAIN);
-        out.write_text("hello");
-        out.nl(2);
-        out.clear_pending();
-        assert_eq!(out.text(), "hello");
+        assert!(span.url.as_deref().unwrap().ends_with('€'));
     }
 
     /// `nl(n)` keeps only the maximum pending count across successive calls.
@@ -289,10 +186,9 @@ mod format {
     /// early-exit on the sorted stream.
     #[test]
     fn span_sorting_in_blob() {
-        let out = render_test("**bold *and italic* text**");
-        let blob = out.into_blob();
+        let blob = blob_bytes("**bold *and italic* text**");
         let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-        let span_count = blob_span_count(&blob);
+        let span_count = read(&blob).spans.len();
         let span_start = 8 + text_len + (4 - text_len % 4) % 4;
         let mut prev_start = -1i32;
         for i in 0..span_count {
@@ -337,7 +233,7 @@ mod format {
             let blob = out.into_blob();
             let text_len = i32::from_le_bytes(blob[0..4].try_into().unwrap()) as usize;
             let at = 8 + text_len + (4 - text_len % 4) % 4;
-            let mut sorted: Vec<[i32; 4]> = blob[at..at + blob_span_count(&blob) * 16]
+            let mut sorted: Vec<[i32; 4]> = blob[at..at + read(&blob).spans.len() * 16]
                 .chunks_exact(16)
                 .map(|c| {
                     std::array::from_fn(|i| {
@@ -389,7 +285,7 @@ mod format {
         let mut out = BlobWriter::new(64, false, PLAIN);
         let pos = out.pos();
         out.span(BOLD, pos);
-        assert_eq!(out.span_iter().count(), 0);
+        assert_eq!(read(&out.into_blob()).spans.len(), 0);
     }
 
     /// `span_url()` with empty URL still emits the span (if non-zero length)
@@ -399,8 +295,9 @@ mod format {
         let mut out = BlobWriter::new(64, false, PLAIN);
         out.write_text("text");
         out.span_url(LINK, 0, &crate::resolve_url(""));
-        let span = out.span_iter().find(|s| s.typ == LINK).unwrap();
-        assert_eq!(span.url, None);
+        let b = read(&out.into_blob());
+        let span = b.span_iter().find(|s| s.typ == LINK).unwrap();
+        assert_eq!(span.url.as_deref(), Some(""));
     }
 
     /// `span_data()` skips zero-length spans (same check as `span()`).
@@ -409,7 +306,7 @@ mod format {
         let mut out = BlobWriter::new(64, false, PLAIN);
         let pos = out.pos();
         out.span_data(LIST_ITEM, pos, 42);
-        assert_eq!(out.span_iter().count(), 0);
+        assert_eq!(read(&out.into_blob()).spans.len(), 0);
     }
 
     /// Multiple URLs pack sequentially in url_data with correct offsets.
@@ -420,7 +317,7 @@ mod format {
         out.span_url(LINK, 0, &crate::resolve_url("https://first.com"));
         out.write_text("bbb");
         out.span_url(LINK, 3, &crate::resolve_url("https://second.com"));
-        let urls: Vec<_> = out.span_iter().filter_map(|s| s.url).collect();
+        let urls: Vec<_> = read(&out.into_blob()).span_iter().filter_map(|s| s.url.clone()).collect();
         assert_eq!(urls, vec!["https://first.com", "https://second.com"]);
     }
 
@@ -433,14 +330,14 @@ mod format {
         let pos = out.pos();
         out.span(ITALIC, pos);
         let blob = out.into_blob();
-        assert_eq!(blob_span_count(&blob), 1);
+        assert_eq!(read(&blob).spans.len(), 1);
     }
 
     /// Trailing newlines are trimmed from the final blob text.
     #[test]
     fn trailing_newlines_trimmed() {
         let blob = blob_bytes("This kid:\n\n");
-        assert_eq!(blob_text(&blob), "This kid:");
+        assert_eq!(read(&blob).text, "This kid:");
     }
 
     /// Nested blockquotes don't leave trailing newlines, and internal blanks
@@ -448,7 +345,7 @@ mod format {
     #[test]
     fn blockquote_blob_newlines() {
         let text = String::from_utf8(
-            blob_text(&blob_bytes("> A\n>> B\n>>> C\n\nAfter"))
+            read(&blob_bytes("> A\n>> B\n>>> C\n\nAfter")).text
                 .as_bytes()
                 .to_vec(),
         )
@@ -459,17 +356,17 @@ mod format {
         assert!(!text.ends_with('\n'));
 
         let blob2 = blob_bytes("> A\n>> B\n>>> C");
-        assert!(!blob_text(&blob2).ends_with('\n'));
+        assert!(!read(&blob2).text.ends_with('\n'));
     }
 
     /// All serialized span start/end positions are within text bounds.
     #[test]
     fn span_positions_within_text_bounds() {
         let blob = blob_bytes("**bold** and *italic*");
-        let text = blob_text(&blob);
+        let text = read(&blob).text;
         let text_utf16_len = text.encode_utf16().count() as i32;
         let text_len = text.len();
-        let span_count = blob_span_count(&blob);
+        let span_count = read(&blob).spans.len();
         let span_start = 8 + text_len + (4 - text_len % 4) % 4;
         for i in 0..span_count {
             let offset = span_start + i * 16;
@@ -498,7 +395,7 @@ mod format {
     #[test]
     fn flags_empty_blob() {
         let blob = BlobWriter::new(0, false, PLAIN).into_blob();
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
         assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
     }
@@ -507,7 +404,7 @@ mod format {
     #[test]
     fn flags_ascii_bold_only() {
         let blob = blob_bytes("**bold text**");
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         assert_eq!(flags, FLAG_IS_ASCII);
     }
 
@@ -516,7 +413,7 @@ mod format {
     #[test]
     fn flags_image_sets_nothing_of_its_own() {
         let blob = blob_bytes("![](https://example.com/x.jpg)");
-        assert_eq!(blob_flags(&blob), FLAG_IS_ASCII);
+        assert_eq!(read(&blob).flags, FLAG_IS_ASCII);
     }
 
     /// A spoiler's hidden body is the one span the header speaks for, so the host can
@@ -524,7 +421,7 @@ mod format {
     #[test]
     fn flags_lemmy_spoiler_sets_spoiler_body() {
         let blob = blob_bytes(":::spoiler the secret\nhidden body\n:::");
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         assert_eq!(flags & FLAG_HAS_SPOILER_BODY, FLAG_HAS_SPOILER_BODY);
     }
 
@@ -532,7 +429,7 @@ mod format {
     #[test]
     fn flags_non_ascii_clears_is_ascii() {
         let blob = blob_bytes("**bold \u{1F389}**");
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         assert_eq!(flags & FLAG_IS_ASCII, 0);
     }
 
@@ -550,7 +447,7 @@ mod format {
             md.push_str("more padding text continuing as plain ASCII content here. ");
         }
         let blob = blob_bytes(&md);
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         assert_eq!(
             flags & FLAG_IS_ASCII,
             0,
@@ -566,7 +463,7 @@ mod format {
     fn flags_typographic_chars_converted_keeps_is_ascii() {
         // Curly quotes, em-dash, ellipsis — all in prefer_ascii's conversion set.
         let blob = blob_bytes("he said \u{201C}hello\u{201D} \u{2014} then left\u{2026}");
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         let text = std::str::from_utf8(
             &blob[8..8 + i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize],
         )
@@ -586,7 +483,7 @@ mod format {
     #[test]
     fn flags_unhandled_non_ascii_clears_is_ascii() {
         let blob = blob_bytes("café latte");
-        let flags = blob_flags(&blob);
+        let flags = read(&blob).flags;
         assert_eq!(flags & FLAG_IS_ASCII, 0);
     }
 
@@ -602,13 +499,8 @@ mod format {
 
     /// First (start, end, type) span record decoded from a serialized blob.
     fn first_span(blob: &[u8]) -> (i32, i32, i32) {
-        let txt_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-        let o = 8 + txt_len + (4 - txt_len % 4) % 4;
-        (
-            i32::from_le_bytes([blob[o], blob[o + 1], blob[o + 2], blob[o + 3]]),
-            i32::from_le_bytes([blob[o + 4], blob[o + 5], blob[o + 6], blob[o + 7]]),
-            i32::from_le_bytes([blob[o + 8], blob[o + 9], blob[o + 10], blob[o + 11]]),
-        )
+        let s = read(blob).spans.remove(0);
+        (s.start, s.end, s.typ)
     }
 
     /// Smartypants turns ASCII `(c)` into © after the fast-path writer was
@@ -618,8 +510,8 @@ mod format {
     #[test]
     fn flags_ascii_input_smartypants_symbol_clears_is_ascii() {
         let blob = render_blob_full("(c) 2024 **bold**");
-        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
-        assert_eq!(blob_text(&blob), "\u{00A9} 2024 bold");
+        assert_eq!(read(&blob).flags & FLAG_IS_ASCII, 0);
+        assert_eq!(read(&blob).text, "\u{00A9} 2024 bold");
         // "© 2024 " is 7 UTF-16 units; byte-based accounting would give 8.
         assert_eq!(first_span(&blob), (7, 11, crate::blob::BOLD));
     }
@@ -628,8 +520,8 @@ mod format {
     #[test]
     fn flags_ascii_input_entity_clears_is_ascii() {
         let blob = render_blob_full("&copy; entity test");
-        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
-        assert!(blob_text(&blob).starts_with('\u{00A9}'));
+        assert_eq!(read(&blob).flags & FLAG_IS_ASCII, 0);
+        assert!(read(&blob).text.starts_with('\u{00A9}'));
     }
 
     /// Entities and shortcode emoji write non-ASCII under fast-path UTF-16
@@ -638,7 +530,7 @@ mod format {
     #[test]
     fn flags_symbol_after_entity_keeps_span_offsets() {
         let blob = render_blob_full("&eacute;x **bold** (c)");
-        let text = blob_text(&blob);
+        let text = read(&blob).text;
         assert_eq!(text, "\u{e9}x bold \u{a9}");
         let bold = text.find("bold").unwrap();
         let start = text[..bold].encode_utf16().count() as i32;
@@ -650,7 +542,7 @@ mod format {
     #[test]
     fn flags_symbol_after_emoji_keeps_span_offsets() {
         let blob = render_blob_full(":smile: **bold** (c)");
-        let text = blob_text(&blob);
+        let text = read(&blob).text;
         let bold = text.find("bold").unwrap();
         let start = text[..bold].encode_utf16().count() as i32;
         let (s, e, _) = first_span(&blob);
@@ -664,8 +556,8 @@ mod format {
     #[cfg(feature = "shortcodes")]
     fn flags_ascii_input_footnote_shortcode_clears_is_ascii() {
         let blob = render_blob_full("a[^1]\n\n[^1]: note with :joy: emoji");
-        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
-        assert!(blob_text(&blob).contains('\u{1F602}'));
+        assert_eq!(read(&blob).flags & FLAG_IS_ASCII, 0);
+        assert!(read(&blob).text.contains('\u{1F602}'));
     }
 
     /// Inline shortcode emoji from ASCII input: another transform the
@@ -675,7 +567,7 @@ mod format {
     #[cfg(feature = "shortcodes")]
     fn flags_ascii_input_inline_shortcode_clears_is_ascii() {
         let blob = render_blob_full("happy :joy: time **bold**");
-        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, 0);
+        assert_eq!(read(&blob).flags & FLAG_IS_ASCII, 0);
         // "happy 😂 time " is 14 UTF-16 units (emoji = surrogate pair).
         assert_eq!(first_span(&blob), (14, 18, crate::blob::BOLD));
     }
@@ -685,7 +577,7 @@ mod format {
     #[test]
     fn flags_ascii_input_ascii_output_keeps_is_ascii() {
         let blob = render_blob_full("plain ascii control **bold**");
-        assert_eq!(blob_flags(&blob) & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        assert_eq!(read(&blob).flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
     }
 
     /// span_count remains correctly readable when flag bits are set.
@@ -693,8 +585,8 @@ mod format {
     fn span_count_unaffected_by_flag_byte() {
         let blob = blob_bytes("![](https://example.com/x.jpg)");
         // image, image_size span... at least 1 span and flags must coexist.
-        assert!(blob_flags(&blob) != 0);
-        assert!(blob_span_count(&blob) > 0);
+        assert!(read(&blob).flags != 0);
+        assert!(!read(&blob).spans.is_empty());
     }
 }
 
@@ -1259,7 +1151,8 @@ mod block {
         assert!(!result.text().contains("Para 1Para 2"));
     }
 
-    /// Nested blockquote depth values and uniform end positions (no staircase).
+    /// Nested blockquote depth values and uniform end positions (no staircase), in the blob's
+    /// order: the outer quote first.
     #[test]
     fn nested_blockquotes() {
         let result = render_test(
@@ -1269,7 +1162,7 @@ mod block {
         );
         let quotes: Vec<_> = result.span_iter().filter(|s| s.typ == QUOTE).collect();
         assert_eq!(quotes.len(), 3);
-        let (inner, middle, outer) = (&quotes[0], &quotes[1], &quotes[2]);
+        let (outer, middle, inner) = (&quotes[0], &quotes[1], &quotes[2]);
         assert_eq!(inner.data, 2);
         assert_eq!(middle.data, 1);
         assert_eq!(outer.data, 0);
@@ -1319,35 +1212,13 @@ mod block {
         assert!(result.span_iter().any(|s| s.typ == TABLE));
     }
 
-    /// Decodes a TABLE span's url_data payload: a `(rows<<16|cols)` header then
-    /// length-prefixed cell markdown, row-major.
-    fn decode_table(url_data: &[u8], data: i32) -> (usize, usize, Vec<String>) {
-        let mut p = (data - 1) as usize;
-        let packed = u32::from_le_bytes([
-            url_data[p],
-            url_data[p + 1],
-            url_data[p + 2],
-            url_data[p + 3],
-        ]);
-        p += 4;
-        let (rows, cols) = ((packed >> 16) as usize, (packed & 0xFFFF) as usize);
-        let mut cells = Vec::new();
-        for _ in 0..rows * cols {
-            let len = u16::from_le_bytes([url_data[p], url_data[p + 1]]) as usize;
-            p += 2;
-            cells.push(String::from_utf8(url_data[p..p + len].to_vec()).unwrap());
-            p += len;
-        }
-        (rows, cols, cells)
-    }
-
     /// Table cells are packed into url_data, addressed by `data = offset+1`:
     /// a `(rows<<16|cols)` header then length-prefixed inline-markdown cells.
     #[test]
     fn table_payload_roundtrips() {
         let result = render_test("| a | b |\n|---|---|\n| 1 | 2 |");
         let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
-        let (rows, cols, cells) = decode_table(&result.url_data, span.data);
+        let (rows, cols, cells) = result.table(span.data);
         assert_eq!((rows, cols), (2, 2));
         assert_eq!(cells, vec!["a", "b", "1", "2"]);
     }
@@ -1358,7 +1229,7 @@ mod block {
     fn table_cell_inline_markdown_roundtrips() {
         let result = render_test("| h |\n|---|\n| **bold** and `code` and [l](https://e.com) |");
         let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
-        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        let (_, _, cells) = result.table(span.data);
         assert_eq!(cells[1], "**bold** and `code` and [l](https://e.com)");
     }
 
@@ -1375,7 +1246,7 @@ mod block {
         ] {
             let result = render_test(md);
             let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
-            let (_, _, cells) = decode_table(&result.url_data, span.data);
+            let (_, _, cells) = result.table(span.data);
             assert_eq!(cells[1], expected, "input {md:?}");
         }
     }
@@ -1387,7 +1258,7 @@ mod block {
     fn table_cell_extension_syntax_roundtrips() {
         let result = render_test("| h |\n|---|\n| ~~struck~~ |");
         let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
-        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        let (_, _, cells) = result.table(span.data);
         assert_eq!(cells[1], "~~struck~~");
     }
 
@@ -1398,7 +1269,7 @@ mod block {
         let cell = "é".repeat(33_000); // 66 000 bytes; an unchecked cut at 65 535 splits a char
         let result = render_test(&format!("| h |\n|---|\n| {cell} |"));
         let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
-        let (_, _, cells) = decode_table(&result.url_data, span.data);
+        let (_, _, cells) = result.table(span.data);
         assert!(cells[1].len() <= u16::MAX as usize);
         assert!(cells[1].chars().all(|c| c == 'é'));
     }
@@ -1409,7 +1280,7 @@ mod block {
     fn table_short_row_padded_to_columns() {
         let result = render_test("| a | b |\n|---|---|\n| only |");
         let span = result.span_iter().find(|s| s.typ == TABLE).unwrap();
-        let (rows, cols, cells) = decode_table(&result.url_data, span.data);
+        let (rows, cols, cells) = result.table(span.data);
         assert_eq!((rows, cols), (2, 2));
         assert_eq!(cells, vec!["a", "b", "only", ""]);
     }
@@ -1445,13 +1316,13 @@ mod block {
             .span_iter()
             .find(|s| s.typ == LEMMY_SPOILER_CONTENT)
             .unwrap();
-        assert_eq!(&result.text()[title.start..title.end], "tap me");
+        assert_eq!(&result.text()[title.start as usize..title.end as usize], "tap me");
         assert_eq!(
             body.start,
             title.end + 1,
             "body must start one byte past title end"
         );
-        assert!(result.text()[body.start..body.end].contains("hidden body"));
+        assert!(result.text()[body.start as usize..body.end as usize].contains("hidden body"));
         // Title also gets BOLD + LINK_SIZE for styling.
         assert!(
             result
@@ -1513,8 +1384,8 @@ mod edge {
         }
         let blob = blob_bytes("");
         assert_eq!(blob.len(), 8);
-        assert_eq!(blob_text(&blob), "");
-        assert_eq!(blob_span_count(&blob), 0);
+        assert_eq!(read(&blob).text, "");
+        assert_eq!(read(&blob).spans.len(), 0);
     }
 
     /// 5-level nested blockquote staircase depth values.
@@ -1689,21 +1560,20 @@ mod production {
     }
 
     /// `render_test`, but with the production option set.
-    fn render_prod(markdown: &str) -> BlobWriter {
+    fn render_prod(markdown: &str) -> Blob {
         let opts = production_opts();
         parse_document_zerocopy(markdown.trim(), &opts, |root| {
             let mut out = BlobWriter::new(256, false, PLAIN);
             visit(root, &mut out);
             out.append_footnotes();
-            out.clear_pending();
-            out
+            read(&out.into_blob())
         })
     }
 
-    fn link_urls(w: &BlobWriter) -> Vec<String> {
-        w.span_iter()
+    fn link_urls(b: &Blob) -> Vec<String> {
+        b.span_iter()
             .filter(|s| s.typ == LINK)
-            .filter_map(|s| s.url)
+            .filter_map(|s| s.url.clone())
             .collect()
     }
 

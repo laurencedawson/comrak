@@ -7,6 +7,7 @@ use crate::blob::site::{Page, page};
 use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN};
 use crate::blob::{APP_LINK, LINK, render_blob};
 use crate::parse_document_zerocopy;
+use crate::tests::blob_read::read;
 
 fn own(site: u8, urls: &[&str]) {
     for url in urls {
@@ -323,22 +324,13 @@ fn internal_is_the_sites_own_host_or_relative() {
 /// Every link in `md` read as `site`, its kind and address, and the text shown.
 fn links(md: &str, site: u8) -> (String, Vec<(i32, String)>) {
     let opts = production_options();
-    let blob = parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).expect("a blob");
-    let int = |at: usize| i32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
-    let len = int(0) as usize;
-    let count = (int(4) & 0xFF_FFFF) as usize;
-    let spans = 8 + len + (4 - len % 4) % 4;
-    let urls = &blob[spans + count * 16..];
-    let text = String::from_utf8(blob[8..8 + len].to_vec()).unwrap();
-    let found = (0..count)
-        .map(|i| (int(spans + i * 16 + 8), int(spans + i * 16 + 12)))
-        .filter(|&(t, _)| t == LINK || t == APP_LINK)
-        .map(|(t, d)| {
-            let (at, n) = ((d >> 12) as usize, (d & 0xFFF) as usize);
-            (t, String::from_utf8(urls[at..at + n].to_vec()).unwrap())
-        })
+    let b = read(&parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).expect("a blob"));
+    let found = b
+        .span_iter()
+        .filter(|s| s.typ == LINK || s.typ == APP_LINK)
+        .map(|s| (s.typ, s.url.clone().unwrap()))
         .collect();
-    (text, found)
+    (b.text, found)
 }
 
 /// A Lemmy post, comment, community or user linked from any instance is the app's; a link

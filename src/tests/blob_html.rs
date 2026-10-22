@@ -27,6 +27,7 @@ use crate::blob::{
     LINK_SIZE, QUOTE, STRIKETHROUGH, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
+use crate::tests::blob_read::{Blob, Span, read};
 
 /// The thread page 4chan's comments here sit on, which their relative links resolve against.
 const THREAD: &str = "https://boards.4chan.org/g/thread/100";
@@ -45,66 +46,21 @@ fn chan(html: &str) -> (String, Vec<Span>) {
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-/// A span as the blob holds it; a link's or picture's data is its address.
-#[derive(Debug, PartialEq)]
-enum Data {
-    Int(i32),
-    Url(String),
-}
-
-#[derive(Debug, PartialEq)]
-struct Span(i32, i32, i32, Data);
-
 fn span(start: i32, end: i32, t: i32) -> Span {
-    Span(start, end, t, Data::Int(0))
+    Span { start, end, typ: t, data: 0, url: None }
 }
 
 fn quote(start: i32, end: i32, depth: i32) -> Span {
-    Span(start, end, QUOTE, Data::Int(depth))
+    Span { data: depth, ..span(start, end, QUOTE) }
 }
 
 fn url(start: i32, end: i32, t: i32, url: &str) -> Span {
-    Span(start, end, t, Data::Url(url.to_string()))
+    Span { url: Some(url.to_string()), ..span(start, end, t) }
 }
 
 /// A link's two spans, as comrak writes them.
 fn link(start: i32, end: i32, address: &str) -> [Span; 2] {
     [url(start, end, LINK, address), span(start, end, LINK_SIZE)]
-}
-
-struct Blob {
-    text: String,
-    ascii: bool,
-    spans: Vec<Span>,
-}
-
-/// Reads a blob back: the header, the text, the spans past the padding and their addresses.
-fn read(blob: &[u8]) -> Blob {
-    let int = |at: usize| i32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
-    let text_len = int(0) as usize;
-    let header = int(4) as u32;
-    let count = (header & 0xFF_FFFF) as usize;
-    let text = std::str::from_utf8(&blob[8..8 + text_len]).unwrap().to_string();
-    let spans_at = 8 + text_len + (4 - text_len % 4) % 4;
-    let urls = &blob[spans_at + count * 16..];
-    let spans = (0..count)
-        .map(|i| {
-            let at = spans_at + i * 16;
-            let (start, end, t, data) = (int(at), int(at + 4), int(at + 8), int(at + 12));
-            let data = if t == LINK || t == APP_LINK || t == IMAGE {
-                let (offset, len) = ((data >> 12) as usize, (data & 0xFFF) as usize);
-                Data::Url(std::str::from_utf8(&urls[offset..offset + len]).unwrap().to_string())
-            } else {
-                Data::Int(data)
-            };
-            Span(start, end, t, data)
-        })
-        .collect();
-    Blob {
-        text,
-        ascii: header >> 24 & 1 == 1,
-        spans,
-    }
 }
 
 /// The comment's blob, which must exist.
@@ -248,13 +204,13 @@ fn entities_past_the_basic_plane_count_two_units() {
     let b = blob("&#x1F600; <i>x</i>");
     assert_eq!(b.text, "😀 x");
     assert_eq!(b.spans, vec![span(3, 4, ITALIC)]);
-    assert!(!b.ascii);
+    assert!(!b.ascii());
 }
 
 /// ASCII text is flagged so, letting the reader skip its own scan.
 #[test]
 fn entities_ascii_text_is_flagged() {
-    assert!(blob("I didn&#x27;t").ascii);
+    assert!(blob("I didn&#x27;t").ascii());
 }
 
 // ── quotes ───────────────────────────────────────────────────────────────
@@ -554,7 +510,7 @@ fn words_comments_are_dropped() {
 fn words_typographic_symbols() {
     let b = blob("(c) 2026 +- 1<p>x");
     assert_eq!(b.text, "\u{a9} 2026 \u{b1} 1\n\nx");
-    assert!(!b.ascii);
+    assert!(!b.ascii());
 }
 
 /// Typed curly quotes and dashes are their ASCII forms.
@@ -608,7 +564,7 @@ fn tags_greentext_holds_a_link() {
     let (text, spans) = chan("<span class=\"quote\">&gt;see <a href=\"#p5\">&gt;&gt;5</a></span>");
     assert_eq!(text, ">see >>5");
     assert_eq!(spans[0], span(0, 8, GREENTEXT));
-    assert!(spans.iter().any(|s| s.2 == APP_LINK && s.0 == 5));
+    assert!(spans.iter().any(|s| s.typ == APP_LINK && s.start == 5));
 }
 
 /// A dead link is struck through, its chevrons words.
@@ -661,7 +617,7 @@ fn chan_link(html: &str) -> (String, String) {
     let links: Vec<String> = spans
         .into_iter()
         .filter_map(|s| match s {
-            Span(_, _, t, Data::Url(url)) if t == LINK || t == APP_LINK => Some(url),
+            Span { typ: LINK | APP_LINK, url: Some(url), .. } => Some(url),
             _ => None,
         })
         .collect();
@@ -672,7 +628,7 @@ fn chan_link(html: &str) -> (String, String) {
 /// Whether the comment's one link is the site's own, an `APP_LINK`, or a `LINK`.
 fn own(html: &str) -> bool {
     let (_, spans) = chan(html);
-    let kinds: Vec<i32> = spans.iter().map(|s| s.2).filter(|&t| t == LINK || t == APP_LINK).collect();
+    let kinds: Vec<i32> = spans.iter().map(|s| s.typ).filter(|&t| t == LINK || t == APP_LINK).collect();
     assert_eq!(kinds.len(), 1, "one link in {html:?}");
     kinds[0] == APP_LINK
 }
@@ -770,8 +726,8 @@ fn site_link_relative_path_query_and_fragment() {
     let base = Some("https://example.com/a/page?q=1#top");
     let address = |html: &str| {
         let b = read(&render_html_blob(html, sites::HACKER_NEWS, base).unwrap());
-        match b.spans.into_iter().find(|s| s.2 == LINK || s.2 == APP_LINK) {
-            Some(Span(_, _, _, Data::Url(url))) => url,
+        match b.spans.into_iter().find(|s| s.typ == LINK || s.typ == APP_LINK) {
+            Some(Span { url: Some(url), .. }) => url,
             _ => panic!("no link in {html:?}"),
         }
     };
@@ -795,7 +751,7 @@ fn chan_links(html: &str) -> Vec<(String, String)> {
     spans
         .into_iter()
         .filter_map(|s| match s {
-            Span(start, end, t, Data::Url(url)) if t == LINK || t == APP_LINK => {
+            Span { start, end, typ: LINK | APP_LINK, url: Some(url), .. } => {
                 let units: Vec<u16> = text.encode_utf16().collect();
                 Some((String::from_utf16(&units[start as usize..end as usize]).unwrap(), url))
             }
@@ -918,7 +874,8 @@ fn shown(blob: Option<Vec<u8>>, source: &str) -> (String, bool, Vec<Span>) {
     match blob {
         Some(blob) => {
             let b = read(&blob);
-            (b.text, b.ascii, b.spans)
+            let ascii = b.ascii();
+            (b.text, ascii, b.spans)
         }
         None => (source.to_string(), source.is_ascii(), vec![]),
     }

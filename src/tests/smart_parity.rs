@@ -15,6 +15,7 @@
 
 use crate::blob::render_blob;
 use crate::blob::*;
+use crate::tests::blob_read::read;
 use crate::{Options, parse_document_zerocopy};
 
 /// Mirrors `production_options()` in the JNI shim
@@ -49,78 +50,17 @@ fn render(markdown: &str) -> Vec<u8> {
     parity(markdown).expect("expected Some(blob)")
 }
 
-fn text(blob: &[u8]) -> &str {
-    let len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-    std::str::from_utf8(&blob[8..8 + len]).unwrap()
-}
-
-fn is_ascii_flag(blob: &[u8]) -> bool {
-    blob[7] & 0x01 != 0
-}
-
-fn span_records(blob: &[u8]) -> Vec<[i32; 4]> {
-    let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-    let count = (i32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) & 0x00FF_FFFF) as usize;
-    let base = 8 + ((text_len + 3) & !3);
-    (0..count)
-        .map(|i| {
-            let p = base + i * 16;
-            let f = |o: usize| {
-                i32::from_le_bytes([
-                    blob[p + o],
-                    blob[p + o + 1],
-                    blob[p + o + 2],
-                    blob[p + o + 3],
-                ])
-            };
-            [f(0), f(4), f(8), f(12)]
-        })
-        .collect()
-}
-
-fn url_data_offset(blob: &[u8]) -> usize {
-    let text_len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-    let count = (i32::from_le_bytes([blob[4], blob[5], blob[6], blob[7]]) & 0x00FF_FFFF) as usize;
-    8 + ((text_len + 3) & !3) + count * 16
-}
-
-/// The url slice a LINK/IMAGE span's packed data field addresses.
-fn span_url(blob: &[u8], data: i32) -> &str {
-    let base = url_data_offset(blob) + (data >> 12) as usize;
-    std::str::from_utf8(&blob[base..base + (data & 0xFFF) as usize]).unwrap()
-}
-
-fn first_url_of_type(blob: &[u8], typ: i32) -> String {
-    let rec = span_records(blob)
-        .into_iter()
-        .find(|r| r[2] == typ)
-        .expect("span type not found");
-    span_url(blob, rec[3]).to_string()
+fn text(blob: &[u8]) -> String {
+    read(blob).text
 }
 
 fn has_span_type(blob: &[u8], typ: i32) -> bool {
-    span_records(blob).iter().any(|r| r[2] == typ)
+    read(blob).spans.iter().any(|s| s.typ == typ)
 }
 
-/// Row-major cell markdown of the first TABLE span's payload.
-fn table_cells(blob: &[u8]) -> Vec<String> {
-    let rec = span_records(blob)
-        .into_iter()
-        .find(|r| r[2] == TABLE)
-        .expect("no TABLE span");
-    let mut p = url_data_offset(blob) + (rec[3] - 1) as usize;
-    let packed = u32::from_le_bytes([blob[p], blob[p + 1], blob[p + 2], blob[p + 3]]);
-    p += 4;
-    let (rows, cols) = ((packed >> 16) as usize, (packed & 0xFFFF) as usize);
-    (0..rows * cols)
-        .map(|_| {
-            let len = u16::from_le_bytes([blob[p], blob[p + 1]]) as usize;
-            p += 2;
-            let s = String::from_utf8(blob[p..p + len].to_vec()).unwrap();
-            p += len;
-            s
-        })
-        .collect()
+fn first_url_of_type(blob: &[u8], typ: i32) -> String {
+    let spans = read(blob).spans;
+    spans.into_iter().find(|s| s.typ == typ).and_then(|s| s.url).expect("span type not found")
 }
 
 mod invariant {
@@ -178,8 +118,8 @@ mod invariant {
         // themselves must come through as typed, on the byte[] fast path.
         let b = render("it's fine\nsecond line");
         assert_eq!(text(&b), "it's fine second line");
-        assert!(is_ascii_flag(&b));
-        assert!(span_records(&b).is_empty());
+        assert!(read(&b).ascii());
+        assert!(read(&b).spans.is_empty());
     }
 
     #[test]
@@ -189,7 +129,7 @@ mod invariant {
             text(&b),
             "\u{a9} \u{a9} \u{ae} \u{2122} \u{2122} 5 \u{b1} 2"
         );
-        assert!(!is_ascii_flag(&b));
+        assert!(!read(&b).ascii());
     }
 
     #[test]
@@ -204,9 +144,9 @@ mod invariant {
         // neighbours (was typographic.rs's smart_typographic_with_multibyte).
         let b = render("好(c)好 **b**");
         assert_eq!(text(&b), "好\u{a9}好 b");
-        assert!(!is_ascii_flag(&b));
-        let bold = span_records(&b).into_iter().find(|r| r[2] == BOLD).unwrap();
-        assert_eq!((bold[0], bold[1]), (4, 5));
+        assert!(!read(&b).ascii());
+        let bold = read(&b).spans.into_iter().find(|s| s.typ == BOLD).unwrap();
+        assert_eq!((bold.start, bold.end), (4, 5));
     }
 
     #[test]
@@ -345,7 +285,9 @@ mod retired_transforms {
     #[test]
     fn table_cells_carry_typed_ascii() {
         let b = render("| don't | a--b |\n|---|---|\n| \"q\" | c... |");
-        let cells = table_cells(&b);
+        let b = read(&b);
+        let table = b.span_iter().find(|s| s.typ == TABLE).expect("no TABLE span");
+        let (_, _, cells) = b.table(table.data);
         assert_eq!(cells[0], "don't");
         assert_eq!(cells[1], "a--b");
         assert_eq!(cells[2], "\"q\"");

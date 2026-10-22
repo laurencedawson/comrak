@@ -13,6 +13,7 @@ mod attributes;
 mod autolink;
 mod blob;
 mod blob_html;
+mod blob_read;
 mod block_directive;
 mod cjk_friendly_emphasis;
 mod code;
