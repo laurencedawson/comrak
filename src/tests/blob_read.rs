@@ -84,11 +84,19 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
                 let (offset, len) = ((data >> 12) as usize, (data & 0xFFF) as usize);
                 String::from_utf8(url_data[offset..offset + len].to_vec()).unwrap()
             });
-            Span { start, end, typ, data: if url.is_some() { 0 } else { data }, url }
+            Span {
+                start,
+                end,
+                typ,
+                data: if url.is_some() { 0 } else { data },
+                url,
+            }
         })
         .collect();
     Blob {
-        text: std::str::from_utf8(&blob[8..8 + text_len]).unwrap().to_string(),
+        text: std::str::from_utf8(&blob[8..8 + text_len])
+            .unwrap()
+            .to_string(),
         flags: blob[7],
         spans,
         url_data,

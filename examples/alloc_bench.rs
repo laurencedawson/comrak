@@ -221,8 +221,14 @@ fn main() {
     use comrak::blob::site::{Page, page};
     let links = comrak::benchmarks::SITE_LINKS;
     start_tracking();
-    let own = links.iter().filter(|(site, url)| page(*site, url) == Page::Own).count();
-    let internal = links.iter().filter(|(site, url)| page(*site, url) != Page::Elsewhere).count();
+    let own = links
+        .iter()
+        .filter(|(site, url)| page(*site, url) == Page::Own)
+        .count();
+    let internal = links
+        .iter()
+        .filter(|(site, url)| page(*site, url) != Page::Elsewhere)
+        .count();
     let (count, bytes) = stop_tracking();
     println!(
         "{:<20} {:>2} links, {:>2} own, {:>2} on site | {:>5} allocs {:>6} bytes",

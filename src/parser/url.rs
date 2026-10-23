@@ -62,11 +62,15 @@ fn resolve_target(url: &str) -> Cow<'_, str> {
             return Cow::Owned(u);
         }
     } else if host.ends_with("google.com") {
-        if let Some(u) = unwrap_redirect(&url, "google.com/url?", "q").or_else(|| unwrap_google_amp(&url)) {
+        if let Some(u) =
+            unwrap_redirect(&url, "google.com/url?", "q").or_else(|| unwrap_google_amp(&url))
+        {
             return Cow::Owned(u);
         }
     } else if host.ends_with("youtube.com") {
-        if let Some(u) = unwrap_redirect(&url, "youtube.com/redirect?", "q").or_else(|| normalize_mobile_youtube(&url)) {
+        if let Some(u) = unwrap_redirect(&url, "youtube.com/redirect?", "q")
+            .or_else(|| normalize_mobile_youtube(&url))
+        {
             return Cow::Owned(u);
         }
     } else if host.ends_with("facebook.com") {

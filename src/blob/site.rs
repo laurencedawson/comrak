@@ -22,7 +22,10 @@ pub(crate) fn html(site: u8) -> &'static HtmlRules<'static> {
 }
 
 /// Plain HTML: no site's tags, and a paragraph opening on `>` is words.
-const PLAIN: HtmlRules<'static> = HtmlRules { quote_marks: false, tags: &[] };
+const PLAIN: HtmlRules<'static> = HtmlRules {
+    quote_marks: false,
+    tags: &[],
+};
 
 /// What a resolved address is to a site, read once for both questions a link asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,17 +93,27 @@ impl<'a> Url<'a> {
         };
         let (rest, fragment) = rest.split_once('#').unwrap_or((rest, ""));
         let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
-        Some(Url { host, path, query, fragment })
+        Some(Url {
+            host,
+            path,
+            query,
+            fragment,
+        })
     }
 
     /// Whether the address is on one of `hosts`, in any case, or relative, so on the page's own.
     pub(crate) fn on(&self, hosts: &[&str]) -> bool {
-        self.host.is_empty() || hosts.iter().any(|host| self.host.eq_ignore_ascii_case(host))
+        self.host.is_empty()
+            || hosts
+                .iter()
+                .any(|host| self.host.eq_ignore_ascii_case(host))
     }
 
     /// The query's value for `key`, the first where it is given twice.
     pub(crate) fn param(&self, key: &str) -> Option<&'a str> {
-        self.query.split('&').find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
+        self.query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
     }
 }
 

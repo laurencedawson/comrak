@@ -23,8 +23,8 @@
 use crate::benchmarks::production_options;
 use crate::blob::sites;
 use crate::blob::{
-    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE, LINK,
-    LINK_SIZE, QUOTE, STRIKETHROUGH, render_blob, render_html_blob,
+    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT,
+    LEMMY_SPOILER_TITLE, LINK, LINK_SIZE, QUOTE, STRIKETHROUGH, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
 use crate::tests::blob_read::{Blob, Span, read};
@@ -47,15 +47,27 @@ fn chan(html: &str) -> (String, Vec<Span>) {
 // ── helpers ──────────────────────────────────────────────────────────────
 
 fn span(start: i32, end: i32, t: i32) -> Span {
-    Span { start, end, typ: t, data: 0, url: None }
+    Span {
+        start,
+        end,
+        typ: t,
+        data: 0,
+        url: None,
+    }
 }
 
 fn quote(start: i32, end: i32, depth: i32) -> Span {
-    Span { data: depth, ..span(start, end, QUOTE) }
+    Span {
+        data: depth,
+        ..span(start, end, QUOTE)
+    }
 }
 
 fn url(start: i32, end: i32, t: i32, url: &str) -> Span {
-    Span { url: Some(url.to_string()), ..span(start, end, t) }
+    Span {
+        url: Some(url.to_string()),
+        ..span(start, end, t)
+    }
 }
 
 /// A link's two spans, as comrak writes them.
@@ -229,7 +241,10 @@ fn quote_paragraph_opening_on_a_mark() {
 fn quote_is_its_paragraph_alone() {
     assert_eq!(
         spanned("before<p>&gt; quoted<p>after"),
-        ("before\n\nquoted\n\nafter".to_string(), vec![quote(8, 14, 0)])
+        (
+            "before\n\nquoted\n\nafter".to_string(),
+            vec![quote(8, 14, 0)]
+        )
     );
 }
 
@@ -238,14 +253,20 @@ fn quote_is_its_paragraph_alone() {
 fn quote_each_paragraph_its_own() {
     assert_eq!(
         spanned("&gt; one<p>&gt; two"),
-        ("one\n\ntwo".to_string(), vec![quote(0, 3, 0), quote(5, 8, 0)])
+        (
+            "one\n\ntwo".to_string(),
+            vec![quote(0, 3, 0), quote(5, 8, 0)]
+        )
     );
 }
 
 /// The mark needs no space after it.
 #[test]
 fn quote_mark_without_a_space() {
-    assert_eq!(spanned("&gt;implying"), ("implying".to_string(), vec![quote(0, 8, 0)]));
+    assert_eq!(
+        spanned("&gt;implying"),
+        ("implying".to_string(), vec![quote(0, 8, 0)])
+    );
 }
 
 /// Two marks are a quote within a quote, the inner one a level deeper.
@@ -270,7 +291,10 @@ fn quote_spaced_marks_nest() {
 /// quote however much of it there is.
 #[test]
 fn quote_space_before_the_mark() {
-    assert_eq!(spanned("    &gt; x"), ("x".to_string(), vec![quote(0, 1, 0)]));
+    assert_eq!(
+        spanned("    &gt; x"),
+        ("x".to_string(), vec![quote(0, 1, 0)])
+    );
 }
 
 /// A mark opening a code block's line is code, never a quote.
@@ -323,7 +347,12 @@ fn a_shortened_words_keep_the_whole_address() {
         spanned(html),
         (
             "https://en.wikipedia.org/wiki/EMudhra#2026_comp...".to_string(),
-            link(0, 50, "https://en.wikipedia.org/wiki/EMudhra#2026_compromise").into()
+            link(
+                0,
+                50,
+                "https://en.wikipedia.org/wiki/EMudhra#2026_compromise"
+            )
+            .into()
         )
     );
 }
@@ -345,7 +374,10 @@ fn a_words_get_the_domain() {
 fn a_mid_sentence() {
     assert_eq!(
         spanned("see <a href=\"https://www.example.com/a\">the docs</a> now"),
-        ("see the docs (example.com) now".to_string(), link(4, 12, "https://www.example.com/a").into())
+        (
+            "see the docs (example.com) now".to_string(),
+            link(4, 12, "https://www.example.com/a").into()
+        )
     );
 }
 
@@ -366,7 +398,10 @@ fn a_address_is_resolved() {
 fn a_single_quoted_address() {
     assert_eq!(
         spanned("<a href='https://example.com/'>x</a>"),
-        ("x (example.com)".to_string(), link(0, 1, "https://example.com/").into())
+        (
+            "x (example.com)".to_string(),
+            link(0, 1, "https://example.com/").into()
+        )
     );
 }
 
@@ -382,16 +417,34 @@ fn a_without_an_address_is_words() {
 #[test]
 fn a_to_a_picture_has_one_blank_line_before_it() {
     for (html, text) in [
-        ("<p>para</p><p>https://i.imgur.com/abc.png</p>", "para\n\n\u{1}"),
+        (
+            "<p>para</p><p>https://i.imgur.com/abc.png</p>",
+            "para\n\n\u{1}",
+        ),
         ("para<br>https://i.imgur.com/abc.png", "para\n\n\u{1}"),
         ("para<br><br>https://i.imgur.com/abc.png", "para\n\n\u{1}"),
         ("<i>x</i> https://i.imgur.com/abc.png", "x \n\n\u{1}"),
-        ("<p>&gt; q</p><p>https://i.imgur.com/abc.png</p>", "q\n\n\u{1}"),
-        ("<pre>code</pre><p>https://i.imgur.com/abc.png</p>", "code\n\n\u{1}"),
+        (
+            "<p>&gt; q</p><p>https://i.imgur.com/abc.png</p>",
+            "q\n\n\u{1}",
+        ),
+        (
+            "<pre>code</pre><p>https://i.imgur.com/abc.png</p>",
+            "code\n\n\u{1}",
+        ),
         ("<pre></pre><p>https://i.imgur.com/abc.png</p>", "\u{1}"),
-        ("<p>para</p><p><a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a></p>", "para\n\n\u{1}"),
-        ("https://i.imgur.com/a.png<br>https://i.imgur.com/b.png", "\u{1}\n\n\u{1}"),
-        ("https://i.imgur.com/a.png https://i.imgur.com/b.png", "\u{1}\n\n \u{1}"),
+        (
+            "<p>para</p><p><a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a></p>",
+            "para\n\n\u{1}",
+        ),
+        (
+            "https://i.imgur.com/a.png<br>https://i.imgur.com/b.png",
+            "\u{1}\n\n\u{1}",
+        ),
+        (
+            "https://i.imgur.com/a.png https://i.imgur.com/b.png",
+            "\u{1}\n\n \u{1}",
+        ),
     ] {
         assert_eq!(blob(html).text, text, "{html:?}");
     }
@@ -402,7 +455,10 @@ fn a_to_a_picture_has_one_blank_line_before_it() {
 fn a_to_a_picture_named_by_its_address_is_the_picture() {
     assert_eq!(
         spanned("<a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a>"),
-        ("\u{1}".to_string(), vec![url(0, 1, IMAGE, "https://i.imgur.com/abc.png")])
+        (
+            "\u{1}".to_string(),
+            vec![url(0, 1, IMAGE, "https://i.imgur.com/abc.png")]
+        )
     );
 }
 
@@ -410,8 +466,13 @@ fn a_to_a_picture_named_by_its_address_is_the_picture() {
 #[test]
 fn a_to_a_picture_mid_sentence() {
     assert_eq!(
-        spanned("look <a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a> here"),
-        ("look \n\n\u{1}\n\n here".to_string(), vec![url(7, 8, IMAGE, "https://i.imgur.com/abc.png")])
+        spanned(
+            "look <a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a> here"
+        ),
+        (
+            "look \n\n\u{1}\n\n here".to_string(),
+            vec![url(7, 8, IMAGE, "https://i.imgur.com/abc.png")]
+        )
     );
 }
 
@@ -420,7 +481,10 @@ fn a_to_a_picture_mid_sentence() {
 fn a_to_a_picture_with_words_is_a_link() {
     assert_eq!(
         spanned("<a href=\"https://i.imgur.com/abc.png\">a pic</a>"),
-        ("a pic (i.imgur.com)".to_string(), link(0, 5, "https://i.imgur.com/abc.png").into())
+        (
+            "a pic (i.imgur.com)".to_string(),
+            link(0, 5, "https://i.imgur.com/abc.png").into()
+        )
     );
 }
 
@@ -438,7 +502,10 @@ fn i_is_italic() {
 /// `<em>` is italic too.
 #[test]
 fn em_is_italic() {
-    assert_eq!(spanned("<em>x</em>"), ("x".to_string(), vec![span(0, 1, ITALIC)]));
+    assert_eq!(
+        spanned("<em>x</em>"),
+        ("x".to_string(), vec![span(0, 1, ITALIC)])
+    );
 }
 
 /// `<b>` and `<strong>` are bold.
@@ -446,14 +513,20 @@ fn em_is_italic() {
 fn b_and_strong_are_bold() {
     assert_eq!(
         spanned("a <b>bold</b> <strong>b</strong>"),
-        ("a bold b".to_string(), vec![span(2, 6, BOLD), span(7, 8, BOLD)])
+        (
+            "a bold b".to_string(),
+            vec![span(2, 6, BOLD), span(7, 8, BOLD)]
+        )
     );
 }
 
 /// A tag's name reads in any case.
 #[test]
 fn tags_read_in_any_case() {
-    assert_eq!(spanned("<I>x</I>"), ("x".to_string(), vec![span(0, 1, ITALIC)]));
+    assert_eq!(
+        spanned("<I>x</I>"),
+        ("x".to_string(), vec![span(0, 1, ITALIC)])
+    );
 }
 
 // ── code ─────────────────────────────────────────────────────────────────
@@ -463,7 +536,10 @@ fn tags_read_in_any_case() {
 fn pre_keeps_its_lines() {
     assert_eq!(
         spanned("logs:<p><pre><code>  Audit Logs\n  Oct 21, 2026</code></pre>"),
-        ("logs:\n\n  Audit Logs\n  Oct 21, 2026".to_string(), vec![span(7, 34, CODE_BLOCK)])
+        (
+            "logs:\n\n  Audit Logs\n  Oct 21, 2026".to_string(),
+            vec![span(7, 34, CODE_BLOCK)]
+        )
     );
 }
 
@@ -537,7 +613,10 @@ fn words_typographic_symbols() {
 /// Typed curly quotes and dashes are their ASCII forms.
 #[test]
 fn words_prefer_ascii() {
-    assert_eq!(plain("it&#x2019;s &#x201C;quoted&#x201D; &#x2014; dash&#x2026;"), "it's \"quoted\" - dash...");
+    assert_eq!(
+        plain("it&#x2019;s &#x201C;quoted&#x201D; &#x2014; dash&#x2026;"),
+        "it's \"quoted\" - dash..."
+    );
 }
 
 // ── tags ─────────────────────────────────────────────────────────────────
@@ -565,7 +644,10 @@ fn tags_greentext_covers_its_words() {
 fn tags_greentext_line_by_line() {
     assert_eq!(
         chan("<span class=\"quote\">&gt;a</span><br><span class=\"quote\">&gt;b</span><br>reply"),
-        (">a\n>b\nreply".to_string(), vec![span(0, 2, GREENTEXT), span(3, 5, GREENTEXT)])
+        (
+            ">a\n>b\nreply".to_string(),
+            vec![span(0, 2, GREENTEXT), span(3, 5, GREENTEXT)]
+        )
     );
 }
 
@@ -600,7 +682,10 @@ fn tags_strike() {
 /// Without the quote marks rule, a paragraph opening on `>` is words.
 #[test]
 fn tags_no_quote_marks_leaves_chevrons_as_words() {
-    assert_eq!(chan("&gt;&gt;123 agreed"), (">>123 agreed".to_string(), vec![]));
+    assert_eq!(
+        chan("&gt;&gt;123 agreed"),
+        (">>123 agreed".to_string(), vec![])
+    );
 }
 
 /// A spoiler is Lemmy's block: its title bold at a link's size, then its hidden words, each a
@@ -638,7 +723,11 @@ fn chan_link(html: &str) -> (String, String) {
     let links: Vec<String> = spans
         .into_iter()
         .filter_map(|s| match s {
-            Span { typ: LINK | APP_LINK, url: Some(url), .. } => Some(url),
+            Span {
+                typ: LINK | APP_LINK,
+                url: Some(url),
+                ..
+            } => Some(url),
             _ => None,
         })
         .collect();
@@ -649,7 +738,11 @@ fn chan_link(html: &str) -> (String, String) {
 /// Whether the comment's one link is the site's own, an `APP_LINK`, or a `LINK`.
 fn own(html: &str) -> bool {
     let (_, spans) = chan(html);
-    let kinds: Vec<i32> = spans.iter().map(|s| s.typ).filter(|&t| t == LINK || t == APP_LINK).collect();
+    let kinds: Vec<i32> = spans
+        .iter()
+        .map(|s| s.typ)
+        .filter(|&t| t == LINK || t == APP_LINK)
+        .collect();
     assert_eq!(kinds.len(), 1, "one link in {html:?}");
     kinds[0] == APP_LINK
 }
@@ -658,7 +751,9 @@ fn own(html: &str) -> bool {
 #[test]
 fn site_link_own_pages_are_app_links() {
     assert!(own("<a href=\"#p123\" class=\"quotelink\">&gt;&gt;123</a>"));
-    assert!(own("<a href=\"//boards.4channel.org/po/thread/570368#p570370\">x</a>"));
+    assert!(own(
+        "<a href=\"//boards.4channel.org/po/thread/570368#p570370\">x</a>"
+    ));
     assert!(own("see https://boards.4chan.org/g/thread/123#p456 now"));
     assert!(!own("<a href=\"//boards.4chan.org/po/archive\">x</a>"));
     assert!(!own("<a href=\"https://example.com/g/thread/1\">x</a>"));
@@ -669,7 +764,10 @@ fn site_link_own_pages_are_app_links() {
 fn site_link_anchor_on_the_page_is_the_apps() {
     assert_eq!(
         chan_link("<a href=\"#p123\" class=\"quotelink\">&gt;&gt;123</a>"),
-        (">>123".to_string(), "https://boards.4chan.org/g/thread/100#p123".to_string())
+        (
+            ">>123".to_string(),
+            "https://boards.4chan.org/g/thread/100#p123".to_string()
+        )
     );
 }
 
@@ -678,7 +776,10 @@ fn site_link_anchor_on_the_page_is_the_apps() {
 fn site_link_path_resolves_against_the_host() {
     assert_eq!(
         chan_link("<a href=\"/g/thread/200#p201\" class=\"quotelink\">&gt;&gt;201</a>"),
-        (">>201".to_string(), "https://boards.4chan.org/g/thread/200#p201".to_string())
+        (
+            ">>201".to_string(),
+            "https://boards.4chan.org/g/thread/200#p201".to_string()
+        )
     );
 }
 
@@ -686,12 +787,20 @@ fn site_link_path_resolves_against_the_host() {
 #[test]
 fn site_link_without_a_scheme_takes_the_pages() {
     assert_eq!(
-        chan_link("<a href=\"//boards.4chan.org/v/thread/300#p301\" class=\"quotelink\">&gt;&gt;&gt;/v/301</a>"),
-        (">>>/v/301".to_string(), "https://boards.4chan.org/v/thread/300#p301".to_string())
+        chan_link(
+            "<a href=\"//boards.4chan.org/v/thread/300#p301\" class=\"quotelink\">&gt;&gt;&gt;/v/301</a>"
+        ),
+        (
+            ">>>/v/301".to_string(),
+            "https://boards.4chan.org/v/thread/300#p301".to_string()
+        )
     );
     assert_eq!(
         chan_link("<a href=\"//example.com/g/thread/1\">x</a>"),
-        ("x (example.com)".to_string(), "https://example.com/g/thread/1".to_string())
+        (
+            "x (example.com)".to_string(),
+            "https://example.com/g/thread/1".to_string()
+        )
     );
 }
 
@@ -700,11 +809,17 @@ fn site_link_without_a_scheme_takes_the_pages() {
 fn site_link_in_full_is_the_apps() {
     assert_eq!(
         chan_link("<a href=\"https://boards.4chan.org/g/thread/200#p201\">here</a>"),
-        ("here".to_string(), "https://boards.4chan.org/g/thread/200#p201".to_string())
+        (
+            "here".to_string(),
+            "https://boards.4chan.org/g/thread/200#p201".to_string()
+        )
     );
     assert_eq!(
         chan_link("<a href=\"https://boards.4chan.org/g/thread/200/a-title#p201\">here</a>"),
-        ("here".to_string(), "https://boards.4chan.org/g/thread/200/a-title#p201".to_string())
+        (
+            "here".to_string(),
+            "https://boards.4chan.org/g/thread/200/a-title#p201".to_string()
+        )
     );
 }
 
@@ -713,10 +828,17 @@ fn site_link_in_full_is_the_apps() {
 #[test]
 fn site_link_boards_and_catalogs_are_the_apps() {
     assert!(own("<a href=\"/wsr/\">board</a>"));
-    assert!(own("<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"));
+    assert!(own(
+        "<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"
+    ));
     assert_eq!(
-        chan_link("<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"),
-        (">>>/po/lft".to_string(), "https://boards.4chan.org/po/catalog#s=lft".to_string())
+        chan_link(
+            "<a href=\"//boards.4chan.org/po/catalog#s=lft\" class=\"quotelink\">&gt;&gt;&gt;/po/lft</a>"
+        ),
+        (
+            ">>>/po/lft".to_string(),
+            "https://boards.4chan.org/po/catalog#s=lft".to_string()
+        )
     );
 }
 
@@ -727,7 +849,10 @@ fn site_link_other_pages_stay_addresses() {
     assert!(!own("<a href=\"/g/archive\">archive</a>"));
     assert_eq!(
         chan_link("<a href=\"/g/archive\">archive</a>"),
-        ("archive".to_string(), "https://boards.4chan.org/g/archive".to_string())
+        (
+            "archive".to_string(),
+            "https://boards.4chan.org/g/archive".to_string()
+        )
     );
 }
 
@@ -736,7 +861,10 @@ fn site_link_other_pages_stay_addresses() {
 fn site_link_elsewhere_is_as_written() {
     assert_eq!(
         chan_link("<a href=\"https://example.com/a\">x</a>"),
-        ("x (example.com)".to_string(), "https://example.com/a".to_string())
+        (
+            "x (example.com)".to_string(),
+            "https://example.com/a".to_string()
+        )
     );
 }
 
@@ -747,21 +875,40 @@ fn site_link_relative_path_query_and_fragment() {
     let base = Some("https://example.com/a/page?q=1#top");
     let address = |html: &str| {
         let b = read(&render_html_blob(html, sites::HACKER_NEWS, base).unwrap());
-        match b.spans.into_iter().find(|s| s.typ == LINK || s.typ == APP_LINK) {
+        match b
+            .spans
+            .into_iter()
+            .find(|s| s.typ == LINK || s.typ == APP_LINK)
+        {
             Some(Span { url: Some(url), .. }) => url,
             _ => panic!("no link in {html:?}"),
         }
     };
-    assert_eq!(address("<a href=\"other\">x</a>"), "https://example.com/a/other");
-    assert_eq!(address("<a href=\"?q=2\">x</a>"), "https://example.com/a/page?q=2");
-    assert_eq!(address("<a href=\"#end\">x</a>"), "https://example.com/a/page?q=1#end");
-    assert_eq!(address("<a href=\"/root\">x</a>"), "https://example.com/root");
+    assert_eq!(
+        address("<a href=\"other\">x</a>"),
+        "https://example.com/a/other"
+    );
+    assert_eq!(
+        address("<a href=\"?q=2\">x</a>"),
+        "https://example.com/a/page?q=2"
+    );
+    assert_eq!(
+        address("<a href=\"#end\">x</a>"),
+        "https://example.com/a/page?q=1#end"
+    );
+    assert_eq!(
+        address("<a href=\"/root\">x</a>"),
+        "https://example.com/root"
+    );
 }
 
 /// A relative link that resolves onto an app page is the app's.
 #[test]
 fn site_link_relative_onto_an_app_page_is_the_apps() {
-    assert_eq!(chan_link("<a href=\"201#p5\">x</a>").1, "https://boards.4chan.org/g/thread/201#p5");
+    assert_eq!(
+        chan_link("<a href=\"201#p5\">x</a>").1,
+        "https://boards.4chan.org/g/thread/201#p5"
+    );
 }
 
 // ── typed addresses ──────────────────────────────────────────────────────
@@ -772,9 +919,18 @@ fn chan_links(html: &str) -> Vec<(String, String)> {
     spans
         .into_iter()
         .filter_map(|s| match s {
-            Span { start, end, typ: LINK | APP_LINK, url: Some(url), .. } => {
+            Span {
+                start,
+                end,
+                typ: LINK | APP_LINK,
+                url: Some(url),
+                ..
+            } => {
                 let units: Vec<u16> = text.encode_utf16().collect();
-                Some((String::from_utf16(&units[start as usize..end as usize]).unwrap(), url))
+                Some((
+                    String::from_utf16(&units[start as usize..end as usize]).unwrap(),
+                    url,
+                ))
             }
             _ => None,
         })
@@ -791,7 +947,10 @@ fn typed_post_address_is_the_apps() {
             "https://boards.4chan.org/g/thread/123#p456".to_string()
         )]
     );
-    assert_eq!(chan("see https://boards.4chan.org/g/thread/123#p456 now").0, "see https://boards.4chan.org/g/thread/123#p456 now");
+    assert_eq!(
+        chan("see https://boards.4chan.org/g/thread/123#p456 now").0,
+        "see https://boards.4chan.org/g/thread/123#p456 now"
+    );
 }
 
 /// An address the site broke with a `<wbr>` is read whole.
@@ -799,7 +958,10 @@ fn typed_post_address_is_the_apps() {
 fn typed_address_broken_by_wbr_is_read_whole() {
     assert_eq!(
         chan_links("https://boards.4chan.org/g/thr<wbr>ead/123"),
-        vec![("https://boards.4chan.org/g/thread/123".to_string(), "https://boards.4chan.org/g/thread/123".to_string())]
+        vec![(
+            "https://boards.4chan.org/g/thread/123".to_string(),
+            "https://boards.4chan.org/g/thread/123".to_string()
+        )]
     );
 }
 
@@ -807,7 +969,10 @@ fn typed_address_broken_by_wbr_is_read_whole() {
 #[test]
 fn typed_addresses_several_and_in_markup() {
     assert_eq!(
-        chan_links("https://boards.4chan.org/g/thread/1 and <b>https://boards.4chan.org/v/thread/2</b>").len(),
+        chan_links(
+            "https://boards.4chan.org/g/thread/1 and <b>https://boards.4chan.org/v/thread/2</b>"
+        )
+        .len(),
         2
     );
 }
@@ -817,7 +982,10 @@ fn typed_addresses_several_and_in_markup() {
 fn typed_address_as_a_links_words_is_one_link() {
     assert_eq!(
         chan_links("<a href=\"https://example.com/a\">https://boards.4chan.org/g/thread/1</a>"),
-        vec![("https://boards.4chan.org/g/thread/1".to_string(), "https://example.com/a".to_string())]
+        vec![(
+            "https://boards.4chan.org/g/thread/1".to_string(),
+            "https://example.com/a".to_string()
+        )]
     );
 }
 
@@ -832,11 +1000,17 @@ fn typed_address_in_code_is_words() {
 fn typed_address_elsewhere_is_a_link() {
     assert_eq!(
         chan_links("(see https://example.com/a)."),
-        vec![("https://example.com/a".to_string(), "https://example.com/a".to_string())]
+        vec![(
+            "https://example.com/a".to_string(),
+            "https://example.com/a".to_string()
+        )]
     );
     assert_eq!(
         chan_links("https://boards.4chan.org/po/archive"),
-        vec![("https://boards.4chan.org/po/archive".to_string(), "https://boards.4chan.org/po/archive".to_string())]
+        vec![(
+            "https://boards.4chan.org/po/archive".to_string(),
+            "https://boards.4chan.org/po/archive".to_string()
+        )]
     );
 }
 
@@ -845,7 +1019,10 @@ fn typed_address_elsewhere_is_a_link() {
 fn typed_www_address_is_a_link() {
     assert_eq!(
         chan_links("go to www.example.com today"),
-        vec![("www.example.com".to_string(), "http://www.example.com".to_string())]
+        vec![(
+            "www.example.com".to_string(),
+            "http://www.example.com".to_string()
+        )]
     );
 }
 
@@ -914,7 +1091,10 @@ fn parity_html_reads_as_its_markdown() {
         ("I didn&#x27;t &#x2F; won&#x27;t", "I didn't / won't"),
         ("&#x1F600; <i>x</i>", "\u{1F600} *x*"),
         ("&gt; On October 17, 2026", "> On October 17, 2026"),
-        ("before<p>&gt; quoted<p>after", "before\n\n> quoted\n\nafter"),
+        (
+            "before<p>&gt; quoted<p>after",
+            "before\n\n> quoted\n\nafter",
+        ),
         ("&gt; one<p>&gt; two", "> one\n\n> two"),
         ("&gt;&gt; nested", ">> nested"),
         ("&gt; a <i>b</i>", "> a *b*"),
@@ -944,7 +1124,10 @@ fn parity_html_reads_as_its_markdown() {
             "see <a href=\"https://www.example.com/a\">the docs</a> now",
             "see [the docs](https://www.example.com/a) now",
         ),
-        ("<a href=\"https://youtu.be/abc\">https://youtu.be/abc</a>", "[https://youtu.be/abc](https://youtu.be/abc)"),
+        (
+            "<a href=\"https://youtu.be/abc\">https://youtu.be/abc</a>",
+            "[https://youtu.be/abc](https://youtu.be/abc)",
+        ),
         (
             "<a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a>",
             "[https://i.imgur.com/abc.png](https://i.imgur.com/abc.png)",
@@ -953,13 +1136,22 @@ fn parity_html_reads_as_its_markdown() {
             "look <a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a> here",
             "look [https://i.imgur.com/abc.png](https://i.imgur.com/abc.png) here",
         ),
-        ("<a href=\"https://i.imgur.com/abc.png\">a pic</a>", "[a pic](https://i.imgur.com/abc.png)"),
+        (
+            "<a href=\"https://i.imgur.com/abc.png\">a pic</a>",
+            "[a pic](https://i.imgur.com/abc.png)",
+        ),
         (
             "logs:<p><pre><code>  Audit Logs\n  Oct 21, 2026</code></pre>",
             "logs:\n\n```\n  Audit Logs\n  Oct 21, 2026\n```",
         ),
-        ("<pre><code>  x = 1\n</code></pre>\nafter", "```\n  x = 1\n```\nafter"),
-        ("<pre><code>  a *b* [c]</code></pre>", "```\n  a *b* [c]\n```"),
+        (
+            "<pre><code>  x = 1\n</code></pre>\nafter",
+            "```\n  x = 1\n```\nafter",
+        ),
+        (
+            "<pre><code>  a *b* [c]</code></pre>",
+            "```\n  a *b* [c]\n```",
+        ),
         ("<pre><code>a &lt; b</code></pre>", "```\na < b\n```"),
         (
             "Ha, I didn&#x27;t expect this to show up on HN!<p>Release is out now, including a blog post at \
@@ -986,10 +1178,19 @@ fn parity_chan_tags_read_as_their_markdown() {
         ("<span class=\"deadlink\">&gt;&gt;123</span>", "~~\\>>123~~"),
         ("a <s>b</s> c", "a \n\n::: spoiler Spoiler\nb\n:::\n\n c"),
         ("one<br>two<br><br>three", "one  \ntwo  \n  \nthree"),
-        ("see https://example.com/a now", "see https://example.com/a now"),
+        (
+            "see https://example.com/a now",
+            "see https://example.com/a now",
+        ),
         ("go to www.example.com today", "go to www.example.com today"),
-        ("(see https://example.com/a).", "(see https://example.com/a)."),
-        ("look https://i.imgur.com/abc.png here", "look https://i.imgur.com/abc.png here"),
+        (
+            "(see https://example.com/a).",
+            "(see https://example.com/a).",
+        ),
+        (
+            "look https://i.imgur.com/abc.png here",
+            "look https://i.imgur.com/abc.png here",
+        ),
     ];
     for (html, md) in pairs {
         assert_eq!(

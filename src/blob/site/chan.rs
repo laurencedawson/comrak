@@ -11,9 +11,21 @@ use crate::blob::html::{HtmlRules, Reads, TagRule};
 pub(super) const HTML: HtmlRules<'static> = HtmlRules {
     quote_marks: false,
     tags: &[
-        TagRule { tag: "span", class: Some("quote"), reads_as: Reads::Greentext },
-        TagRule { tag: "span", class: Some("deadlink"), reads_as: Reads::Strike },
-        TagRule { tag: "s", class: None, reads_as: Reads::Spoiler("Spoiler") },
+        TagRule {
+            tag: "span",
+            class: Some("quote"),
+            reads_as: Reads::Greentext,
+        },
+        TagRule {
+            tag: "span",
+            class: Some("deadlink"),
+            reads_as: Reads::Strike,
+        },
+        TagRule {
+            tag: "s",
+            class: None,
+            reads_as: Reads::Spoiler("Spoiler"),
+        },
     ],
 };
 
@@ -27,14 +39,20 @@ pub(super) fn is_own(url: &Url<'_>) -> bool {
     let path = url.path.strip_suffix('/').unwrap_or(url.path);
     let mut split = path.split('/');
     let [board, page, op, title] = [0; 4].map(|_| split.next().unwrap_or(""));
-    if split.next().is_some() || board.is_empty() || !board.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    if split.next().is_some()
+        || board.is_empty()
+        || !board.bytes().all(|b| b.is_ascii_alphanumeric())
+    {
         return false;
     }
     match (page, op, title) {
         // The board's index, and its catalog with whatever search after `#`
         ("" | "catalog", "", "") => true,
         // A thread, its title after it, and a post `#p{no}` on it
-        ("thread", op, _) => digits(op) && (url.fragment.is_empty() || url.fragment.strip_prefix('p').is_some_and(digits)),
+        ("thread", op, _) => {
+            digits(op)
+                && (url.fragment.is_empty() || url.fragment.strip_prefix('p').is_some_and(digits))
+        }
         _ => false,
     }
 }

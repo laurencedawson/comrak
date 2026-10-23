@@ -148,7 +148,10 @@ pub const SITE_LINKS: &[(u8, &str)] = {
         (HACKER_NEWS, "https://news.ycombinator.com/item?id=45678901"),
         (HACKER_NEWS, "https://news.ycombinator.com/user?id=dang"),
         (HACKER_NEWS, "https://news.ycombinator.com/newest"),
-        (CHAN, "https://boards.4chan.org/g/thread/110063208/some-title#p110072890"),
+        (
+            CHAN,
+            "https://boards.4chan.org/g/thread/110063208/some-title#p110072890",
+        ),
         (CHAN, "https://boards.4channel.org/g/thread/110063208"),
         (CHAN, "https://boards.4chan.org/g/catalog#s=sqt"),
         (CHAN, "https://boards.4chan.org/g/archive"),
@@ -157,7 +160,10 @@ pub const SITE_LINKS: &[(u8, &str)] = {
         (LEMMY, "/c/rust@lemmy.ml"),
         (LEMMY, "https://www.reddit.com/u/spez"),
         (LEMMY, "https://www.youtube.com/c/veritasium"),
-        (LOBSTERS, "https://lobste.rs/s/abc123/a_title/comments/def456"),
+        (
+            LOBSTERS,
+            "https://lobste.rs/s/abc123/a_title/comments/def456",
+        ),
         (LOBSTERS, "https://lobste.rs/t/rust,go/page/2"),
         (LOBSTERS, "https://lobste.rs/about"),
     ]
@@ -257,10 +263,16 @@ pub mod html {
                     p, section, p
                 ));
             }
-            s.push_str(&format!("<p>&gt; A relevant quote for section {}</p>\n", section));
+            s.push_str(&format!(
+                "<p>&gt; A relevant quote for section {}</p>\n",
+                section
+            ));
             s.push_str("<p>&gt;&gt; With nested context</p>\n");
             s.push_str("<ul>\n<li>point one</li>\n<li>point two</li>\n<li>point three\n<ul>\n<li>sub-point</li>\n</ul>\n</li>\n</ul>\n");
-            s.push_str(&format!("<pre><code>code_example_{}()\n</code></pre>\n", section));
+            s.push_str(&format!(
+                "<pre><code>code_example_{}()\n</code></pre>\n",
+                section
+            ));
             s.push_str("<hr>\n");
         }
 
@@ -290,13 +302,17 @@ pub mod html {
 
     /// Ten real comments from Algolia's Hacker News API, as fetched on 22 Oct 2026, each read alone.
     pub fn hn_comments() -> Vec<&'static str> {
-        include_str!("benchmarks/hn_comments.html").split("\n=====\n").collect()
+        include_str!("benchmarks/hn_comments.html")
+            .split("\n=====\n")
+            .collect()
     }
 
     /// The same ten comments as markdown, as the stopgap Java converter wrote them, for the walk
     /// over comrak's tree.
     pub fn hn_comments_markdown() -> Vec<&'static str> {
-        include_str!("benchmarks/hn_comments.md").split("\n=====\n").collect()
+        include_str!("benchmarks/hn_comments.md")
+            .split("\n=====\n")
+            .collect()
     }
 }
 
@@ -450,11 +466,15 @@ mod tests {
         let md_comments = html::hn_comments_markdown();
         let iterations = 500;
         for _ in 0..100 {
-            html_comments.iter().for_each(|c| drop(blob::render_html_blob(c, html::SITE, None)));
+            html_comments
+                .iter()
+                .for_each(|c| drop(blob::render_html_blob(c, html::SITE, None)));
         }
         let start = std::time::Instant::now();
         for _ in 0..iterations {
-            html_comments.iter().for_each(|c| drop(blob::render_html_blob(c, html::SITE, None)));
+            html_comments
+                .iter()
+                .for_each(|c| drop(blob::render_html_blob(c, html::SITE, None)));
         }
         let html_elapsed = start.elapsed() / iterations;
         for _ in 0..100 {

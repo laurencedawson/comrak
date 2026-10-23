@@ -35,35 +35,35 @@ const ENTITY_DATA: &[u8] = b"\x05AElig\x02\xC3\x86\x03AMP\x01&\x06Aacute\x02\xC3
 
 #[inline]
 fn lookup_entity(name: &[u8]) -> Option<(&'static str, bool)> {
-  let mut low = 0;
-  let mut high = ENTITY_OFFSETS.len();
-  while low < high {
-    let middle = low + (high - low) / 2;
-    let encoded_offset = ENTITY_OFFSETS[middle];
-    let offset = usize::from(encoded_offset & !LEGACY_FLAG);
-    let entry_name_start = offset + 1;
-    let entry_name_end = entry_name_start + usize::from(ENTITY_DATA[offset]);
-    match name.cmp(&ENTITY_DATA[entry_name_start..entry_name_end]) {
-      std::cmp::Ordering::Less => high = middle,
-      std::cmp::Ordering::Greater => low = middle + 1,
-      std::cmp::Ordering::Equal => {
-        let value_start = entry_name_end + 1;
-        let value_end = value_start + usize::from(ENTITY_DATA[entry_name_end]);
-        let value = std::str::from_utf8(&ENTITY_DATA[value_start..value_end]).ok()?;
-        return Some((value, encoded_offset & LEGACY_FLAG != 0));
-      }
+    let mut low = 0;
+    let mut high = ENTITY_OFFSETS.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let encoded_offset = ENTITY_OFFSETS[middle];
+        let offset = usize::from(encoded_offset & !LEGACY_FLAG);
+        let entry_name_start = offset + 1;
+        let entry_name_end = entry_name_start + usize::from(ENTITY_DATA[offset]);
+        match name.cmp(&ENTITY_DATA[entry_name_start..entry_name_end]) {
+            std::cmp::Ordering::Less => high = middle,
+            std::cmp::Ordering::Greater => low = middle + 1,
+            std::cmp::Ordering::Equal => {
+                let value_start = entry_name_end + 1;
+                let value_end = value_start + usize::from(ENTITY_DATA[entry_name_end]);
+                let value = std::str::from_utf8(&ENTITY_DATA[value_start..value_end]).ok()?;
+                return Some((value, encoded_offset & LEGACY_FLAG != 0));
+            }
+        }
     }
-  }
-  None
+    None
 }
 
 #[inline]
 pub(super) fn lookup_named_entity(name: &[u8]) -> Option<&'static str> {
-  lookup_entity(name).map(|(value, _)| value)
+    lookup_entity(name).map(|(value, _)| value)
 }
 
 #[inline]
 pub(super) fn lookup_legacy_named_entity(name: &[u8]) -> Option<&'static str> {
-  let (value, legacy) = lookup_entity(name)?;
-  legacy.then_some(value)
+    let (value, legacy) = lookup_entity(name)?;
+    legacy.then_some(value)
 }

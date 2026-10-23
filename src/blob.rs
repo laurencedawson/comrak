@@ -285,13 +285,17 @@ impl BlobWriter {
                     }
                 }
                 let bytes = &self.url_data[start..];
-                let (lead, total) = (bytes.len() - bytes.trim_ascii_start().len(), bytes.trim_ascii().len());
+                let (lead, total) = (
+                    bytes.len() - bytes.trim_ascii_start().len(),
+                    bytes.trim_ascii().len(),
+                );
                 let mut len = total.min(u16::MAX as usize);
                 // Same char-boundary contract as span_url: cells decode as UTF-8.
                 while len < total && self.url_data[start + lead + len] & 0xC0 == 0x80 {
                     len -= 1;
                 }
-                self.url_data.copy_within(start + lead..start + lead + len, start);
+                self.url_data
+                    .copy_within(start + lead..start + lead + len, start);
                 self.url_data.truncate(start + len);
                 self.url_data[slot..slot + 2].copy_from_slice(&(len as u16).to_le_bytes());
                 written += 1;
@@ -680,7 +684,10 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
             });
             if wraps_image {
                 hold(open, Kind::Plain, start, NO_SPANS, 0);
-            } else if let Some(url) = autolink.then(|| resolve_url(&l.url)).filter(|u| is_image_url(u)) {
+            } else if let Some(url) = autolink
+                .then(|| resolve_url(&l.url))
+                .filter(|u| is_image_url(u))
+            {
                 out.emit_image(&url);
             } else {
                 hold(open, Kind::Link(out.blob.len(), false), start, NO_SPANS, 0);

@@ -93,7 +93,12 @@ struct Walk<'a, 'o> {
     pre: Option<String>,
 }
 
-pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, base_url: Option<&str>, out: &mut BlobWriter) {
+pub(crate) fn visit(
+    html: &str,
+    rules: &HtmlRules<'_>,
+    base_url: Option<&str>,
+    out: &mut BlobWriter,
+) {
     let mut w = Walk {
         html,
         rules,
@@ -115,7 +120,10 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, base_url: Option<&str>, o
     while let Some(at) = memchr::memchr(b'<', &bytes[from..]).map(|at| from + at) {
         let next = bytes.get(at + 1).copied().unwrap_or(0);
         // A `<` that opens no tag is a word
-        if !(next.is_ascii_alphabetic() || next == b'!' || next == b'/' && bytes.get(at + 2).is_some_and(u8::is_ascii_alphabetic)) {
+        if !(next.is_ascii_alphabetic()
+            || next == b'!'
+            || next == b'/' && bytes.get(at + 2).is_some_and(u8::is_ascii_alphabetic))
+        {
             from = at + 1;
             continue;
         }
@@ -136,7 +144,9 @@ pub(crate) fn visit(html: &str, rules: &HtmlRules<'_>, base_url: Option<&str>, o
 fn wbr(bytes: &[u8], at: usize) -> Option<usize> {
     let name = bytes.get(at + 1..at + 4)?;
     let after = *bytes.get(at + 4)?;
-    if !name.eq_ignore_ascii_case(b"wbr") || !(after == b'>' || after == b'/' || is_whitespace(after)) {
+    if !name.eq_ignore_ascii_case(b"wbr")
+        || !(after == b'>' || after == b'/' || is_whitespace(after))
+    {
         return None;
     }
     Some(at + 4 + memchr::memchr(b'>', &bytes[at + 4..])? + 1)
@@ -206,7 +216,11 @@ impl<'a, 'o> Walk<'a, 'o> {
         let (html, bytes) = (self.html, self.html.as_bytes());
         if bytes[at + 1] == b'!' {
             let comment = process_comment_or_doctype(html, at);
-            return if comment.complete { comment.new_position } else { html.len() };
+            return if comment.complete {
+                comment.new_position
+            } else {
+                html.len()
+            };
         }
         let closing = bytes[at + 1] == b'/';
         let name_start = at + 1 + closing as usize;
@@ -253,7 +267,13 @@ impl<'a, 'o> Walk<'a, 'o> {
     }
 
     /// Opens a tag, answering where the words after it begin: past the link for a picture.
-    fn start(&mut self, name: &'a str, href: Option<&'a str>, class: Option<&str>, after: usize) -> usize {
+    fn start(
+        &mut self,
+        name: &'a str,
+        href: Option<&'a str>,
+        class: Option<&str>,
+        after: usize,
+    ) -> usize {
         let is = |tag: &str| name.eq_ignore_ascii_case(tag);
         if let Some(pre) = &mut self.pre {
             if is("br") {
@@ -265,7 +285,8 @@ impl<'a, 'o> Walk<'a, 'o> {
             match reads {
                 Some(Reads::Strike) => {
                     self.begin();
-                    self.open.push(Open::Style(STRIKETHROUGH, name, self.out.pos()));
+                    self.open
+                        .push(Open::Style(STRIKETHROUGH, name, self.out.pos()));
                 }
                 Some(Reads::Greentext) => {
                     // A line of its own, as the site only colours a line its poster opened on `>`
@@ -293,7 +314,11 @@ impl<'a, 'o> Walk<'a, 'o> {
             self.pre = Some(String::new());
         } else if is("b") || is("strong") || is("i") || is("em") {
             self.begin();
-            let span = if is("b") || is("strong") { BOLD } else { ITALIC };
+            let span = if is("b") || is("strong") {
+                BOLD
+            } else {
+                ITALIC
+            };
             self.open.push(Open::Style(span, name, self.out.pos()));
         } else if is("a")
             && let Some(href) = href
@@ -304,7 +329,8 @@ impl<'a, 'o> Walk<'a, 'o> {
             if let Some(past) = self.picture(&href, after) {
                 return past;
             }
-            self.open.push(Open::Link(self.out.pos(), self.out.blob.len(), href));
+            self.open
+                .push(Open::Link(self.out.pos(), self.out.blob.len(), href));
         }
         after
     }
@@ -327,7 +353,11 @@ impl<'a, 'o> Walk<'a, 'o> {
             return None;
         }
         let raw = &self.html[after..lt];
-        let words = if decode_html_entities_into(raw, false, false, &mut self.decoded) { &self.decoded } else { raw };
+        let words = if decode_html_entities_into(raw, false, false, &mut self.decoded) {
+            &self.decoded
+        } else {
+            raw
+        };
         if !(words.starts_with("http://") || words.starts_with("https://")) {
             return None;
         }
@@ -403,7 +433,11 @@ impl<'a, 'o> Walk<'a, 'o> {
     fn words(&mut self, text: &str) {
         if let Some(pre) = &mut self.pre {
             // HTML drops the newline straight after `<pre>`
-            let text = if pre.is_empty() { text.strip_prefix('\n').unwrap_or(text) } else { text };
+            let text = if pre.is_empty() {
+                text.strip_prefix('\n').unwrap_or(text)
+            } else {
+                text
+            };
             pre.push_str(text);
             return;
         }
@@ -448,7 +482,8 @@ impl<'a, 'o> Walk<'a, 'o> {
             let words = &text[start..end];
             // Typed with its scheme, or `www.` given one, so never relative to the page
             let url = resolve_url(&url);
-            if (words.starts_with("http://") || words.starts_with("https://")) && is_image_url(&url) {
+            if (words.starts_with("http://") || words.starts_with("https://")) && is_image_url(&url)
+            {
                 self.out.emit_image(&url);
             } else {
                 let (start, text_start) = (self.out.pos(), self.out.blob.len());
@@ -497,7 +532,8 @@ impl<'a, 'o> Walk<'a, 'o> {
             // Innermost first, as comrak closes them
             for _ in 0..levels {
                 self.out.quote_depth -= 1;
-                self.out.span_data(QUOTE, start, self.out.quote_depth as i32);
+                self.out
+                    .span_data(QUOTE, start, self.out.quote_depth as i32);
             }
         }
         if self.out.pos() > 0 {
@@ -537,8 +573,11 @@ fn relative(href: &str, base: &str) -> Option<String> {
     let scheme_end = |s: &str| {
         let colon = s.find(':')?;
         let scheme = &s[..colon];
-        (!scheme.is_empty() && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')))
-            .then_some(colon)
+        (!scheme.is_empty()
+            && scheme
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')))
+        .then_some(colon)
     };
     if scheme_end(href).is_some() {
         return None;
@@ -548,7 +587,9 @@ fn relative(href: &str, base: &str) -> Option<String> {
         return Some(format!("{}//{rest}", &base[..=colon]));
     }
     let authority = colon + 3;
-    let host_end = base[authority..].find(['/', '?', '#']).map_or(base.len(), |i| authority + i);
+    let host_end = base[authority..]
+        .find(['/', '?', '#'])
+        .map_or(base.len(), |i| authority + i);
     if href.starts_with('/') {
         return Some(format!("{}{href}", &base[..host_end]));
     }
@@ -560,6 +601,8 @@ fn relative(href: &str, base: &str) -> Option<String> {
         return Some(format!("{}{href}", &base[..cut(&['?', '#'])]));
     }
     let path = &base[..cut(&['?', '#'])];
-    let dir = path[host_end..].rfind('/').map_or(host_end, |i| host_end + i);
+    let dir = path[host_end..]
+        .rfind('/')
+        .map_or(host_end, |i| host_end + i);
     Some(format!("{}/{href}", &path[..dir]))
 }

@@ -962,7 +962,8 @@ where
         if !self.options.extension.lemmy_spoiler {
             return false;
         }
-        let Some(matched) = scanners::open_block_directive_fence(&line[self.first_nonspace..]) else {
+        let Some(matched) = scanners::open_block_directive_fence(&line[self.first_nonspace..])
+        else {
             return false;
         };
 

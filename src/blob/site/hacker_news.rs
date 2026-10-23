@@ -5,7 +5,10 @@ use super::{Url, digits};
 use crate::blob::html::HtmlRules;
 
 /// A paragraph opening on `>` is a quote, as the site's posters write one; it has no tags of its own.
-pub(super) const HTML: HtmlRules<'static> = HtmlRules { quote_marks: true, tags: &[] };
+pub(super) const HTML: HtmlRules<'static> = HtmlRules {
+    quote_marks: true,
+    tags: &[],
+};
 
 /// The site's one host.
 pub(super) const HOSTS: &[&str] = &["news.ycombinator.com"];

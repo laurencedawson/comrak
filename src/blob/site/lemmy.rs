@@ -32,11 +32,20 @@ pub(super) fn is_own(url: &Url<'_>) -> bool {
     }
     let path = url.path.strip_suffix('/').unwrap_or(url.path);
     let mut segments = path.split('/');
-    let (kind, first, second, more) = (segments.next(), segments.next(), segments.next(), segments.next());
+    let (kind, first, second, more) = (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    );
     if more.is_some() {
         return false;
     }
-    let name = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'@' | b'-'));
+    let name = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'@' | b'-'))
+    };
     match (kind, first, second) {
         (Some("post"), Some(post), None) => digits(post),
         (Some("post"), Some(post), Some(comment)) => digits(post) && digits(comment),

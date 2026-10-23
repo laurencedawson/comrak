@@ -691,7 +691,11 @@ pub(crate) fn url_in(text: &str, colon: usize) -> Option<(usize, usize)> {
     if !SCHEMES.iter().any(|s| scheme.eq_ignore_ascii_case(s)) {
         return None;
     }
-    if !text[colon + 3..].chars().next().is_some_and(is_valid_hostchar) {
+    if !text[colon + 3..]
+        .chars()
+        .next()
+        .is_some_and(is_valid_hostchar)
+    {
         return None;
     }
     let mut end = check_domain(&text[colon + 3..], true)? + 3;

@@ -73,7 +73,6 @@ fn blob_bytes(markdown: &str) -> Vec<u8> {
     render_raw(markdown).into_blob()
 }
 
-
 // ── format ───────────────────────────────────────────────────────────────
 
 mod format {
@@ -317,7 +316,10 @@ mod format {
         out.span_url(LINK, 0, &crate::resolve_url("https://first.com"));
         out.write_text("bbb");
         out.span_url(LINK, 3, &crate::resolve_url("https://second.com"));
-        let urls: Vec<_> = read(&out.into_blob()).span_iter().filter_map(|s| s.url.clone()).collect();
+        let urls: Vec<_> = read(&out.into_blob())
+            .span_iter()
+            .filter_map(|s| s.url.clone())
+            .collect();
         assert_eq!(urls, vec!["https://first.com", "https://second.com"]);
     }
 
@@ -345,7 +347,8 @@ mod format {
     #[test]
     fn blockquote_blob_newlines() {
         let text = String::from_utf8(
-            read(&blob_bytes("> A\n>> B\n>>> C\n\nAfter")).text
+            read(&blob_bytes("> A\n>> B\n>>> C\n\nAfter"))
+                .text
                 .as_bytes()
                 .to_vec(),
         )
@@ -493,8 +496,10 @@ mod format {
     fn render_blob_full(markdown: &str) -> Vec<u8> {
         let opts = test_opts();
         let md = markdown.trim();
-        parse_document_zerocopy(md, &opts, |root| crate::blob::render_blob(root, md, crate::blob::sites::PLAIN))
-            .expect("expected a blob")
+        parse_document_zerocopy(md, &opts, |root| {
+            crate::blob::render_blob(root, md, crate::blob::sites::PLAIN)
+        })
+        .expect("expected a blob")
     }
 
     /// First (start, end, type) span record decoded from a serialized blob.
@@ -971,28 +976,70 @@ mod images {
             ("hello ![](https://example.com/a.png)", "hello \n\n\u{1}"),
             ("text https://i.imgur.com/abc.png", "text \n\n\u{1}"),
             ("**bold** https://i.imgur.com/abc.png", "bold \n\n\u{1}"),
-            ("https://e.com https://i.imgur.com/abc.png", "https://e.com \n\n\u{1}"),
-            ("para\n\n[x](https://e.com) https://i.imgur.com/abc.png", "para\n\nx (e.com) \n\n\u{1}"),
+            (
+                "https://e.com https://i.imgur.com/abc.png",
+                "https://e.com \n\n\u{1}",
+            ),
+            (
+                "para\n\n[x](https://e.com) https://i.imgur.com/abc.png",
+                "para\n\nx (e.com) \n\n\u{1}",
+            ),
             ("para  \nhttps://i.imgur.com/abc.png", "para\n\n\u{1}"),
             ("para  \n![](https://i.imgur.com/abc.png)", "para\n\n\u{1}"),
             ("para\n\nhttps://i.imgur.com/abc.png", "para\n\n\u{1}"),
             ("para\n\n<https://i.imgur.com/abc.png>", "para\n\n\u{1}"),
-            ("para\n\nhttps://i.imgur.com/abc.png more", "para\n\n\u{1}\n\n more"),
-            ("para\n\n[![alt](https://i.imgur.com/abc.png)](https://e.com)", "para\n\n\u{1}"),
-            ("para\n\n<!-- c -->\n\nhttps://i.imgur.com/abc.png", "para\n\n<!-- c -->\n\n\u{1}"),
+            (
+                "para\n\nhttps://i.imgur.com/abc.png more",
+                "para\n\n\u{1}\n\n more",
+            ),
+            (
+                "para\n\n[![alt](https://i.imgur.com/abc.png)](https://e.com)",
+                "para\n\n\u{1}",
+            ),
+            (
+                "para\n\n<!-- c -->\n\nhttps://i.imgur.com/abc.png",
+                "para\n\n<!-- c -->\n\n\u{1}",
+            ),
             ("# Title\n\nhttps://i.imgur.com/abc.png", "Title\n\n\u{1}"),
             ("> quote\n\nhttps://i.imgur.com/abc.png", "quote\n\n\u{1}"),
-            ("> quote\n>\n> https://i.imgur.com/abc.png", "quote\n\n\u{1}"),
+            (
+                "> quote\n>\n> https://i.imgur.com/abc.png",
+                "quote\n\n\u{1}",
+            ),
             ("- item\n\n  https://i.imgur.com/abc.png", "item\n\n\u{1}"),
-            ("- item\n- ![](https://i.imgur.com/abc.png)", "item\n\n\u{1}"),
-            ("```\ncode\n```\n\nhttps://i.imgur.com/abc.png", "code\n\n\u{1}"),
-            ("@user@lemmy.ml https://i.imgur.com/abc.png", "@user@lemmy.ml \n\n\u{1}"),
+            (
+                "- item\n- ![](https://i.imgur.com/abc.png)",
+                "item\n\n\u{1}",
+            ),
+            (
+                "```\ncode\n```\n\nhttps://i.imgur.com/abc.png",
+                "code\n\n\u{1}",
+            ),
+            (
+                "@user@lemmy.ml https://i.imgur.com/abc.png",
+                "@user@lemmy.ml \n\n\u{1}",
+            ),
             ("a@b.com https://i.imgur.com/abc.png", "a@b.com \n\n\u{1}"),
-            ("para\n\na@b.com\n\n![](https://i.imgur.com/abc.png)", "para\n\na@b.com\n\n\u{1}"),
-            ("![](https://example.com/a.png)\n\n![](https://example.com/b.png)", "\u{1}\n\n\u{1}"),
-            ("![](https://i.imgur.com/a.png)\nhttps://i.imgur.com/b.png", "\u{1}\n\n\u{1}"),
-            ("![](https://example.com/a.png) ![](https://example.com/b.png)", "\u{1}\n\n \u{1}"),
-            ("https://i.imgur.com/a.png https://i.imgur.com/b.png", "\u{1}\n\n \u{1}"),
+            (
+                "para\n\na@b.com\n\n![](https://i.imgur.com/abc.png)",
+                "para\n\na@b.com\n\n\u{1}",
+            ),
+            (
+                "![](https://example.com/a.png)\n\n![](https://example.com/b.png)",
+                "\u{1}\n\n\u{1}",
+            ),
+            (
+                "![](https://i.imgur.com/a.png)\nhttps://i.imgur.com/b.png",
+                "\u{1}\n\n\u{1}",
+            ),
+            (
+                "![](https://example.com/a.png) ![](https://example.com/b.png)",
+                "\u{1}\n\n \u{1}",
+            ),
+            (
+                "https://i.imgur.com/a.png https://i.imgur.com/b.png",
+                "\u{1}\n\n \u{1}",
+            ),
             ("```\n```\n\nhttps://i.imgur.com/abc.png", "\u{1}"),
             ("a\n\n```\n```\n\nb", "a\n\nb"),
             ("```\n```\n\n```\n```\n\nb", "b"),
@@ -1332,7 +1379,10 @@ mod block {
             .span_iter()
             .find(|s| s.typ == LEMMY_SPOILER_CONTENT)
             .unwrap();
-        assert_eq!(&result.text()[title.start as usize..title.end as usize], "tap me");
+        assert_eq!(
+            &result.text()[title.start as usize..title.end as usize],
+            "tap me"
+        );
         assert_eq!(
             body.start,
             title.end + 1,

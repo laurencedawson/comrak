@@ -43,7 +43,9 @@ fn opts() -> Options<'static> {
 /// raw input as plain text (the fast path the JNI shim exposes as null).
 fn parity(markdown: &str) -> Option<Vec<u8>> {
     let trimmed = markdown.trim();
-    parse_document_zerocopy(trimmed, &opts(), |root| render_blob(root, trimmed, crate::blob::sites::PLAIN))
+    parse_document_zerocopy(trimmed, &opts(), |root| {
+        render_blob(root, trimmed, crate::blob::sites::PLAIN)
+    })
 }
 
 fn render(markdown: &str) -> Vec<u8> {
@@ -60,7 +62,11 @@ fn has_span_type(blob: &[u8], typ: i32) -> bool {
 
 fn first_url_of_type(blob: &[u8], typ: i32) -> String {
     let spans = read(blob).spans;
-    spans.into_iter().find(|s| s.typ == typ).and_then(|s| s.url).expect("span type not found")
+    spans
+        .into_iter()
+        .find(|s| s.typ == typ)
+        .and_then(|s| s.url)
+        .expect("span type not found")
 }
 
 mod invariant {
@@ -286,7 +292,10 @@ mod retired_transforms {
     fn table_cells_carry_typed_ascii() {
         let b = render("| don't | a--b |\n|---|---|\n| \"q\" | c... |");
         let b = read(&b);
-        let table = b.span_iter().find(|s| s.typ == TABLE).expect("no TABLE span");
+        let table = b
+            .span_iter()
+            .find(|s| s.typ == TABLE)
+            .expect("no TABLE span");
         let (_, _, cells) = b.table(table.data);
         assert_eq!(cells[0], "don't");
         assert_eq!(cells[1], "a--b");
