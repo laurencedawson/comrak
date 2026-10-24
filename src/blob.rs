@@ -455,8 +455,8 @@ enum Kind {
     Plain,
     /// The next item's number.
     List(i32),
-    /// The item's span data, until its own blocks are written and its nested lists are next.
-    Item(Option<i32>),
+    /// The item's span type and data, until its own blocks are written and its nested lists are next.
+    Item(Option<(i32, i32)>),
     Quote,
     /// The writer outside it.
     Footnote(Box<BlobWriter>),
@@ -515,9 +515,9 @@ fn next_child<'a>(
             let siblings = |from| std::iter::successors(from, |c: &&AstNode<'a>| c.next_sibling());
             let mut next = siblings(from).find(|c| is_list(c) == pending.is_none());
             if next.is_none()
-                && let Some(data) = pending.take()
+                && let Some((typ, data)) = pending.take()
             {
-                out.span_data(LIST_ITEM, o.start, data);
+                out.span_data(typ, o.start, data);
                 next = siblings(node.first_child()).find(is_list);
             }
             if next.is_some() && pending.is_none() {
@@ -557,21 +557,21 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
 
         Item(_) | TaskItem(_) => {
             let indent = out.list_depth.saturating_sub(1);
-            let number = match val {
-                TaskItem(ti) => 0xFFFE + ti.symbol.is_some() as i32,
-                // Clamp below the checkbox sentinels: ordered starts go up to
-                // 999,999,999 and would render as checkboxes or spill into the
-                // indent bits.
-                _ => match open.last_mut().map(|o| &mut o.kind) {
-                    Some(Kind::List(n)) => {
-                        *n += (*n > 0) as i32;
-                        (*n - (*n > 0) as i32).clamp(0, 0xFFFD)
-                    }
-                    _ => 0,
-                },
+            // Every item takes its ordinal, a task item too, so the next one numbers on. Ordered
+            // starts go up to 999,999,999: clamped so they never spill into the indent bits.
+            let number = match open.last_mut().map(|o| &mut o.kind) {
+                Some(Kind::List(n)) => {
+                    *n += (*n > 0) as i32;
+                    (*n - (*n > 0) as i32).clamp(0, 0xFFFF)
+                }
+                _ => 0,
             };
-            let data = ((indent as i32) << 16) | number;
-            hold(open, Kind::Item(Some(data)), start, NO_SPANS, 1);
+            let (typ, low) = match val {
+                TaskItem(ti) => (TASK_ITEM, ti.symbol.is_some() as i32),
+                _ => (LIST_ITEM, number),
+            };
+            let data = ((indent as i32) << 16) | low;
+            hold(open, Kind::Item(Some((typ, data))), start, NO_SPANS, 1);
         }
 
         BlockQuote => {

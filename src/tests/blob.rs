@@ -12,7 +12,7 @@
 use crate::blob::sites::PLAIN;
 use crate::blob::{BlobWriter, visit};
 use crate::tests::blob_read::{Blob, read};
-use crate::{Arena, Options, parse_document, parse_document_zerocopy};
+use crate::{Options, parse_document_zerocopy};
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -51,19 +51,6 @@ fn render_raw(markdown: &str) -> BlobWriter {
 /// assertions want.
 fn render_test(markdown: &str) -> Blob {
     let mut out = render_raw(markdown);
-    out.append_footnotes();
-    read(&out.into_blob())
-}
-
-/// Render via the arena-managed full-postprocess path. Required by tasklist
-/// tests because `parse_document_zerocopy` skips the text coalescing pass
-/// that `[ ]` detection needs.
-fn render_test_full_parse(markdown: &str) -> Blob {
-    let opts = test_opts();
-    let arena = Arena::new();
-    let root = parse_document(&arena, markdown.trim(), &opts);
-    let mut out = BlobWriter::new(256, false, PLAIN);
-    visit(root, &mut out);
     out.append_footnotes();
     read(&out.into_blob())
 }
@@ -1117,13 +1104,12 @@ mod block {
         assert_eq!(items[0].number(), 5);
         assert_eq!(items[1].number(), 6);
 
-        // Huge ordinals clamp below the 0xFFFE/0xFFFF checkbox sentinels and
-        // never spill into the indent bits.
-        let result = render_test("65534. a\n65535. b\n65536. c");
+        // Huge ordinals clamp to the number field and never spill into the indent bits.
+        let result = render_test("65535. a\n65536. b");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 2);
         for item in &items {
-            assert_eq!((item.indent(), item.number()), (0, 0xFFFD));
+            assert_eq!((item.indent(), item.number()), (0, 0xFFFF));
         }
     }
 
@@ -1153,45 +1139,60 @@ mod block {
         assert_eq!(result.text(), "bold item");
     }
 
-    /// Task list checkbox encoded in number field: unchecked=0xFFFE, checked=0xFFFF.
-    /// Tasklists need the full-postprocess path; the zero-copy path skips
-    /// the text coalescing that `[ ]` detection requires.
+    /// A task item is its own span type: indent in the high bits, checked in bit 0.
     #[test]
     fn task_list_basic() {
-        let result = render_test_full_parse("- [ ] unchecked\n- [x] checked");
+        let result = render_test("- [ ] unchecked\n- [x] checked");
         assert_eq!(result.text(), "unchecked\nchecked");
-        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
-        assert_eq!((items[0].indent(), items[0].number()), (0, 0xFFFE));
-        assert_eq!((items[1].indent(), items[1].number()), (0, 0xFFFF));
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == TASK_ITEM).collect();
+        assert_eq!((items[0].indent(), items[0].number()), (0, 0));
+        assert_eq!((items[1].indent(), items[1].number()), (0, 1));
     }
 
     #[test]
     fn task_list_mixed_with_regular_items() {
-        let result = render_test_full_parse("- regular\n- [ ] unchecked\n- [x] checked");
-        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
-        assert_eq!(items[0].number(), 0);
-        assert_eq!(items[1].number(), 0xFFFE);
-        assert_eq!(items[2].number(), 0xFFFF);
+        let result = render_test("- regular\n- [ ] unchecked\n- [x] checked");
+        let items: Vec<_> = result
+            .span_iter()
+            .filter(|s| matches!(s.typ, LIST_ITEM | TASK_ITEM))
+            .map(|s| (s.typ, s.number()))
+            .collect();
+        assert_eq!(items, [(LIST_ITEM, 0), (TASK_ITEM, 0), (TASK_ITEM, 1)]);
+    }
+
+    /// A task item in an ordered list still takes its ordinal, so the next item numbers on.
+    #[test]
+    fn task_list_in_ordered_list() {
+        let result = render_test("1. a\n2. [x] b\n3. c");
+        let items: Vec<_> = result
+            .span_iter()
+            .filter(|s| matches!(s.typ, LIST_ITEM | TASK_ITEM))
+            .map(|s| (s.typ, s.number()))
+            .collect();
+        assert_eq!(items, [(LIST_ITEM, 1), (TASK_ITEM, 1), (LIST_ITEM, 3)]);
     }
 
     #[test]
     fn task_list_nested() {
-        let result = render_test_full_parse("- [ ] parent\n  - [x] child");
-        let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
-        assert_eq!((items[0].indent(), items[0].number()), (0, 0xFFFE));
-        assert_eq!((items[1].indent(), items[1].number()), (1, 0xFFFF));
+        let result = render_test("- [ ] parent\n  - [x] child");
+        let items: Vec<_> = result.span_iter().filter(|s| s.typ == TASK_ITEM).collect();
+        assert_eq!((items[0].indent(), items[0].number()), (0, 0));
+        assert_eq!((items[1].indent(), items[1].number()), (1, 1));
+    }
+
+    /// A quote holding one task item covers the same text as it; the quote sorts first, so the
+    /// layout draws its bar before the checkbox.
+    #[test]
+    fn task_list_in_quote_sorts_after_quote() {
+        let result = render_test("> - [x] done");
+        let types: Vec<_> = result.span_iter().map(|s| s.typ).collect();
+        assert_eq!(types, [QUOTE, TASK_ITEM]);
     }
 
     #[test]
     fn task_list_markers_stripped() {
-        assert_eq!(
-            render_test_full_parse("- [ ] todo item").text(),
-            "todo item"
-        );
-        assert_eq!(
-            render_test_full_parse("- [x] done item").text(),
-            "done item"
-        );
+        assert_eq!(render_test("- [ ] todo item").text(), "todo item");
+        assert_eq!(render_test("- [x] done item").text(), "done item");
     }
 
     #[test]

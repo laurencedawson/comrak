@@ -422,7 +422,7 @@ bit:  31                                                         12 11          
      └─────────────────────────────────────────────────────────────┴──────────────────┘
 ```
 
-**List items** (`LIST_ITEM`) — nesting indent + list number / task-list state:
+**List items** (`LIST_ITEM`) — nesting indent + list number:
 
 ```
 bit:  31                      16 15                               0
@@ -434,8 +434,17 @@ bit:  31                      16 15                               0
 `number`:
 - `0` for bullet lists
 - `1..n` for ordered lists
-- `0xFFFE` for unchecked task list items
-- `0xFFFF` for checked task list items
+
+**Task items** (`TASK_ITEM`) — a list item drawn as a checkbox, nesting indent + checked:
+
+```
+bit:  31                      16 15                               0
+     ┌────────────────────────────┬────────────────────────────────┐
+     │    indent (16-bit)         │   checked (bit 0: 1 = checked) │
+     └────────────────────────────┴────────────────────────────────┘
+```
+
+A task item in an ordered list still takes its ordinal, so the item after it numbers on.
 
 **Blockquotes** (`QUOTE`) — nesting depth in the low bits:
 
