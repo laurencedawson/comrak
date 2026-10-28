@@ -1,0 +1,403 @@
+//! A web page's article into the blob: [`smoothie`] picks the article out of the page's
+//! [`tree`], and the walk here writes it through the same [`BlobWriter`](super::BlobWriter), each
+//! tag as the blob writer writes the markdown it stands for. Not [`super::html`], which reads a
+//! site's comment HTML in one pass and knows no blocks.
+
+mod smoothie;
+mod tree;
+
+use super::html::{collapse, is_space, relative};
+use super::*;
+use tree::{Id, Tree};
+
+/// The article on the page `html`, at `base_url`, which its relative links and pictures resolve
+/// against, read as one page: its title a heading, its byline in italics, the picture it leads with
+/// and its words. None where nothing on the page reads as one.
+pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
+    let article = smoothie::extract(html)?;
+    let mut out = BlobWriter::new(article.tree.char_count(article.root), false, sites::PLAIN);
+    let title = collapse(article.title.trim());
+    if !title.is_empty() {
+        let start = out.pos();
+        out.write_prose(&title);
+        out.span(HEADINGS[0], start);
+        out.span(BOLD, start);
+        out.nl(1);
+    }
+    if let Some(byline) = &article.byline {
+        let start = out.pos();
+        out.write_prose(&collapse(byline.trim()));
+        out.span(ITALIC, start);
+    }
+    if out.pos() > 0 {
+        out.nl(2);
+    }
+    // The picture the page leads with, where the article does not show it already
+    if let Some(lead) = article.image.as_deref()
+        && !shows(&article.tree, article.root, lead)
+    {
+        let url = relative(lead, base_url);
+        out.emit_image(&resolve_url(url.as_deref().unwrap_or(lead)));
+    }
+    Walk {
+        tree: &article.tree,
+        base_url,
+        host: extract_domain(base_url),
+        out: &mut out,
+        lists: Vec::new(),
+        items: Vec::new(),
+        block_start: true,
+        space: false,
+    }
+    .walk(article.root);
+    Some(out.into_blob())
+}
+
+/// Whether a picture under `root` is the one at `url`, by its address up to any query: the same
+/// picture is often offered at another size.
+fn shows(tree: &Tree, root: Id, url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    tree.select(root, &["img"]).into_iter().any(|img| {
+        ["src", "srcset"]
+            .iter()
+            .any(|k| tree.attr(img, k).is_some_and(|v| v.contains(path)))
+    })
+}
+
+/// What closes when a tag the walk went into ends.
+enum Close<'t> {
+    /// A block, the newlines after it: where it starts and the spans over it, as a heading's.
+    Block(usize, [i32; 2]),
+    /// A line of its own, as a table's row.
+    Line,
+    /// A span or two over its words, from where they start.
+    Spans(usize, [i32; 2]),
+    /// A link: where its span and its words' bytes start, and its `href`.
+    Link(usize, usize, &'t str),
+    List,
+    Item,
+    Quote(usize),
+}
+
+struct Walk<'t, 'a, 'o> {
+    tree: &'t Tree<'a>,
+    base_url: &'o str,
+    /// The page's host, as a link's domain is read.
+    host: Option<Cow<'o, str>>,
+    out: &'o mut BlobWriter,
+    /// Each list the walk is inside: its next item's number, 0 for bullets.
+    lists: Vec<i32>,
+    /// Each item the walk is inside: where it starts and its span's data, until its span is
+    /// written, before a list nested in it or at its end.
+    items: Vec<Option<(usize, i32)>>,
+    /// Nothing of the current block is written yet.
+    block_start: bool,
+    /// Whitespace read since the last word, written as one space before the next.
+    space: bool,
+}
+
+impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
+    /// Writes everything under `root`, in document order, holding the tags still open on a stack
+    /// of its own so a deep page costs heap and not call stack.
+    fn walk(mut self, root: Id) {
+        let t = self.tree;
+        let mut open: Vec<(Id, Close)> = Vec::new();
+        let mut next = t.first_child(root);
+        loop {
+            if let Some(n) = next {
+                match self.enter(n) {
+                    Some(close) => {
+                        open.push((n, close));
+                        next = t.first_child(n);
+                    }
+                    None => next = t.next_sibling(n),
+                }
+                continue;
+            }
+            let Some((n, close)) = open.pop() else { break };
+            self.leave(close);
+            next = t.next_sibling(n);
+        }
+    }
+
+    /// Writes a node's opening, and answers what closes it where its children are to be walked.
+    fn enter(&mut self, n: Id) -> Option<Close<'t>> {
+        let t = self.tree;
+        if let Some(text) = t.text_of(n) {
+            self.text(text);
+            return None;
+        }
+        let name = t.name(n)?;
+        match name {
+            "p" | "div" | "section" | "article" | "main" | "header" | "footer" | "aside"
+            | "figure" | "figcaption" | "details" | "summary" | "address" | "dl" | "dt" | "dd"
+            | "center" | "nav" | "form" | "fieldset" | "table" => {
+                self.end(true);
+                Some(Close::Block(self.out.pos(), [-1, -1]))
+            }
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                self.end(true);
+                let level = (name.as_bytes()[1] - b'1') as usize;
+                Some(Close::Block(self.out.pos(), [HEADINGS[level], BOLD]))
+            }
+            "tr" => {
+                self.end(false);
+                Some(Close::Line)
+            }
+            "ul" | "ol" => {
+                // An item's own words end where a list nested in it begins
+                if let Some(item) = self.items.last_mut()
+                    && let Some((start, data)) = item.take()
+                {
+                    self.out.span_data(LIST_ITEM, start, data);
+                }
+                self.end(true);
+                let first = t
+                    .attr(n, "start")
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(1);
+                self.lists.push(if name == "ol" {
+                    first.clamp(1, 0xFFFF)
+                } else {
+                    0
+                });
+                Some(Close::List)
+            }
+            "li" => {
+                self.end(false);
+                let indent = self.lists.len().saturating_sub(1) as i32;
+                let number = match self.lists.last_mut() {
+                    Some(n) if *n > 0 => {
+                        *n += 1;
+                        (*n - 1).min(0xFFFF)
+                    }
+                    _ => 0,
+                };
+                self.items
+                    .push(Some((self.out.pos(), (indent << 16) | number)));
+                Some(Close::Item)
+            }
+            "blockquote" => {
+                self.end(true);
+                self.out.quote_depth += 1;
+                Some(Close::Quote(self.out.pos()))
+            }
+            "pre" => {
+                self.end(true);
+                self.pre(n);
+                self.end(true);
+                None
+            }
+            "hr" => {
+                self.end(true);
+                let start = self.out.pos();
+                self.out.write_text("\u{0001}");
+                self.out.span(HRULE, start);
+                self.end(true);
+                None
+            }
+            "br" => {
+                self.end(false);
+                None
+            }
+            "img" => {
+                if let Some(src) = self.picture(n) {
+                    self.end(true);
+                    let url = relative(src, self.base_url);
+                    self.out
+                        .emit_image(&resolve_url(url.as_deref().unwrap_or(src)));
+                    self.block_start = true;
+                }
+                None
+            }
+            "td" | "th" => {
+                // Cells read across their row until tables are written as tables
+                if !self.block_start {
+                    self.out.write_text(" | ");
+                    self.space = false;
+                }
+                let spans = if name == "th" { [BOLD, -1] } else { [-1, -1] };
+                Some(Close::Spans(self.out.pos(), spans))
+            }
+            "b" | "strong" => Some(self.style([BOLD, -1])),
+            "i" | "em" | "cite" => Some(self.style([ITALIC, -1])),
+            "s" | "del" | "strike" => Some(self.style([STRIKETHROUGH, -1])),
+            "sup" => Some(self.style([SUPERSCRIPT, SUPERSCRIPT_SIZE])),
+            "sub" => Some(self.style([SUBSCRIPT, SUBSCRIPT_SIZE])),
+            "code" | "kbd" | "samp" | "tt" => Some(self.style([CODE, -1])),
+            "a" => {
+                // An anchor on the page, or a script the page no longer has, is words
+                let href = t.attr(n, "href").map(str::trim).unwrap_or("");
+                if href.is_empty()
+                    || href.starts_with('#')
+                    || href
+                        .get(..11)
+                        .is_some_and(|s| s.eq_ignore_ascii_case("javascript:"))
+                {
+                    return Some(Close::Spans(self.out.pos(), [-1, -1]));
+                }
+                self.begin();
+                Some(Close::Link(self.out.pos(), self.out.blob.len(), href))
+            }
+            "svg" | "math" | "button" | "input" | "select" | "textarea" | "source" | "video"
+            | "audio" | "canvas" | "map" => None,
+            _ => Some(Close::Spans(self.out.pos(), [-1, -1])),
+        }
+    }
+
+    fn leave(&mut self, close: Close) {
+        match close {
+            Close::Block(start, spans) => {
+                self.spans(start, spans);
+                self.end(true);
+            }
+            Close::Line => self.end(false),
+            Close::Spans(start, spans) => self.spans(start, spans),
+            Close::Link(start, text_start, href) => {
+                // A link around a picture is the picture, as markdown's is
+                let words = &self.out.blob[text_start..];
+                if words.is_empty() || words.contains(&1) {
+                    return;
+                }
+                let url = relative(href, self.base_url);
+                let url = resolve_url(url.as_deref().unwrap_or(href));
+                // The article's own site is no news to its reader: its links go without the domain
+                if extract_domain(&url).is_some_and(|d| Some(&d) == self.host.as_ref()) {
+                    self.out.span_url(LINK, start, &url);
+                    self.out.span(LINK_SIZE, start);
+                } else {
+                    self.out.link(start, text_start, &url);
+                }
+            }
+            Close::List => {
+                self.lists.pop();
+                self.end(true);
+            }
+            Close::Item => {
+                if let Some(Some((start, data))) = self.items.pop() {
+                    self.out.span_data(LIST_ITEM, start, data);
+                }
+                self.end(false);
+            }
+            Close::Quote(start) => {
+                self.out.quote_depth -= 1;
+                self.out
+                    .span_data(QUOTE, start, self.out.quote_depth as i32);
+                self.end(true);
+            }
+        }
+    }
+
+    fn spans(&mut self, start: usize, spans: [i32; 2]) {
+        for t in spans {
+            if t >= 0 {
+                self.out.span(t, start);
+            }
+        }
+    }
+
+    /// Opens a style over the words to come, any space before them outside it.
+    fn style(&mut self, spans: [i32; 2]) -> Close<'t> {
+        self.begin();
+        Close::Spans(self.out.pos(), spans)
+    }
+
+    /// Words, their whitespace one space, none at a block's start.
+    fn text(&mut self, raw: &str) {
+        let words = raw.trim_matches(is_space);
+        if words.len() < raw.len() && raw.starts_with(is_space) {
+            self.space = true;
+        }
+        if words.is_empty() {
+            return;
+        }
+        self.begin();
+        let words = collapse(words);
+        self.out.write_prose(&words);
+        self.space = raw.ends_with(is_space);
+    }
+
+    /// Before a block's first word: nothing; before any other, the space read since the last.
+    fn begin(&mut self) {
+        if self.block_start {
+            self.block_start = false;
+        } else if self.space && self.out.blob.last() != Some(&b' ') {
+            self.out.write_text(" ");
+        }
+        self.space = false;
+    }
+
+    /// Ends the line, or with `block` the block: a blank line before whatever follows, outside a
+    /// list.
+    fn end(&mut self, block: bool) {
+        if self.out.pos() > 0 {
+            self.out
+                .nl(if block && self.items.is_empty() { 2 } else { 1 });
+        }
+        self.block_start = true;
+        self.space = false;
+    }
+
+    /// A `<pre>`'s words as written, its `<br>`s newlines, as one code block.
+    fn pre(&mut self, n: Id) {
+        let t = self.tree;
+        let mut code = String::new();
+        for d in t.descendants(n) {
+            if let Some(text) = t.text_of(d) {
+                code.push_str(text);
+            } else if t.is(d, "br") {
+                code.push('\n');
+            }
+        }
+        // HTML drops the newline straight after `<pre>`
+        let code = code.strip_prefix('\n').unwrap_or(&code).trim_end();
+        if !code.is_empty() {
+            let start = self.out.pos();
+            self.out.write_text(code);
+            self.out.span(CODE_BLOCK, start);
+        }
+    }
+
+    /// Where an `<img>` is: its `src`, or the widest of its `srcset`; none for an inline `data:`
+    /// picture.
+    fn picture(&self, n: Id) -> Option<&'t str> {
+        let t = self.tree;
+        t.attr(n, "src")
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with("data:"))
+            .or_else(|| widest(t.attr(n, "srcset")?))
+    }
+}
+
+/// The widest picture a `srcset` offers, by its `w` or `x` descriptor; the first where none has one.
+fn widest(srcset: &str) -> Option<&str> {
+    let mut best: Option<(f32, &str)> = None;
+    let mut rest = srcset;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c == ',' || c.is_ascii_whitespace());
+        if rest.is_empty() {
+            break;
+        }
+        let url_end = rest
+            .find(|c: char| c.is_ascii_whitespace())
+            .unwrap_or(rest.len());
+        let (mut url, tail) = rest.split_at(url_end);
+        let descriptor = if let Some(u) = url.strip_suffix(',') {
+            url = u;
+            rest = tail;
+            ""
+        } else {
+            let end = tail.find(',').unwrap_or(tail.len());
+            rest = &tail[end..];
+            tail[..end].trim()
+        };
+        let size = descriptor
+            .strip_suffix(['w', 'x'])
+            .and_then(|d| d.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        if !url.is_empty() && !url.starts_with("data:") && best.is_none_or(|(s, _)| size > s) {
+            best = Some((size, url));
+        }
+    }
+    best.map(|(_, url)| url)
+}

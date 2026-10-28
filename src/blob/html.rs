@@ -5,14 +5,17 @@
 //! One pass, no tree: each tag is written as the blob writer writes the markdown it stands for, so a
 //! comment reads the same from either.
 
-mod mdream;
+pub(super) mod mdream;
 
 use super::*;
 use crate::image_url::is_image_url;
 use crate::parser::autolink::{url_in, www_in};
 use crate::parser::url::resolve_url;
 use mdream::entities::{decode_html_attribute_entities, decode_html_entities_into};
-use mdream::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
+use mdream::scan::{Attrs, is_whitespace, process_comment_or_doctype, scan_tag};
+
+/// The only attributes the walk reads.
+const HREF_CLASS: Attrs<'static> = Attrs::Only(&["href", "class"]);
 
 /// How a site's HTML reads: each site's are in [`super::site`], the walk itself naming none.
 #[derive(Clone, Copy)]
@@ -172,13 +175,13 @@ fn next_address(text: &str, from: usize) -> Option<(usize, usize, Cow<'_, str>)>
 }
 
 /// HTML's whitespace: what a run of it between words collapses from.
-fn is_space(c: char) -> bool {
+pub(super) fn is_space(c: char) -> bool {
     c.is_ascii() && is_whitespace(c as u8)
 }
 
 /// A run of words with its whitespace one space each, as comrak's `collapse_whitespace` makes a
 /// text node's; borrowed when it already is, which one pass decides.
-fn collapse(s: &str) -> Cow<'_, str> {
+pub(super) fn collapse(s: &str) -> Cow<'_, str> {
     let bytes = s.as_bytes();
     let clean = !bytes
         .iter()
@@ -237,7 +240,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             return name_end + end + 1;
         }
         let (mut href, mut class) = (None, None);
-        let scan = scan_tag(html, name_end, &["href", "class"], |name, value| {
+        let scan = scan_tag(html, name_end, HREF_CLASS, |name, value| {
             if name.eq_ignore_ascii_case("href") {
                 href = Some(value);
             } else {
@@ -569,7 +572,7 @@ impl<'a, 'o> Walk<'a, 'o> {
 
 /// `href` resolved against `base` where it is relative, as a browser resolves it; none where it
 /// already names its scheme.
-fn relative(href: &str, base: &str) -> Option<String> {
+pub(super) fn relative(href: &str, base: &str) -> Option<String> {
     let scheme_end = |s: &str| {
         let colon = s.find(':')?;
         let scheme = &s[..colon];

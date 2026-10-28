@@ -35,6 +35,10 @@ use site::Page;
 pub(crate) mod html;
 pub use html::render_html_blob;
 
+/// A web page's article into the blob: Readability's pick of the page, walked as its tree.
+pub(crate) mod article;
+pub use article::render_article_blob;
+
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
 // can reference span type ids without reaching into `span_types` directly.
 pub(crate) use span_types::*;
