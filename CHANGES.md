@@ -156,12 +156,23 @@ matching on the id, every other site taking the default, and each site's code in
 | `site::page(site, url)` | What a resolved address is to it, read once: `Own`, one of its pages, for the app to open itself; `Internal`, on its own host, where the domain after a link's words tells its reader nothing; or `Elsewhere` |
 | `site::link_size(site)` | Whether its links are drawn larger than their words (`LINK_SIZE`), a finger's target in a comment; every site's but `READER`'s |
 | `site::link_domain(site)` | Whether a link elsewhere has the domain after its words; every site's but `READER`'s |
+| `site::reader_blocks(site)` | Whether its blob marks each block with a `READER_BLOCK` span, from which the view spaces each line; `READER`'s alone |
 
 `READER` is an article's site, not an app's: `render_article_blob` writes under
 it whatever the app's own, and its links are words in a sentence, at their size
 and with no domain after them. It owns no pages and reads HTML as plain. So the
 view is always told, it always answers a blob, plain words too; every other
 site's plain words answer none, as before.
+
+Its blob carries the reader's line heights as a `READER_BLOCK` span over each
+block and the blank line after it (`site::reader_blocks`): `BlobWriter` closes
+one at the newline flush in `write_text`, the one place newlines land, and
+`into_blob` closes the last, so each record ends where the next block starts
+and the view's span search stays local to the line it is asked about. The view
+works each line's height out from the spans the blob already writes, headings,
+quotes, list items and code; the record itself carries no kind. One span over
+the whole text was tried first: its end pinned the view's search to the first
+record and a link-heavy page took a third of a second to lay out, 32 ms tiled.
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
 a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
@@ -404,7 +415,9 @@ what is left, as `html.rs` is the walk over a comment.
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the
   widest of a `srcset`; a link around a picture is the picture). The lead
-  picture is left out where the article shows it already. A link to the
+  picture is the caller's header, so where the article shows it too, its first
+  `<img>` offering that address at any size, the walk leaves it out, with the
+  `<figure>` and caption it stands alone in. A link to the
   article's own host takes no domain after it; a `#` or `javascript:` link is
   words. Table rows read across, `a | b`, until tables are `TABLE` spans
 - Checked against dom_smoothie itself, on 27 real pages: Wikipedia, MDN, The

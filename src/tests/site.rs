@@ -557,6 +557,43 @@ fn markdown_reader_answers_a_blob_for_plain_words() {
     assert!(blob("just some words", PLAIN).is_none());
 }
 
+/// The reader's blob carries its line heights as a span over each block and the blank line after
+/// it, each ending where the next begins, from the text's start to its end, so no span reaches
+/// past its block and the view's search stays local to the line it is asked about; a one-block
+/// body carries one. No other site writes any.
+#[test]
+fn reader_blob_marks_each_block() {
+    for (md, blocks) in [
+        ("some words", 1),
+        ("> some quoted words", 1),
+        ("# A title", 1),
+        ("- an item\n- another", 2),
+        ("one\n\ntwo\n\n# three\n\n> four", 4),
+        ("```\ncode\nmore code\n```", 1),
+    ] {
+        let b = blob(md, READER).unwrap();
+        let len = b.text.encode_utf16().count() as i32;
+        let tiles: Vec<(i32, i32)> = b
+            .span_iter()
+            .filter(|s| s.typ == crate::blob::READER_BLOCK)
+            .map(|s| (s.start, s.end))
+            .collect();
+        assert_eq!(tiles.len(), blocks, "{md:?}: {tiles:?}");
+        assert_eq!(tiles[0].0, 0, "{md:?}");
+        assert_eq!(tiles[tiles.len() - 1].1, len, "{md:?}");
+        for pair in tiles.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "{md:?}: {tiles:?}");
+        }
+    }
+    for site in [PLAIN, HACKER_NEWS, CHAN, LEMMY, LOBSTERS] {
+        let b = blob("> some **quoted** words", site).unwrap();
+        assert!(
+            !b.span_iter().any(|s| s.typ == crate::blob::READER_BLOCK),
+            "site {site}"
+        );
+    }
+}
+
 /// A blob says the site it was read for, in bits 2-7 of its flags byte, beside the flags it had.
 #[test]
 fn a_blob_stores_its_site_in_its_flags() {

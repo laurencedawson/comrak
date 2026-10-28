@@ -116,6 +116,9 @@ pub(crate) struct BlobWriter {
     quote_depth: usize,
     /// The site the input is from, which knows its own pages: a link to one is an `APP_LINK`.
     site: u8,
+    /// Where the reader's current block starts, for the sites that give their lines the reader's
+    /// line heights: a `READER_BLOCK` span closes over each block and its blank line when the next opens.
+    tile: Option<usize>,
 }
 
 impl BlobWriter {
@@ -151,6 +154,7 @@ impl BlobWriter {
             site,
             list_depth: 0,
             quote_depth: 0,
+            tile: site::reader_blocks(site).then_some(0),
         }
     }
 
@@ -165,6 +169,12 @@ impl BlobWriter {
             self.blob.extend(std::iter::repeat_n(b'\n', self.p));
             self.len += self.p;
             self.p = 0;
+            // Every newline lands here, so each block ends here: the reader's span over the one
+            // just written, its newlines included, and the next opens on these words
+            if let Some(start) = self.tile {
+                self.span(READER_BLOCK, start);
+                self.tile = Some(self.len);
+            }
         }
         self.blob.extend_from_slice(s.as_bytes());
         if self.fast_path_ascii {
@@ -383,6 +393,10 @@ impl BlobWriter {
     }
 
     pub(crate) fn into_blob(mut self) -> Vec<u8> {
+        // The reader's last block, its span closed here as the others were at the block after them
+        if let Some(start) = self.tile {
+            self.span(READER_BLOCK, start);
+        }
         let txt_len = self.blob.len() - HEADER_SIZE;
         let span_count = self.spans.len() / 4;
 

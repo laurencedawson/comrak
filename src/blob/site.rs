@@ -33,6 +33,12 @@ pub(crate) fn link_domain(site: u8) -> bool {
     !matches!(site, sites::READER)
 }
 
+/// Whether `site` marks its blocks: a `READER_BLOCK` span over each block and the blank line after
+/// it, from which the view spaces each line. Only the reader's.
+pub(crate) fn reader_blocks(site: u8) -> bool {
+    matches!(site, sites::READER)
+}
+
 /// Plain HTML: no site's tags, and a paragraph opening on `>` is words.
 const PLAIN: HtmlRules<'static> = HtmlRules {
     quote_marks: false,
