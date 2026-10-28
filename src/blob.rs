@@ -126,21 +126,34 @@ impl BlobWriter {
     /// is taken as ASCII and skips its scan; `render` checks the finished text and renders again
     /// without it where a transform broke that.
     pub(crate) fn new(cap: usize, fast_path_ascii: bool, site: u8) -> Self {
-        let mut blob = Vec::with_capacity(HEADER_SIZE + cap);
-        blob.extend_from_slice(&[0u8; HEADER_SIZE]);
         // Pre-size spans/url_data to skip the doubling chain from 0. spans
         // holds 4 i32 per span; budget ~1 span per 40 input bytes (typical
         // density across the bench corpus). url_data is bytes; budget ~1
-        // byte per 32 input bytes. Below ~96 chars the doc is too small to
+        // byte per 8 input bytes and 256 at least: a comment's one link is
+        // 100-odd bytes of address (Hacker News, 2026-10, median 114), and
+        // 1 per 32 grew the buffer on every comment with one. Below ~96 chars the doc is too small to
         // make pre-allocation worthwhile (plain text has zero spans); leave
         // both at zero capacity, which std::vec::Vec specializes to no
         // allocation. Both clamp at the top to keep pathological input from
-        // requesting megabytes up front.
+        // requesting megabytes up front: 8192 spans and 64 KB of urls, which an
+        // article the length of a Wikipedia page fills, and which pages never
+        // touched cost nothing until written.
         let (spans_cap, url_cap) = if cap < 96 {
             (0, 0)
         } else {
-            ((cap / 40).min(2048) * 4, (cap / 32).min(8192))
+            ((cap / 40).min(8192) * 4, (cap / 8).clamp(256, 65536))
         };
+        // The blob takes the header and text, then into_blob appends the padding, the span records
+        // and the url data after them: sized for all of it, the appends land in capacity rather than
+        // growing the Vec and copying the text again, one copy on every parse. Below the threshold
+        // the text's one allocation has room for a couple of spans, a short comment's italic or link
+        let records = if cap < 96 {
+            2 * 16
+        } else {
+            spans_cap * 4 + url_cap
+        };
+        let mut blob = Vec::with_capacity(HEADER_SIZE + cap + 3 + records);
+        blob.extend_from_slice(&[0u8; HEADER_SIZE]);
         Self {
             blob,
             spans: Vec::with_capacity(spans_cap),
@@ -342,8 +355,9 @@ impl BlobWriter {
     }
 
     /// A link's spans over the words written since `start`: an `APP_LINK` where the url is one of
-    /// the site's own pages, a `LINK` otherwise, with the domain after the words where they lack
-    /// it, unless it is the site's own, which tells its reader nothing.
+    /// the site's own pages, a `LINK` otherwise, at a link's size and with the domain after the
+    /// words where they lack it, as the site has links, unless it is the site's own, which tells
+    /// its reader nothing.
     fn link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
         let page = site::page(self.site, url);
         self.span_url(if page == Page::Own { APP_LINK } else { LINK }, start, url);
@@ -451,11 +465,13 @@ impl BlobWriter {
         self.blob[4..8].copy_from_slice(&count_with_flags.to_le_bytes());
 
         let padding = (4 - (txt_len % 4)) % 4;
-        self.blob.extend_from_slice(&[0u8; 3][..padding]);
-
         let span_bytes = unsafe {
             std::slice::from_raw_parts(self.spans.as_ptr() as *const u8, self.spans.len() * 4)
         };
+        // Sized for all of it at new(); a page past the span budget grows the blob once, exactly
+        self.blob
+            .reserve_exact(padding + span_bytes.len() + self.url_data.len());
+        self.blob.extend_from_slice(&[0u8; 3][..padding]);
         self.blob.extend_from_slice(span_bytes);
         self.blob.extend_from_slice(&self.url_data);
         self.blob

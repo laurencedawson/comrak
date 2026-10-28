@@ -314,7 +314,8 @@ impl<'a, 'o> Walk<'a, 'o> {
             self.broken = true;
         } else if is("pre") {
             self.end_block();
-            self.pre = Some(String::new());
+            // Sized to the rest of the input, which the block cannot outrun, so it never grows
+            self.pre = Some(String::with_capacity(self.html.len() - after));
         } else if is("b") || is("strong") || is("i") || is("em") {
             self.begin();
             let span = if is("b") || is("strong") {
@@ -356,6 +357,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             return None;
         }
         let raw = &self.html[after..lt];
+        self.room(raw);
         let words = if decode_html_entities_into(raw, false, false, &mut self.decoded) {
             &self.decoded
         } else {
@@ -423,6 +425,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             return self.words(raw);
         }
         // Taken out while the words are written, so they can borrow it
+        self.room(raw);
         let mut decoded = std::mem::take(&mut self.decoded);
         if decode_html_entities_into(raw, false, false, &mut decoded) {
             self.words(&decoded);
@@ -430,6 +433,17 @@ impl<'a, 'o> Walk<'a, 'o> {
             self.words(raw);
         }
         self.decoded = decoded;
+    }
+
+    /// Room in the entity buffer for `raw` decoded: the whole input's length the first time a run
+    /// does not fit, since no run is longer, so the buffer is sized once and never grows. A comment
+    /// with no entity never touches it, as the decoder reserves only on its first entity.
+    fn room(&mut self, raw: &str) {
+        if self.decoded.capacity() < raw.len() && memchr::memchr(b'&', raw.as_bytes()).is_some() {
+            // Cleared first: the last run's words are still in it, and reserve counts from its length
+            self.decoded.clear();
+            self.decoded.reserve(self.html.len());
+        }
     }
 
     /// Words with their entities decoded, written with their whitespace one space.

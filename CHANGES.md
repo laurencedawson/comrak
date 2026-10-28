@@ -233,6 +233,17 @@ and footnote text; see [alloc_bench](#cargo-run---release---example-alloc_bench)
 The layout is optimised for cheap decoding on the consumer side — integer
 offsets, UTF-16 positions, sorted spans.
 
+The output buffers are sized from the input so they never grow: the blob for
+the header, the text, and the span records and url data `into_blob` appends
+after it (so the text is never copied again), span records at one per 40 bytes
+of input up to 8192, url data at one byte per 8 up to 64 KB and 256 at least,
+a comment's one link being 100-odd bytes of address, and the HTML walk's
+entity buffer sized once to the whole input the first time a run with an
+entity does not fit, its `<pre>` string to the rest of the input. Measured on
+a 618-comment Hacker News thread (2026-10): 156 reallocations across 106 of
+the 441 comments parsed became none, with the same four allocations a
+comment, and the thread parsed about a quarter faster on the host.
+
 ### Parse entry point
 
 **`comrak::parse_document_zerocopy(md, opts, f)`** — a scoped parse entry that
