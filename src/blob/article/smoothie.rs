@@ -310,7 +310,16 @@ fn unwrap_stray_cells(t: &mut Tree, root: Id) {
 /// Takes the article's date lines out, the header's to show if anyone's: each with the parent it
 /// leaves a word or two in, an eyebrow's category.
 fn drop_dates(t: &mut Tree, root: Id) {
-    let dates: Vec<Id> = t.descendants(root).filter(|&n| is_date(t, n)).collect();
+    // A dateline stands between the title and the first paragraph of the body: past that a date is
+    // content, a recipe's time, a result in a sentence, a release's row
+    let body = t
+        .descendants(root)
+        .find(|&n| t.name(n) == Some("p") && labels(&t.text(n)).is_none_or(|w| w >= 20));
+    let dates: Vec<Id> = t
+        .descendants(root)
+        .take_while(|&n| Some(n) != body)
+        .filter(|&n| is_date(t, n))
+        .collect();
     for n in dates {
         // What goes with its date, an eyebrow's category or a reading time and tags: a parent
         // holding a few words besides and no sentence
@@ -328,9 +337,16 @@ fn drop_dates(t: &mut Tree, root: Id) {
 
 /// A short element with no picture that its class or id names a date, or that holds a `<time>`
 /// with a word or two about it ("Updated:"); not a `<time>` itself, which may sit in a sentence.
+/// Elements that sit inside a sentence: a date in one is the sentence's, never a dateline.
+const INLINE: &[&str] = &[
+    "span", "a", "em", "strong", "b", "i", "small", "abbr", "sup", "sub", "code",
+];
+
+/// Whether `n` is a block that reads as a dateline: named for a date by its class or id, or
+/// holding a date, a `<time>` or an element so named, with a label or two about it and no sentence.
 fn is_date(t: &Tree, n: Id) -> bool {
     let Some(name) = t.name(n) else { return false };
-    if name == "time" {
+    if name == "time" || INLINE.contains(&name) {
         return false;
     }
     let text = t.text(n);
@@ -338,24 +354,31 @@ fn is_date(t: &Tree, n: Id) -> bool {
     if len == 0 || len >= 80 || !t.select(n, &["img", "picture", "video"]).is_empty() {
         return false;
     }
-    let named = ["class", "id"].iter().any(|k| {
+    if named_for_a_date(t, n) {
+        return true;
+    }
+    let dated: Vec<Id> = t
+        .descendants(n)
+        .filter(|&d| t.name(d) == Some("time") || named_for_a_date(t, d))
+        .collect();
+    if dated.is_empty() {
+        return false;
+    }
+    let mut rest = text;
+    for &d in &dated {
+        rest = rest.replacen(t.text(d).as_str(), "", 1);
+    }
+    labels(&rest).is_some_and(|w| w <= 4)
+}
+
+/// Whether a class or id of `n` has a date's word in it.
+fn named_for_a_date(t: &Tree, n: Id) -> bool {
+    ["class", "id"].iter().any(|k| {
         t.attr(n, k).is_some_and(|v| {
             v.split([' ', '_', '-'])
                 .any(|w| DATE_WORDS.iter().any(|d| w.eq_ignore_ascii_case(d)))
         })
-    });
-    if named {
-        return true;
-    }
-    let times = t.select(n, &["time"]);
-    if times.is_empty() {
-        return false;
-    }
-    let mut rest = text;
-    for &m in &times {
-        rest = rest.replacen(t.text(m).as_str(), "", 1);
-    }
-    labels(&rest).is_some_and(|w| w <= 2)
+    })
 }
 
 /// How many words `text` holds where they read as labels, not a sentence: none ending in `.`, `!`

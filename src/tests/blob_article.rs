@@ -204,7 +204,52 @@ fn keeps_the_sentence_a_dated_span_sits_in() {
     let b = article(&format!(
         "<article><p>Posted <span class=\"date\">3 March</span> and fixed since.</p><p>{PROSE}</p></article>"
     ));
-    assert_eq!(b.text, format!("Posted and fixed since.\n\n{PROSE}"));
+    assert_eq!(
+        b.text,
+        format!("Posted 3 March and fixed since.\n\n{PROSE}")
+    );
+}
+
+/// A dateline is what stands between the title and the first paragraph: past that, a date is the
+/// article's, however its element is named.
+#[test]
+fn keeps_a_dated_element_in_the_body() {
+    let b = article(&format!(
+        "<article><p>{PROSE}</p><p class=\"prep-time\">Prep time 20 minutes</p><p>{PROSE}</p></article>"
+    ));
+    assert_eq!(
+        b.text,
+        format!("{PROSE}\n\nPrep time 20 minutes\n\n{PROSE}")
+    );
+}
+
+#[test]
+fn keeps_a_timed_span_in_a_sentence() {
+    let b = article(&format!(
+        "<article><p>{PROSE}</p><p>She won in <span class=\"time\">2:03:45</span> flat.</p></article>"
+    ));
+    assert_eq!(b.text, format!("{PROSE}\n\nShe won in 2:03:45 flat."));
+}
+
+#[test]
+fn keeps_a_release_table_in_the_body() {
+    let b = article(&format!(
+        "<article><p>{PROSE}</p><table><tr><td class=\"date\">2026-10-01</td><td>v1.2</td></tr>\
+         <tr><td class=\"date\">2026-09-01</td><td>v1.1</td></tr></table></article>"
+    ));
+    assert_eq!(
+        b.text,
+        format!("{PROSE}\n\n2026-10-01 | v1.2\n2026-09-01 | v1.1")
+    );
+}
+
+#[test]
+fn drops_the_dateline_ahead_of_the_body_alone() {
+    let b = article(&format!(
+        "<article><p class=\"updated\">Updated 28 Oct 2026 · 4 min read</p><p>{PROSE}</p>\
+         <p class=\"updated\">Updated 28 Oct 2026</p></article>"
+    ));
+    assert_eq!(b.text, format!("{PROSE}\n\nUpdated 28 Oct 2026"));
 }
 
 #[test]
