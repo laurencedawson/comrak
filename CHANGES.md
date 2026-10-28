@@ -17,7 +17,7 @@ history still resolve. Highlights:
 | [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
-| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: title, byline, lead picture and words; dom_smoothie's port of Readability.js run on a tree of our own |
+| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its words, the title and lead picture the caller's; dom_smoothie's port of Readability.js run on a tree of our own |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -357,16 +357,16 @@ after a quote into it. About 2 us a comment.
 
 `comrak::blob::render_article_blob(html, base_url) -> Option<Vec<u8>>` reads a
 whole web page, picks its article out of it as Readability does, and writes it
-into the same blob through the one `BlobWriter`: the page's title as a first
-level heading, its byline in italics, the picture it leads with, then the
-article, its links and pictures resolved against `base_url`. `None` where
+into the same blob through the one `BlobWriter`: the article's words, its
+links and pictures resolved against `base_url`. The page's title and the
+picture it leads with are the caller's to show, as a header above the body;
+the article's own copy of that picture is left out, and so is its byline. `None` where
 nothing on the page reads as an article. syncdown's `preprocessArticle`.
 
 ```
 page HTML ──▶ article/tree.rs ──▶ article/smoothie/ ──▶ article.rs ──▶ BlobWriter ──▶ blob
-              (parse: mdream's    (pick: Readability    (write: the title,
-               scan into a tree)   scores, keeps, cuts)  byline, lead picture
-                                                         and the walk)
+              (parse: mdream's    (pick: Readability    (write: the walk)
+               scan into a tree)   scores, keeps, cuts)
 ```
 
 A page cannot be read like a comment. Readability scores each paragraph and
@@ -389,10 +389,17 @@ what is left, as `html.rs` is the walk over a comment.
   `glob.rs` are dom_smoothie's, moved from dom_query onto the tree with their
   logic as it was, its byte check before each pattern search kept.
   `smoothie.rs` reads the title (`og:title` and the like, else `<title>` with
-  the site's name cut off), the byline (an author `<meta>`, else the element
-  that reads as one, taken out of the words) and the lead picture
-  (`og:image`). JSON-LD, the readability check and dom_smoothie's text modes
-  are left behind
+  the site's name cut off), which the scoring uses to drop a heading that
+  repeats it, takes out the element that reads as a byline, whether or not an
+  author `<meta>` names one (as Readability.js does; dom_smoothie looked only
+  without one), and reads the lead picture (`og:image`). A share element is
+  told by a hyphen as well as a space or underscore (`share-toggle`), as
+  Readability.js's `\b` tells it and dom_smoothie's split did not. Ours alone,
+  as the title is the caller's header: date lines go once the article is
+  picked, a short element its class or id names a date or holding a `<time>`
+  with a word or two about it ("Updated:"), with a parent it leaves a word or
+  two in, an eyebrow's category; a `<time>` in a sentence stays. JSON-LD,
+  the readability check and dom_smoothie's text modes are left behind
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the

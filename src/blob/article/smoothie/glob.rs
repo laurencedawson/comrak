@@ -24,8 +24,16 @@ pub(crate) const META_TITLE_KEYS: &[&str] = &[
 
 pub(crate) const META_IMAGE_KEYS: &[&str] = &["og:image", "image", "twitter:image"];
 
-pub(crate) const META_BYLINE_KEYS: &[&str] =
-    &["dc:creator", "dcterms:creator", "author", "parsely-author"];
+/// Words a date line's class or id is told by, whole between spaces, hyphens and underscores.
+pub(crate) const DATE_WORDS: &[&str] = &[
+    "date",
+    "time",
+    "timestamp",
+    "published",
+    "updated",
+    "dateline",
+    "pubdate",
+];
 
 pub(crate) const BYLINE_PATTERNS: &[&str] =
     &["byline", "author", "dateline", "writtenby", "p-author"];

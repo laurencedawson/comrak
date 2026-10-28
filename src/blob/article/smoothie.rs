@@ -8,7 +8,7 @@
 //! - `grab.rs`: scoring the page's blocks and gathering the best
 //! - `prep.rs`: from `prep_article.rs`, clearing the article of what is not
 //!
-//! Left behind: JSON-LD and the page's other metadata but its title, byline and picture, text
+//! Left behind: JSON-LD and the page's other metadata but its title and picture, text
 //! modes, the readability check, dom_smoothie's own candidate mode, and what the walk does itself:
 //! resolving addresses, leaving `javascript:` links words, and reading nested and empty divs as
 //! nothing.
@@ -24,8 +24,6 @@ use glob::*;
 use helpers::*;
 
 pub struct Article<'a> {
-    pub title: String,
-    pub byline: Option<String>,
     /// The picture the page's metadata leads with, its address as written.
     pub image: Option<String>,
     pub tree: Tree<'a>,
@@ -37,7 +35,8 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     let mut tree = Tree::parse(html);
     let title = metadata_title(&tree).unwrap_or_else(|| article_title(&tree));
     let body = tree.select(ROOT, &["body"]).into_iter().next()?;
-    let byline = meta(&tree, META_BYLINE_KEYS).or_else(|| take_byline(&mut tree, body));
+    // The byline is the page's chrome, so it goes, whether or not the metadata names the author
+    drop_byline(&mut tree, body);
     let image = meta(&tree, META_IMAGE_KEYS);
     prepare(&mut tree);
     let (mut tree, root) = grab::grab_article(&tree, body, &title)?;
@@ -45,13 +44,8 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
         return None;
     }
     unwrap_stray_cells(&mut tree, root);
-    Some(Article {
-        title,
-        byline,
-        image,
-        tree,
-        root,
-    })
+    drop_dates(&mut tree, root);
+    Some(Article { image, tree, root })
 }
 
 fn metadata_title(t: &Tree) -> Option<String> {
@@ -74,9 +68,8 @@ fn meta(t: &Tree, keys: &[&str]) -> Option<String> {
     })
 }
 
-/// The first element under `body` that reads as a byline, taken out of the page: its words, or
-/// those of its `itemprop="name"`.
-fn take_byline(t: &mut Tree, body: Id) -> Option<String> {
+/// Takes the first element under `body` that reads as a byline out of the page.
+fn drop_byline(t: &mut Tree, body: Id) {
     let mut next = helpers::next_child_or_sibling(t, body, false);
     while let Some(n) = next {
         let marked = t.attr(n, "rel") == Some("author")
@@ -84,16 +77,11 @@ fn take_byline(t: &mut Tree, body: Id) -> Option<String> {
         let byline = (marked || contains_any(&matching_string(t, n), BYLINE_PATTERNS))
             && (1..100).contains(&t.text(n).trim().chars().count());
         if byline {
-            let name = t
-                .descendants(n)
-                .find(|&d| t.attr(d, "itemprop") == Some("name"));
-            let words = normalize_spaces(&t.text(name.unwrap_or(n)));
             t.detach(n);
-            return Some(words);
+            return;
         }
         next = helpers::next_child_or_sibling(t, n, false);
     }
-    None
 }
 
 /// The page's `<title>`, its site's name cut off where that can be told apart.
@@ -310,4 +298,71 @@ fn unwrap_stray_cells(t: &mut Tree, root: Id) {
         }
         t.detach(td);
     }
+}
+
+/// Takes the article's date lines out, the header's to show if anyone's: each with the parent it
+/// leaves a word or two in, an eyebrow's category.
+fn drop_dates(t: &mut Tree, root: Id) {
+    let dates: Vec<Id> = t.descendants(root).filter(|&n| is_date(t, n)).collect();
+    for n in dates {
+        // What goes with its date, an eyebrow's category or a reading time and tags: a parent
+        // holding a few words besides and no sentence
+        let mut out = n;
+        while let Some(parent) = t.parent(out)
+            && parent != root
+            && t.select(parent, &["img", "picture", "video"]).is_empty()
+            && labels(&t.text(parent).replacen(t.text(out).as_str(), "", 1)).is_some_and(|w| w <= 4)
+        {
+            out = parent;
+        }
+        t.detach(out);
+    }
+}
+
+/// A short element with no picture that its class or id names a date, or that holds a `<time>`
+/// with a word or two about it ("Updated:"); not a `<time>` itself, which may sit in a sentence.
+fn is_date(t: &Tree, n: Id) -> bool {
+    let Some(name) = t.name(n) else { return false };
+    if name == "time" {
+        return false;
+    }
+    let text = t.text(n);
+    let len = text.trim().chars().count();
+    if len == 0 || len >= 80 || !t.select(n, &["img", "picture", "video"]).is_empty() {
+        return false;
+    }
+    let named = ["class", "id"].iter().any(|k| {
+        t.attr(n, k).is_some_and(|v| {
+            v.split([' ', '_', '-'])
+                .any(|w| DATE_WORDS.iter().any(|d| w.eq_ignore_ascii_case(d)))
+        })
+    });
+    if named {
+        return true;
+    }
+    let times = t.select(n, &["time"]);
+    if times.is_empty() {
+        return false;
+    }
+    let mut rest = text;
+    for &m in &times {
+        rest = rest.replacen(t.text(m).as_str(), "", 1);
+    }
+    labels(&rest).is_some_and(|w| w <= 2)
+}
+
+/// How many words `text` holds where they read as labels, not a sentence: none ending in `.`, `!`
+/// or `?`. A separator, a `·` or `|` with no letter or digit, is no word.
+fn labels(text: &str) -> Option<usize> {
+    let words = text
+        .split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphanumeric));
+    let mut count = 0;
+    for w in words {
+        if w.ends_with(['.', '!', '?']) {
+            return None;
+        }
+        count += 1;
+    }
+    Some(count)
 }

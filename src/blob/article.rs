@@ -11,38 +11,19 @@ use super::*;
 use tree::{Id, Tree};
 
 /// The article on the page `html`, at `base_url`, which its relative links and pictures resolve
-/// against, read as one page: its title a heading, its byline in italics, the picture it leads with
-/// and its words. None where nothing on the page reads as one.
+/// against: its words alone. Its title and the picture it leads with are the caller's to show, so
+/// where the article shows that picture itself it is left out, and its byline is no part of it.
+/// None where nothing on the page reads as one.
 pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     let article = smoothie::extract(html)?;
-    let mut out = BlobWriter::new(article.tree.char_count(article.root), false, sites::PLAIN);
-    let title = collapse(article.title.trim());
-    if !title.is_empty() {
-        let start = out.pos();
-        out.write_prose(&title);
-        out.span(HEADINGS[0], start);
-        out.span(BOLD, start);
-        out.nl(1);
-    }
-    if let Some(byline) = &article.byline {
-        let start = out.pos();
-        out.write_prose(&collapse(byline.trim()));
-        out.span(ITALIC, start);
-    }
-    if out.pos() > 0 {
-        out.nl(2);
-    }
-    // The picture the page leads with, where the article does not show it already
-    if let Some(lead) = article.image.as_deref()
-        && !shows(&article.tree, article.root, lead)
-    {
-        let url = relative(lead, base_url);
-        out.emit_image(&resolve_url(url.as_deref().unwrap_or(lead)));
-    }
+    let mut out = BlobWriter::new(article.tree.char_count(article.root), false, sites::READER);
     Walk {
         tree: &article.tree,
+        lead: article
+            .image
+            .as_deref()
+            .and_then(|url| lead(&article.tree, article.root, url)),
         base_url,
-        host: extract_domain(base_url),
         out: &mut out,
         lists: Vec::new(),
         items: Vec::new(),
@@ -53,15 +34,34 @@ pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     Some(out.into_blob())
 }
 
-/// Whether a picture under `root` is the one at `url`, by its address up to any query: the same
-/// picture is often offered at another size.
-fn shows(tree: &Tree, root: Id, url: &str) -> bool {
-    let path = url.split(['?', '#']).next().unwrap_or(url);
-    tree.select(root, &["img"]).into_iter().any(|img| {
+/// Where the article shows the picture at `url` itself: its first `<img>` offering it at any size,
+/// by its address up to any query and whatever its scheme, or the `<figure>` holding that picture
+/// alone, so its caption goes with it.
+fn lead(tree: &Tree, root: Id, url: &str) -> Option<Id> {
+    let path = url.split(['?', '#']).next().unwrap_or(url).trim();
+    let path = path.split_once("//").map_or(path, |(_, rest)| rest);
+    if path.is_empty() || path.ends_with('/') {
+        return None;
+    }
+    let img = tree.select(root, &["img"]).into_iter().find(|&img| {
         ["src", "srcset"]
             .iter()
             .any(|k| tree.attr(img, k).is_some_and(|v| v.contains(path)))
-    })
+    })?;
+    let mut n = img;
+    while let Some(parent) = tree.parent(n)
+        && parent != root
+    {
+        if tree.name(parent) == Some("figure") {
+            return Some(if tree.select(parent, &["img"]).len() == 1 {
+                parent
+            } else {
+                img
+            });
+        }
+        n = parent;
+    }
+    Some(img)
 }
 
 /// What closes when a tag the walk went into ends.
@@ -81,9 +81,9 @@ enum Close<'t> {
 
 struct Walk<'t, 'a, 'o> {
     tree: &'t Tree<'a>,
+    /// The page's lead picture where the article shows it, left to the caller's header.
+    lead: Option<Id>,
     base_url: &'o str,
-    /// The page's host, as a link's domain is read.
-    host: Option<Cow<'o, str>>,
     out: &'o mut BlobWriter,
     /// Each list the walk is inside: its next item's number, 0 for bullets.
     lists: Vec<i32>,
@@ -125,6 +125,9 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
         let t = self.tree;
         if let Some(text) = t.text_of(n) {
             self.text(text);
+            return None;
+        }
+        if Some(n) == self.lead {
             return None;
         }
         let name = t.name(n)?;
@@ -260,14 +263,11 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                     return;
                 }
                 let url = relative(href, self.base_url);
-                let url = resolve_url(url.as_deref().unwrap_or(href));
-                // The article's own site is no news to its reader: its links go without the domain
-                if extract_domain(&url).is_some_and(|d| Some(&d) == self.host.as_ref()) {
-                    self.out.span_url(LINK, start, &url);
-                    self.out.span(LINK_SIZE, start);
-                } else {
-                    self.out.link(start, text_start, &url);
-                }
+                self.out.link(
+                    start,
+                    text_start,
+                    &resolve_url(url.as_deref().unwrap_or(href)),
+                );
             }
             Close::List => {
                 self.lists.pop();
