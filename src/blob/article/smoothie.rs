@@ -84,8 +84,14 @@ fn meta(t: &Tree, keys: &[&str]) -> Option<String> {
 
 /// Takes the first element under `body` that reads as a byline out of the page.
 fn drop_byline(t: &mut Tree, body: Id) {
+    // A byline stands between the title and the first paragraph of the body, like a dateline:
+    // past that an element named for an author is content, a box about one in a profile piece
+    let first = body_start(t, body);
     let mut next = helpers::next_child_or_sibling(t, body, false);
     while let Some(n) = next {
+        if Some(n) == first {
+            return;
+        }
         let marked = t.attr(n, "rel") == Some("author")
             || t.attr(n, "itemprop").is_some_and(|p| p.contains("author"));
         let byline = (marked || contains_any(&matching_string(t, n), BYLINE_PATTERNS))
@@ -367,12 +373,17 @@ fn unwrap_stray_cells(t: &mut Tree, root: Id) {
 
 /// Takes the article's date lines out, the header's to show if anyone's: each with the parent it
 /// leaves a word or two in, an eyebrow's category.
+/// Where the body's words begin under `root`: its first paragraph holding a sentence or twenty
+/// words. The title, byline and dateline stand ahead of it.
+fn body_start(t: &Tree, root: Id) -> Option<Id> {
+    t.descendants(root)
+        .find(|&n| t.name(n) == Some("p") && labels(&t.text(n)).is_none_or(|w| w >= 20))
+}
+
 fn drop_dates(t: &mut Tree, root: Id) {
     // A dateline stands between the title and the first paragraph of the body: past that a date is
     // content, a recipe's time, a result in a sentence, a release's row
-    let body = t
-        .descendants(root)
-        .find(|&n| t.name(n) == Some("p") && labels(&t.text(n)).is_none_or(|w| w >= 20));
+    let body = body_start(t, root);
     let dates: Vec<Id> = t
         .descendants(root)
         .take_while(|&n| Some(n) != body)

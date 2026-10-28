@@ -252,6 +252,20 @@ fn takes_the_byline_out_of_the_words_where_the_metadata_names_the_author() {
     assert_eq!(b.text, PROSE);
 }
 
+/// A byline stands ahead of the body, like a dateline: an element named for an author past the
+/// first paragraph is the article's, a box about one in a profile piece.
+#[test]
+fn keeps_an_author_box_in_the_body() {
+    let b = article(&format!(
+        "<p class=\"byline\">By Ada Lovelace</p><p>{PROSE}</p>\
+         <div class=\"author-box\">Grace Hopper wrote the first compiler.</div>"
+    ));
+    assert_eq!(
+        b.text,
+        format!("{PROSE}\n\nGrace Hopper wrote the first compiler.")
+    );
+}
+
 #[test]
 fn drops_a_share_button_named_with_a_hyphen() {
     let b = article(&format!(
