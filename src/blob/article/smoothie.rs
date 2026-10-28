@@ -24,6 +24,8 @@ use glob::*;
 use helpers::*;
 
 pub struct Article<'a> {
+    /// The page's title: its metadata's, else its `<title>` with the site's name cut off.
+    pub title: String,
     /// The picture the page's metadata leads with, its address as written.
     pub image: Option<String>,
     pub tree: Tree<'a>,
@@ -45,7 +47,12 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     }
     unwrap_stray_cells(&mut tree, root);
     drop_dates(&mut tree, root);
-    Some(Article { image, tree, root })
+    Some(Article {
+        title,
+        image,
+        tree,
+        root,
+    })
 }
 
 fn metadata_title(t: &Tree) -> Option<String> {

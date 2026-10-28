@@ -1,6 +1,7 @@
 //! Tests for the blob renderer's walk over a web page's article (`comrak::blob::render_article_blob`).
 //!
-//! - `extraction` : the article kept, the page around it dropped, the byline out, the title left
+//! - `extraction` : the article kept, the page around it dropped, the title first and centred, the
+//!   byline out
 //! - `tree`       : the closes HTML implies, scripts, styles and templates no part of the page
 //! - `blocks`     : paragraphs, headings, lists, quotes, code, rules, table rows
 //! - `inline`     : emphasis, code, superscript, whitespace
@@ -9,8 +10,8 @@
 //!   the page's lead picture left to the caller, and out of the words where the article shows it
 
 use crate::blob::{
-    BOLD, CODE, CODE_BLOCK, HEADINGS, HRULE, IMAGE, ITALIC, LINK, LINK_SIZE, LIST_ITEM, QUOTE,
-    SUPERSCRIPT, render_article_blob,
+    BOLD, CENTERED, CODE, CODE_BLOCK, HEADINGS, HRULE, IMAGE, ITALIC, LINK, LINK_SIZE, LIST_ITEM,
+    QUOTE, SUPERSCRIPT, render_article_blob,
 };
 use crate::tests::blob_read::{Blob, Span, read};
 
@@ -34,6 +35,12 @@ fn article(body: &str) -> Blob {
 /// The blob for the whole page `html`, which must have an article.
 fn whole(html: &str) -> Blob {
     read(&render_article_blob(html, PAGE).unwrap_or_else(|| panic!("no article in {html:?}")))
+}
+
+/// The page's title, as the heading the blob opens with.
+fn title(html: &str) -> String {
+    let b = whole(html);
+    words(&b, of(&b, HEADINGS[0])[0]).to_string()
 }
 
 /// `body` set among enough prose to be the article.
@@ -84,12 +91,61 @@ fn keeps_the_article_and_drops_the_page_around_it() {
 }
 
 #[test]
+fn reads_the_title_without_its_site() {
+    let html = page(
+        "How ordered and nested lists work | The Example Blog",
+        &format!("<p>{PROSE}</p>"),
+    );
+    assert_eq!(title(&html), "How ordered and nested lists work");
+}
+
+#[test]
+fn keeps_a_short_title_whole() {
+    let html = page(
+        "How lists work | The Example Blog",
+        &format!("<p>{PROSE}</p>"),
+    );
+    assert_eq!(title(&html), "How lists work | The Example Blog");
+}
+
+#[test]
+fn prefers_the_metadata_title() {
+    let html = format!(
+        "<html><head><title>Ignored | Site</title><meta property=\"og:title\" content=\"The real one\"></head>\
+         <body><p>{PROSE}</p></body></html>"
+    );
+    assert_eq!(title(&html), "The real one");
+}
+
+/// The title is the blob's first line, a first level heading with a `CENTERED` span over the same
+/// words; no heading of the article's own is centred.
+#[test]
+fn opens_on_its_title_centred() {
+    let html = page(
+        "A title long enough to keep",
+        &format!("<article><h2>A section</h2><p>{PROSE}</p></article>"),
+    );
+    let b = whole(&html);
+    assert_eq!(
+        b.text,
+        format!("A title long enough to keep\n\nA section\n\n{PROSE}")
+    );
+    let title: Vec<_> = of(&b, HEADINGS[0]).iter().map(|s| words(&b, s)).collect();
+    let centred: Vec<_> = of(&b, CENTERED).iter().map(|s| words(&b, s)).collect();
+    assert_eq!(title, ["A title long enough to keep"]);
+    assert_eq!(centred, title);
+}
+
+#[test]
 fn takes_the_byline_out_of_the_words() {
     let html = page(
         "A title long enough to keep",
         &format!("<div class=\"byline\">By Ada Lovelace</div><p>{PROSE}</p>"),
     );
-    assert_eq!(whole(&html).text, PROSE);
+    assert_eq!(
+        whole(&html).text,
+        format!("A title long enough to keep\n\n{PROSE}")
+    );
 }
 
 #[test]
@@ -165,7 +221,7 @@ fn keeps_a_time_in_a_sentence() {
 }
 
 #[test]
-fn leaves_the_title_byline_and_lead_picture_out() {
+fn leaves_the_byline_and_lead_picture_out() {
     let html = format!(
         "<html><head><title>A title long enough to keep</title>\
          <meta name=\"author\" content=\"Grace Hopper\">\
@@ -173,8 +229,7 @@ fn leaves_the_title_byline_and_lead_picture_out() {
          <body><article><p>{PROSE}</p></article></body></html>"
     );
     let b = whole(&html);
-    assert_eq!(b.text, PROSE);
-    assert!(of(&b, HEADINGS[0]).is_empty());
+    assert_eq!(b.text, format!("A title long enough to keep\n\n{PROSE}"));
     assert!(of(&b, IMAGE).is_empty());
 }
 
