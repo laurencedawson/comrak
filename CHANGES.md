@@ -279,6 +279,15 @@ markdown between. A second walk, over the HTML in place of comrak's tree,
 writes through the one `BlobWriter`, so a comment reads the same either way and
 an enhancement to the writer reaches both.
 
+```
+comment HTML ──▶ html/mdream/scan.rs ──▶ html.rs ──▶ BlobWriter ──▶ blob
+                 (tags, attributes,      (the walk, one pass:
+                  entities)               each tag as its markdown)
+```
+
+A comment is a few paragraphs written top to bottom, so the walk reads each tag
+as the scan finds it and writes it at once, holding only the tags still open.
+
 - One pass, no tree: `src/blob/html.rs`, a child of `blob` so the writer stays
   private. Each tag is written as the writer writes the markdown it stands for
 - Read so far: `<p>` (Hacker News opens every paragraph but the first with a
@@ -344,6 +353,20 @@ into the same blob through the one `BlobWriter`: the page's title as a first
 level heading, its byline in italics, the picture it leads with, then the
 article, its links and pictures resolved against `base_url`. `None` where
 nothing on the page reads as an article. syncdown's `preprocessArticle`.
+
+```
+page HTML ──▶ article/tree.rs ──▶ article/smoothie/ ──▶ article.rs ──▶ BlobWriter ──▶ blob
+              (parse: mdream's    (pick: Readability    (write: the title,
+               scan into a tree)   scores, keeps, cuts)  byline, lead picture
+                                                         and the walk)
+```
+
+A page cannot be read like a comment. Readability scores each paragraph and
+passes the score up to its parent and grandparent, weighs siblings, climbs to a
+parent that scores higher, and cuts sidebars and share bars out, so it needs
+the whole page as a tree it can query and change. `tree.rs` is that tree,
+`smoothie/` the Readability that works on it, and `article.rs` the walk over
+what is left, as `html.rs` is the walk over a comment.
 
 - A tree, as an article's blocks need: `src/blob/article/tree.rs`, an arena
   built by mdream's scan, every attribute kept, with the closes HTML implies
