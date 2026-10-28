@@ -17,7 +17,7 @@ history still resolve. Highlights:
 | [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
-| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its title, centred, then its words, the lead picture the caller's; dom_smoothie's port of Readability.js run on a tree of our own |
+| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its title, centred, then its words, the lead picture the caller's; dom_smoothie's port of Readability.js run on a tree of our own |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -338,7 +338,7 @@ as the scan finds it and writes it at once, holding only the tags still open.
   selectors, Tailwind, URL and plugin code are not here
 - `scan_tag` ([6158cdd]) hands over `Attrs::Only(names)`, at most eight, as the walk reads
   `href` and `class`, or `Attrs::All`, every attribute, as the
-  [article tree](#articles-into-the-blob-6158cdd-ce02d6f) reads them. The mode is chosen once
+  [article tree](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86) reads them. The mode is chosen once
   and each has its own loop, so the walk's is the loop it was: within noise on
   `bench_all`'s HTML corpora, against the scan before it
 - Built as htmlrak, a crate of its own mirroring this writer, and moved in
@@ -375,7 +375,7 @@ with greentext keep every word, and their quotes cover exactly the quoted
 lines; markdown cannot say those, since its lazy continuation takes the line
 after a quote into it. About 2 us a comment.
 
-### Articles into the blob ([6158cdd], [ce02d6f])
+### Articles into the blob ([6158cdd], [ce02d6f], [5e1164e], [36dc294], [8184072], [a601f86])
 
 `comrak::blob::render_article_blob(html, base_url) -> Option<Vec<u8>>` reads a
 whole web page, picks its article out of it as Readability does, and writes it
@@ -420,16 +420,31 @@ what is left, as `html.rs` is the walk over a comment.
   logic as it was, its byte check before each pattern search kept.
   `smoothie.rs` reads the title (`og:title` and the like, else `<title>` with
   the site's name cut off), which the scoring uses to drop a heading that
-  repeats it, takes out the element that reads as a byline, whether or not an
-  author `<meta>` names one (as Readability.js does; dom_smoothie looked only
-  without one), and reads the lead picture (`og:image`). A share element is
-  told by a hyphen as well as a space or underscore (`share-toggle`), as
-  Readability.js's `\b` tells it and dom_smoothie's split did not. Ours alone,
-  as the title stands above the words: date lines go once the article is
-  picked, a short element its class or id names a date or holding a `<time>`
-  with a word or two about it ("Updated:"), with a parent it leaves a word or
-  two in, an eyebrow's category; a `<time>` in a sentence stays. JSON-LD,
-  the readability check and dom_smoothie's text modes are left behind
+  repeats it, and the lead picture (`og:image`). The rest of JSON-LD, the
+  readability check and dom_smoothie's text modes are left behind
+- Departures from dom_smoothie 0.19.0, each with the commit that made it.
+  `grab.rs` and `prep.rs`, the scoring and the clearing, are as imported
+  - Readability.js's, where dom_smoothie differed from it:
+    - The element that reads as a byline is taken out whether or not an
+      author `<meta>` names one; dom_smoothie looked only without one
+      (`smoothie.rs`, [5e1164e])
+    - A share element is told by a hyphen as well as a space or underscore
+      (`share-toggle`), as Readability.js's `\b` tells it and dom_smoothie's
+      split did not (`helpers.rs`, [5e1164e])
+  - Ours alone, as the article's title and authors stand above its words:
+    - The byline element is never read, only taken out, and the author
+      `<meta>` keys are gone (`smoothie.rs`, `glob.rs`, [5e1164e])
+    - Date lines go once the article is picked: a block between the title and
+      the body's first sentence, named for a date by its class or id, or
+      holding a `<time>` or an element so named with a label or two about it,
+      with a parent it leaves a word or two in, an eyebrow's category. Never
+      an inline element, so a date in a sentence is the sentence's
+      (`smoothie.rs`, its words `DATE_WORDS` in `glob.rs`, [5e1164e],
+      [8184072])
+    - The title is handed to the walk, which writes it first, centred
+      (`smoothie.rs`, [36dc294])
+    - The authors are read from the page's JSON-LD alone, `ld_authors`, a
+      reader of its own with no JSON parser (`smoothie.rs`, [a601f86])
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the
@@ -818,7 +833,8 @@ src/
 │   ├── article.rs             ← the walk over a page's article + render_article_blob
 │   ├── article/
 │   │   ├── tree.rs            ← the page as a tree: mdream's scan, the closes HTML implies
-│   │   ├── smoothie.rs        ← where the dom_smoothie files come from; title, byline, lead picture
+│   │   ├── smoothie.rs        ← where the dom_smoothie files come from; title, lead picture, JSON-LD
+│   │   │                        authors, and our passes: the byline and date lines out
 │   │   └── smoothie/          ← grab.rs, prep.rs, helpers.rs, glob.rs, LICENSE (MIT),
 │   │                            LICENSE-readability (Apache-2.0), NOTICE
 │   ├── site.rs                ← what each site knows about itself: html, page, Url
@@ -1132,3 +1148,7 @@ Pixel 9 Pro XL).
 [d0c39d5]: https://github.com/laurencedawson/comrak/commit/d0c39d5
 [6158cdd]: https://github.com/laurencedawson/comrak/commit/6158cdd
 [ce02d6f]: https://github.com/laurencedawson/comrak/commit/ce02d6f
+[5e1164e]: https://github.com/laurencedawson/comrak/commit/5e1164e
+[36dc294]: https://github.com/laurencedawson/comrak/commit/36dc294
+[8184072]: https://github.com/laurencedawson/comrak/commit/8184072
+[a601f86]: https://github.com/laurencedawson/comrak/commit/a601f86
