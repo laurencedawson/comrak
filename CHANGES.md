@@ -17,6 +17,7 @@ history still resolve. Highlights:
 | [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
+| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: title, byline, lead picture and words; dom_smoothie's port of Readability.js run on a tree of our own |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -296,6 +297,11 @@ an enhancement to the writer reaches both.
   text and attribute rules; `scan.rs` cut to a whole string, its chunk carries,
   discarded-byte scans and attribute budgets left behind. Its markdown writer,
   selectors, Tailwind, URL and plugin code are not here
+- `scan_tag` ([6158cdd]) hands over `Attrs::Only(names)`, at most eight, as the walk reads
+  `href` and `class`, or `Attrs::All`, every attribute, as the
+  [article tree](#articles-into-the-blob-6158cdd-ce02d6f) reads them. The mode is chosen once
+  and each has its own loop, so the walk's is the loop it was: within noise on
+  `bench_all`'s HTML corpora, against the scan before it
 - Built as htmlrak, a crate of its own mirroring this writer, and moved in
   whole: blobs byte-identical to htmlrak over 1,551 inputs, 1,528 of them
   fetched Hacker News comments
@@ -329,6 +335,48 @@ escaped a `_` inside a typed address, leaving a backslash in the link. The 768
 with greentext keep every word, and their quotes cover exactly the quoted
 lines; markdown cannot say those, since its lazy continuation takes the line
 after a quote into it. About 2 us a comment.
+
+### Articles into the blob ([6158cdd], [ce02d6f])
+
+`comrak::blob::render_article_blob(html, base_url) -> Option<Vec<u8>>` reads a
+whole web page, picks its article out of it as Readability does, and writes it
+into the same blob through the one `BlobWriter`: the page's title as a first
+level heading, its byline in italics, the picture it leads with, then the
+article, its links and pictures resolved against `base_url`. `None` where
+nothing on the page reads as an article. syncdown's `preprocessArticle`.
+
+- A tree, as an article's blocks need: `src/blob/article/tree.rs`, an arena
+  built by mdream's scan, every attribute kept, with the closes HTML implies
+  (a `<p>` at the next block, an `<li>` at the next item, rows and cells,
+  headings, links) and no more of the standard's repairs. `<script>`, `<style>`
+  and `<template>` are no part of the page. Each element's attributes sit in
+  one pool per tree, links are `u32`s, and each text node's share of the
+  whitespace-collapsed character count is worked out once, as it is read
+- Picking the article: `src/blob/article/smoothie/`, from dom_smoothie 0.19.0
+  (MIT), Mykola Humanov's port of Mozilla's Readability.js (Apache-2.0, its
+  license and NOTICE beside it). `grab.rs`, `prep.rs`, `helpers.rs` and
+  `glob.rs` are dom_smoothie's, moved from dom_query onto the tree with their
+  logic as it was, its byte check before each pattern search kept.
+  `smoothie.rs` reads the title (`og:title` and the like, else `<title>` with
+  the site's name cut off), the byline (an author `<meta>`, else the element
+  that reads as one, taken out of the words) and the lead picture
+  (`og:image`). JSON-LD, the readability check and dom_smoothie's text modes
+  are left behind
+- The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
+  numbered from their `start`, quotes, `<pre>` as written, inline code,
+  rules, emphasis, super- and subscript, links and pictures (`src`, or the
+  widest of a `srcset`; a link around a picture is the picture). The lead
+  picture is left out where the article shows it already. A link to the
+  article's own host takes no domain after it; a `#` or `javascript:` link is
+  words. Table rows read across, `a | b`, until tables are `TABLE` spans
+- Checked against dom_smoothie itself, on 27 real pages: Wikipedia, MDN, The
+  Verge, NPR, Substack, GitHub, blogs, a paywall and two bot walls. The same
+  words on every page; the titles and bylines too, but where dom_smoothie read
+  them from JSON-LD. At most 4.2 ms a page on an M-series Mac, the blob
+  written too, 2.7 times dom_smoothie's speed over the 27, and about 150 KB of
+  an arm64 build against dom_smoothie's 1 MB with html5ever under it
+- `tests/blob_article.rs` ([ce02d6f]): extraction, the tree, every block and
+  inline, links, pictures and the lead picture
 
 ### Standalone use (without the fork's parse-side changes)
 
@@ -626,6 +674,12 @@ src/
 ├── blob.rs                    ← binary blob renderer: BlobWriter + visit + render_blob
 ├── blob/
 │   ├── html.rs                ← the walk over a site's HTML + render_html_blob
+│   ├── article.rs             ← the walk over a page's article + render_article_blob
+│   ├── article/
+│   │   ├── tree.rs            ← the page as a tree: mdream's scan, the closes HTML implies
+│   │   ├── smoothie.rs        ← where the dom_smoothie files come from; title, byline, lead picture
+│   │   └── smoothie/          ← grab.rs, prep.rs, helpers.rs, glob.rs, LICENSE (MIT),
+│   │                            LICENSE-readability (Apache-2.0), NOTICE
 │   ├── site.rs                ← what each site knows about itself: html, page, Url
 │   ├── site/                  ← chan.rs, hacker_news.rs, lemmy.rs, lobsters.rs, from each site's docs
 │   ├── sites.rs, span_types.rs ← the site and span type ids, generated by syncdown
@@ -643,6 +697,7 @@ src/
 └── tests/
     ├── blob.rs                ← blob renderer tests (format/inline/links/images/block/
     │                            footnotes/edge/production sub-modules)
+    ├── blob_article.rs        ← a page's article: extraction, the tree, the walk
     ├── blob_html.rs           ← the walk over HTML, and its parity with markdown
     ├── blob_read.rs           ← a blob read back, the one reader every blob test asserts on
     ├── image_url.rs           ← is_image_url tests
@@ -934,3 +989,5 @@ Pixel 9 Pro XL).
 [e277031]: https://github.com/laurencedawson/comrak/commit/e277031
 [94bb2f6]: https://github.com/laurencedawson/comrak/commit/94bb2f6
 [d0c39d5]: https://github.com/laurencedawson/comrak/commit/d0c39d5
+[6158cdd]: https://github.com/laurencedawson/comrak/commit/6158cdd
+[ce02d6f]: https://github.com/laurencedawson/comrak/commit/ce02d6f
