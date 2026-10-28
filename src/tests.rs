@@ -12,6 +12,7 @@ mod alerts;
 mod attributes;
 mod autolink;
 mod blob;
+mod blob_article;
 mod blob_html;
 mod blob_read;
 mod block_directive;
