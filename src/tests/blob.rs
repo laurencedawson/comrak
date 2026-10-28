@@ -1060,8 +1060,9 @@ mod block {
                 "missing {expected} for {md}"
             );
         }
+        // A heading is its size alone: bold is the writer's, as in any other line
         let h1 = render_test("# H1");
-        assert!(h1.span_iter().any(|s| s.typ == BOLD));
+        assert!(!h1.span_iter().any(|s| s.typ == BOLD));
     }
 
     #[test]

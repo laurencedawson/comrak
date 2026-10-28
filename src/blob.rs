@@ -607,7 +607,7 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
 
         Heading(h) => {
             let heading = HEADINGS[(h.level as usize).saturating_sub(1).min(5)];
-            hold(open, Kind::Plain, start, [heading, BOLD], 2);
+            hold(open, Kind::Plain, start, [heading, -1], 2);
         }
 
         CodeBlock(c) => {

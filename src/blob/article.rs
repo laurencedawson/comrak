@@ -141,7 +141,7 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.end(true);
                 let level = (name.as_bytes()[1] - b'1') as usize;
-                Some(Close::Block(self.out.pos(), [HEADINGS[level], BOLD]))
+                Some(Close::Block(self.out.pos(), [HEADINGS[level], -1]))
             }
             "tr" => {
                 self.end(false);

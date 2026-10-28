@@ -224,7 +224,7 @@ fn headings() {
     let b = within("<h2>Second</h2><h3>Third</h3>");
     let [h2, h3] = [HEADINGS[1], HEADINGS[2]].map(|t| of(&b, t)[0].clone());
     assert_eq!((words(&b, &h2), words(&b, &h3)), ("Second", "Third"));
-    assert_eq!(of(&b, BOLD).len(), 2);
+    assert!(of(&b, BOLD).is_empty());
     assert!(b.text.contains("\n\nSecond\n\nThird\n\n"));
 }
 
