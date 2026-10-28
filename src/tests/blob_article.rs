@@ -136,6 +136,101 @@ fn opens_on_its_title_centred() {
     assert_eq!(centred, title);
 }
 
+/// A page with JSON-LD in its head naming `author`, and `body` after the title.
+fn ld_page(ld: &str, body: &str) -> String {
+    format!(
+        "<!DOCTYPE html><html><head><title>A title long enough to keep</title>\
+         <script type=\"application/ld+json\">{ld}</script></head><body>{body}</body></html>"
+    )
+}
+
+/// The authors the page's JSON-LD names stand on the line under the title, centred at the body's
+/// size, however the JSON writes them: a person, several, or a bare string.
+#[test]
+fn names_the_author_under_the_title() {
+    let b = whole(&ld_page(
+        r#"{"@context":"https://schema.org","@type":"NewsArticle","headline":"x","author":{"@type":"Person","name":"Yasemin Saplakoglu"},"publisher":{"@type":"Organization","name":"Quanta"}}"#,
+        &format!("<article><p>{PROSE}</p></article>"),
+    ));
+    assert_eq!(
+        b.text,
+        format!("A title long enough to keep\nYasemin Saplakoglu\n\n{PROSE}")
+    );
+    let centred: Vec<_> = of(&b, CENTERED).iter().map(|s| words(&b, s)).collect();
+    assert_eq!(
+        centred,
+        ["A title long enough to keep", "Yasemin Saplakoglu"]
+    );
+    let headings: Vec<_> = of(&b, HEADINGS[0]).iter().map(|s| words(&b, s)).collect();
+    assert_eq!(headings, ["A title long enough to keep"]);
+}
+
+#[test]
+fn names_every_author() {
+    let b = whole(&ld_page(
+        r#"{"@type":"NewsArticle","author":[{"@type":"Person","name":"Dhruv Mehrotra","url":"https://x/a"},{"@type":"Person","name":"Maddy Varner"},{"@type":"Person","name":"Dell Cameron"}]}"#,
+        &format!("<p>{PROSE}</p>"),
+    ));
+    assert!(b.text.starts_with(
+        "A title long enough to keep\nDhruv Mehrotra, Maddy Varner, Dell Cameron\n\n"
+    ));
+}
+
+#[test]
+fn names_an_author_written_as_a_string_or_in_a_graph() {
+    let b = whole(&ld_page(
+        r#"{"@type":"BlogPosting","author":"Paul Walsh"}"#,
+        &format!("<p>{PROSE}</p>"),
+    ));
+    assert!(
+        b.text
+            .starts_with("A title long enough to keep\nPaul Walsh\n\n")
+    );
+    let b = whole(&ld_page(
+        r##"{"@graph":[{"@type":"WebPage","name":"page"},{"@type":"Article","author":{"@id":"#p","name":"Liviu Stirb"},"about":{"name":"not an author"}},{"@type":"Person","@id":"#p","name":"Liviu Stirb"}]}"##,
+        &format!("<p>{PROSE}</p>"),
+    ));
+    assert!(
+        b.text
+            .starts_with("A title long enough to keep\nLiviu Stirb\n\n")
+    );
+}
+
+/// Escapes are read, and `"author"` inside a string is a word, not a key.
+#[test]
+fn reads_the_authors_name_through_its_escapes() {
+    let b = whole(&ld_page(
+        r#"{"@type":"Article","description":"the \"author\" of it all","author":{"name":"Simson Garfinkel ’87, PhD ’05 \"Si\""}}"#,
+        &format!("<p>{PROSE}</p>"),
+    ));
+    // The blob writes typographic quotes as typed, so the curly apostrophes land straight
+    assert!(
+        b.text
+            .starts_with("A title long enough to keep\nSimson Garfinkel '87, PhD '05 \"Si\"\n\n"),
+        "{:?}",
+        b.text.lines().nth(1)
+    );
+}
+
+/// The page's own byline element goes whatever the JSON-LD says, and a page with no JSON-LD author
+/// opens on its title alone.
+#[test]
+fn the_pages_byline_element_goes_and_names_no_one() {
+    let b = whole(&ld_page(
+        r#"{"@type":"Article","author":{"name":"Ada Lovelace"}}"#,
+        &format!("<div class=\"byline\">By Ada Lovelace · 4 min read</div><p>{PROSE}</p>"),
+    ));
+    assert_eq!(
+        b.text,
+        format!("A title long enough to keep\nAda Lovelace\n\n{PROSE}")
+    );
+    let b = whole(&page(
+        "A title long enough to keep",
+        &format!("<div class=\"byline\">By Ada Lovelace</div><p>{PROSE}</p>"),
+    ));
+    assert_eq!(b.text, format!("A title long enough to keep\n\n{PROSE}"));
+}
+
 #[test]
 fn takes_the_byline_out_of_the_words() {
     let html = page(

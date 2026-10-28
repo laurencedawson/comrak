@@ -11,14 +11,16 @@ use super::*;
 use tree::{Id, Tree};
 
 /// The article on the page `html`, at `base_url`, which its relative links and pictures resolve
-/// against: its title, a first level heading, centred, then its words. The picture it leads with is
-/// the caller's to show, so where the article shows that picture itself it is left out, and its
-/// byline is no part of it. None where nothing on the page reads as one.
+/// against: its title, a first level heading, centred, its authors as the page's JSON-LD names
+/// them on the line under it, centred at the body's size, then its words. The picture it leads
+/// with is the caller's to show, so where the article shows that picture itself it is left out,
+/// and the page's own byline element is no part of it. None where nothing on the page reads as one.
 pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     let article = smoothie::extract(html)?;
     let title = collapse(article.title.trim());
+    let byline = article.byline.as_deref().unwrap_or_default();
     let mut out = BlobWriter::new(
-        title.len() + 2 + article.tree.char_count(article.root),
+        title.len() + byline.len() + 3 + article.tree.char_count(article.root),
         false,
         sites::READER,
     );
@@ -27,6 +29,12 @@ pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
         out.write_prose(&title);
         out.span(HEADINGS[0], start);
         out.span(CENTERED, start);
+        if !byline.is_empty() {
+            out.nl(1);
+            let start = out.pos();
+            out.write_prose(byline);
+            out.span(CENTERED, start);
+        }
         out.nl(2);
     }
     Walk {

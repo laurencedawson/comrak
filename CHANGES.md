@@ -383,7 +383,14 @@ into the same blob through the one `BlobWriter`: the page's title first, a
 `HEADING_1` with a `CENTERED` span over the same words, then the article's
 words, its links and pictures resolved against `base_url`. The picture the page
 leads with is the caller's to show, as a header above the body; the article's
-own copy of that picture is left out, and so is its byline. `None` where
+own copy of that picture is left out, and so is its byline element. The
+authors stand on the line under the title, centred at the body's size, as the
+page's JSON-LD names them (`smoothie::ld_authors`): the `name` of each `author`,
+read off the `ld+json` scripts without a JSON parser, keys found as text and
+values read past. On 25 Hacker News front-page articles (2026-10) JSON-LD named
+the author on every page that had one but two personal blogs, cleanly, several
+authors as a list; the page's `<meta>` keys named four, and the byline element
+read "By", a date, or an empty list's "No items found." `None` where
 nothing on the page reads as an article. syncdown's `preprocessArticle`.
 
 ```
