@@ -505,7 +505,8 @@ Byte offsets, in order:
 - `8..8 + text_len` — text bytes (UTF-8)
 - next — zero padding to align to a 4-byte boundary (0..3 bytes)
 - next — `span_count × 16` bytes of packed span records
-- next: URL bytes referenced by `LINK`/`APP_LINK`/`IMAGE` spans (rest of blob)
+- next: URL bytes referenced by `LINK`/`APP_LINK` spans, and the payloads `IMAGE` and `TABLE`
+  spans address (rest of blob)
 
 ### Span record (16 bytes each)
 
@@ -526,14 +527,81 @@ Each span is four packed i32 fields, stored in a contiguous array sorted by
 
 The `data` field is a 32-bit slot whose meaning depends on `type`:
 
-**URL-carrying spans** (`LINK`, `APP_LINK`, `IMAGE`): offset + length into the trailing
-`url_data` section:
+**Links** (`LINK`, `APP_LINK`): offset + length into the trailing `url_data` section, the url
+capped at 4095 bytes:
 
 ```
 bit:  31                                                         12 11              0
      ┌─────────────────────────────────────────────────────────────┬──────────────────┐
      │              offset  (20 bits, up to 1 MiB)                 │ length (12 bits) │
      └─────────────────────────────────────────────────────────────┴──────────────────┘
+```
+
+**Pictures** (`IMAGE`): a byte offset into `url_data`, as a table's is, where the picture's
+payload sits: a 9-byte header, then its url and alt text.
+
+```
+bit:  31                                                                            0
+     ┌──────────────────────────────────────────────────────────────────────────────┐
+     │                       offset into url_data (32 bits)                         │
+     └──────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+     ┌───────┬─────────┬─────────┬─────────┬─────────┬──────────────┬───────────┐
+     │ flags │ width   │ height  │ url len │ alt len │ url bytes    │ alt bytes │
+     │ u8    │ u16     │ u16     │ u16     │ u16     │ (url len)    │ (alt len) │
+     └───────┴─────────┴─────────┴─────────┴─────────┴──────────────┴───────────┘
+      +0      +1        +3        +5        +7        +9             +9 + url len
+```
+
+- Little-endian and unaligned, read a byte at a time; both lengths are UTF-8 bytes
+- `width` and `height` are the size the source states, whatever its units, as only their ratio
+  is read; 0 is not stated, and the view sizes the slot when the picture arrives
+- `alt` is the picture's alt text, empty where it has none
+- `flags`, all 0 for now:
+
+```
+bit:   7   6   5   4   3      2              1                   0
+     ┌───┬───┬───┬───┬───┬──────┬────────────────────┬────────────┐
+     │ 0 │ 0 │ 0 │ 0 │ 0 │ HERO │ FULL_WIDTH_IF_WIDE │ FULL_WIDTH │
+     └───┴───┴───┴───┴───┴──────┴────────────────────┴────────────┘
+```
+
+For example, `<img src="https://x.com/a.jpg" width="1200" height="800" alt="A cat">`:
+
+```
+ 00 │ B0 04 │ 20 03 │ 13 00 │ 05 00 │ https://x.com/a.jpg │ A cat
+ fl   1200    800     19      5       19 bytes              5 bytes
+```
+
+**Tables** (`TABLE`): a byte offset into `url_data` plus one, 0 kept for no table, where the
+table's cells sit: a `(rows << 16) | cols` u32, then `rows × cols` cells in row-major order, the
+header row first, each a u16 length and that many bytes of the cell's inline markdown for the
+app to parse again. A row short of cells is padded with empty ones (length 0).
+
+```
+bit:  31                                                                            0
+     ┌──────────────────────────────────────────────────────────────────────────────┐
+     │                    offset into url_data + 1 (32 bits)                        │
+     └──────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+     ┌─────────────────────┬─────────┬────────────┬─────────┬────────────┬─────┐
+     │ rows << 16 | cols   │ len u16 │ cell bytes │ len u16 │ cell bytes │ ... │
+     │ u32                 │         │ (len)      │         │ (len)      │     │
+     └─────────────────────┴─────────┴────────────┴─────────┴────────────┴─────┘
+      +0                    +4        +6
+```
+
+- Little-endian; rows, columns and a cell's length are each capped at 65535, a cell cut back to
+  a character boundary
+- Self-delimiting, so its size is read by walking it, never stored
+
+For example, `| a | b |` over one row `| 1 | **2** |`:
+
+```
+ 02 00 │ 02 00 │ 01 00 │ a │ 01 00 │ b │ 01 00 │ 1 │ 05 00 │ **2**
+ cols    rows    len     a   len     b   len     1   len     5 bytes
 ```
 
 **List items** (`LIST_ITEM`) — nesting indent + list number:
