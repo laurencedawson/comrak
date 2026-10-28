@@ -227,8 +227,13 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 if let Some(src) = self.picture(n) {
                     self.end(true);
                     let url = relative(src, self.base_url);
-                    self.out
-                        .emit_image(&resolve_url(url.as_deref().unwrap_or(src)));
+                    let (width, height) = size(t, n);
+                    self.out.emit_image(
+                        &resolve_url(url.as_deref().unwrap_or(src)),
+                        width,
+                        height,
+                        t.attr(n, "alt").unwrap_or(""),
+                    );
                     self.block_start = true;
                 }
                 None
@@ -387,6 +392,28 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
             .filter(|s| !s.is_empty() && !s.starts_with("data:"))
             .or_else(|| widest(t.attr(n, "srcset")?))
     }
+}
+
+/// A side under this many pixels is a lazy page's placeholder, not the picture's.
+const MIN_STATED_SIDE: u16 = 16;
+
+/// The size an `<img>` states in its `width` and `height`, else Blogger's `data-original-width`
+/// and `data-original-height` beside a display width alone, as pixels with or without `px`, a
+/// fraction rounded; 0 by 0 where it states none: a share of the page, `auto` or another unit says
+/// nothing of the picture's, a side under `MIN_STATED_SIDE` is a placeholder's, and one side alone
+/// has no shape.
+fn size(t: &Tree, n: Id) -> (u16, u16) {
+    let side = |k| {
+        let v = t.attr(n, k)?.trim();
+        let v: f32 = v.strip_suffix("px").unwrap_or(v).parse().ok()?;
+        (MIN_STATED_SIDE as f32..=u16::MAX as f32)
+            .contains(&v)
+            .then(|| v.round() as u16)
+    };
+    let pair = |w, h| side(w).zip(side(h));
+    pair("width", "height")
+        .or_else(|| pair("data-original-width", "data-original-height"))
+        .unwrap_or((0, 0))
 }
 
 /// The widest picture a `srcset` offers, by its `w` or `x` descriptor; the first where none has one.

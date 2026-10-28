@@ -371,7 +371,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             return None;
         }
         let gt = lt + memchr::memchr(b'>', &bytes[lt..])?;
-        self.out.emit_image(&url);
+        self.out.emit_image(&url, 0, 0, "");
         Some(gt + 1)
     }
 
@@ -501,7 +501,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             let url = resolve_url(&url);
             if (words.starts_with("http://") || words.starts_with("https://")) && is_image_url(&url)
             {
-                self.out.emit_image(&url);
+                self.out.emit_image(&url, 0, 0, "");
             } else {
                 let (start, text_start) = (self.out.pos(), self.out.blob.len());
                 self.out.write_prose(words);

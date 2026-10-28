@@ -47,6 +47,17 @@ type AstNode<'a> = Node<'a, RefCell<Ast<'a>>>;
 
 const HEADER_SIZE: usize = 8;
 const MAX_URL_LEN: usize = 4095;
+/// A picture's alt text is cut at this many bytes: words to read out, not a caption.
+const MAX_ALT_LEN: usize = 1024;
+
+/// `s` cut to at most `max` bytes, backed off to a char boundary.
+fn cut(s: &str, max: usize) -> &str {
+    let mut len = s.len().min(max);
+    while !s.is_char_boundary(len) {
+        len -= 1;
+    }
+    &s[..len]
+}
 
 /// Count UTF-16 code units from a UTF-8 string.
 #[inline]
@@ -336,7 +347,9 @@ impl BlobWriter {
             .extend_from_slice(&[start as i32, self.len as i32, TABLE, (offset as i32) + 1]);
     }
 
-    fn emit_image(&mut self, url: &ResolvedUrl) {
+    /// A picture on a line of its own: `width` and `height` the size its source states, 0 by 0
+    /// where none, and `alt` its alt text, empty where none.
+    fn emit_image(&mut self, url: &ResolvedUrl, width: u16, height: u16, alt: &str) {
         if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
             // existing trailing `\n` (past any trailing spaces/tabs) count.
@@ -350,8 +363,29 @@ impl BlobWriter {
         }
         let start = self.pos();
         self.write_text("\u{0001}");
-        self.span_url(IMAGE, start, url);
+        self.span_picture(start, url, width, height, alt);
         self.nl(2);
+    }
+
+    /// A picture's span over the words written since `start`, its data the offset in `url_data`
+    /// of its payload: a flags byte, the width, the height, the url's length and the alt's, each a
+    /// u16, then the url and the alt. Both are cut on a char boundary, the url at 65535 bytes and
+    /// the alt at `MAX_ALT_LEN`, its whitespace one space each.
+    fn span_picture(&mut self, start: usize, url: &str, width: u16, height: u16, alt: &str) {
+        if start >= self.len {
+            return;
+        }
+        let alt = html::collapse(alt.trim());
+        let (url, alt) = (cut(url, u16::MAX as usize), cut(&alt, MAX_ALT_LEN));
+        let offset = self.url_data.len();
+        self.url_data.push(0);
+        for n in [width, height, url.len() as u16, alt.len() as u16] {
+            self.url_data.extend_from_slice(&n.to_le_bytes());
+        }
+        self.url_data.extend_from_slice(url.as_bytes());
+        self.url_data.extend_from_slice(alt.as_bytes());
+        self.spans
+            .extend_from_slice(&[start as i32, self.len as i32, IMAGE, offset as i32]);
     }
 
     /// A link's spans over the words written since `start`: an `APP_LINK` where the url is one of
@@ -695,7 +729,8 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
                 // link instead: the alt text, or the URL itself when there is no alt.
                 hold(open, Kind::Link(out.blob.len(), true), start, NO_SPANS, 0);
             } else {
-                out.emit_image(&url);
+                // Markdown states no size; the alt is the picture's words, as text
+                out.emit_image(&url, 0, 0, &node.collect_text());
             }
         }
 
@@ -727,7 +762,7 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
                 .then(|| resolve_url(&l.url))
                 .filter(|u| is_image_url(u))
             {
-                out.emit_image(&url);
+                out.emit_image(&url, 0, 0, "");
             } else {
                 hold(open, Kind::Link(out.blob.len(), false), start, NO_SPANS, 0);
             }

@@ -809,6 +809,64 @@ mod images {
         assert_eq!(result.text(), "\u{0001}");
     }
 
+    /// A picture's payload is laid out as CHANGES.md sets it out: flags, width, height, the url's
+    /// length and the alt's, then the url and the alt, its span's data the payload's offset.
+    #[test]
+    fn picture_payload_is_as_documented() {
+        let result = render_test("![A cat](https://x.com/a.jpg)");
+        let mut expected = vec![0, 0, 0, 0, 0, 19, 0, 5, 0];
+        expected.extend_from_slice(b"https://x.com/a.jpg");
+        expected.extend_from_slice(b"A cat");
+        assert_eq!(result.url_data, expected);
+    }
+
+    /// A markdown picture's alt is its words, emphasis and all, as text; it states no size.
+    #[test]
+    fn markdown_image_alt_is_its_words() {
+        let result = render_test("![a *tabby* cat](https://example.com/img.png)");
+        let span = result.span_iter().find(|s| s.typ == IMAGE).unwrap();
+        assert_eq!(
+            span.picture,
+            Some(crate::tests::blob_read::Picture {
+                alt: "a tabby cat".into(),
+                ..Default::default()
+            })
+        );
+    }
+
+    /// A picture with no alt, written or typed as an address, has an empty one.
+    #[test]
+    fn image_without_alt_has_an_empty_one() {
+        for md in [
+            "![](https://example.com/img.png)",
+            "https://i.imgur.com/abc.jpg",
+        ] {
+            let result = render_test(md);
+            let span = result.span_iter().find(|s| s.typ == IMAGE).unwrap();
+            assert_eq!(span.picture, Some(Default::default()), "{md:?}");
+        }
+    }
+
+    /// A picture's url has a u16 length, so it is kept whole past a link's 4095 bytes.
+    #[test]
+    fn image_url_past_a_links_cap_is_whole() {
+        let url = format!("https://example.com/{}.png", "a".repeat(5000));
+        let result = render_test(&format!("![]({url})"));
+        let span = result.span_iter().find(|s| s.typ == IMAGE).unwrap();
+        assert_eq!(span.url.as_deref(), Some(url.as_str()));
+    }
+
+    /// Past 65535 bytes a picture's url is cut, on a char boundary, as a link's is at its cap.
+    #[test]
+    fn image_url_cut_at_its_cap_on_a_char_boundary() {
+        let md = format!("![](https://example.com/{}.png)", "€".repeat(25_000));
+        let result = render_test(&md);
+        let span = result.span_iter().find(|s| s.typ == IMAGE).unwrap();
+        let url = span.url.as_deref().unwrap();
+        assert!(url.len() <= 65535 && url.len() > 65530, "{}", url.len());
+        assert!(url.ends_with('€'));
+    }
+
     /// Bare autolink to an image URL becomes IMAGE, not LINK.
     #[test]
     fn bare_image_url_to_image() {

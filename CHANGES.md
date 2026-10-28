@@ -449,7 +449,12 @@ what is left, as `html.rs` is the walk over a comment.
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the
-  widest of a `srcset`; a link around a picture is the picture). The lead
+  widest of a `srcset`; a link around a picture is the picture). A picture's
+  payload carries its `alt` and the size its `width` and `height` state, else
+  Blogger's `data-original-width` and `-height` beside a display width alone,
+  in pixels with or without `px`, a fraction rounded; a side under 16 is a lazy
+  page's placeholder, and a share of the page, `auto`, another unit or one side
+  alone states none. The lead
   picture is the caller's header, so where the article shows it too, its first
   `<img>` offering that address at any size, the walk leaves it out, with the
   `<figure>` and caption it stands alone in. A link to the

@@ -28,7 +28,7 @@ use crate::blob::{
     LEMMY_SPOILER_TITLE, LINK, LINK_SIZE, QUOTE, STRIKETHROUGH, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
-use crate::tests::blob_read::{Blob, Span, read};
+use crate::tests::blob_read::{Blob, Picture, Span, read};
 
 /// The thread page 4chan's comments here sit on, which their relative links resolve against.
 const THREAD: &str = "https://boards.4chan.org/g/thread/100";
@@ -54,6 +54,7 @@ fn span(start: i32, end: i32, t: i32) -> Span {
         typ: t,
         data: 0,
         url: None,
+        picture: None,
     }
 }
 
@@ -64,9 +65,11 @@ fn quote(start: i32, end: i32, depth: i32) -> Span {
     }
 }
 
+/// A link's or picture's span at `url`; a picture states no size and has no alt, as a comment's do.
 fn url(start: i32, end: i32, t: i32, url: &str) -> Span {
     Span {
         url: Some(url.to_string()),
+        picture: (t == IMAGE).then(Picture::default),
         ..span(start, end, t)
     }
 }

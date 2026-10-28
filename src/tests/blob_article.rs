@@ -13,7 +13,7 @@ use crate::blob::{
     BOLD, CENTERED, CODE, CODE_BLOCK, HEADINGS, HRULE, IMAGE, ITALIC, LINK, LINK_SIZE, LIST_ITEM,
     QUOTE, SUPERSCRIPT, render_article_blob,
 };
-use crate::tests::blob_read::{Blob, Span, read};
+use crate::tests::blob_read::{Blob, Picture, Span, read};
 
 const PAGE: &str = "https://example.com/blog/post";
 
@@ -565,6 +565,79 @@ fn a_picture_by_its_src() {
         of(&b, IMAGE)[0].url.as_deref(),
         Some("https://example.com/img/a.jpg")
     );
+}
+
+/// The picture's payload: the size its `width` and `height` state, and its alt.
+fn picture(img: &str) -> Picture {
+    of(&within(img), IMAGE)[0].picture.clone().unwrap()
+}
+
+#[test]
+fn a_picture_states_its_size_and_alt() {
+    assert_eq!(
+        picture("<img src=\"/a.jpg\" width=\"1200\" height=\"800\" alt=\"A cat\">"),
+        Picture {
+            flags: 0,
+            width: 1200,
+            height: 800,
+            alt: "A cat".into(),
+        }
+    );
+}
+
+#[test]
+fn a_size_in_pixels_is_stated() {
+    let p = picture("<img src=\"/a.jpg\" width=\" 1200px\" height=\"800px \">");
+    assert_eq!((p.width, p.height), (1200, 800));
+}
+
+/// Only pixels state a size: a share of the page, `auto` or an `em` says nothing of the picture's.
+#[test]
+fn a_size_in_other_units_is_not_stated() {
+    for (w, h) in [("100%", "auto"), ("50em", "30em")] {
+        let p = picture(&format!(
+            "<img src=\"/a.jpg\" width=\"{w}\" height=\"{h}\">"
+        ));
+        assert_eq!((p.width, p.height), (0, 0), "{w} x {h}");
+    }
+}
+
+/// A fraction of a pixel is rounded, as a page scaling its pictures writes them.
+#[test]
+fn a_size_in_fractions_of_a_pixel_is_rounded() {
+    let p = picture("<img src=\"/a.jpg\" width=\"725\" height=\"543.75\">");
+    assert_eq!((p.width, p.height), (725, 544));
+}
+
+/// Blogger states the picture's own size in `data-original-width` and `data-original-height`,
+/// beside the width it is shown at alone.
+#[test]
+fn a_bloggers_original_size_is_stated() {
+    let p = picture(
+        "<img data-original-height=\"1536\" data-original-width=\"2048\" width=\"280\" src=\"/a.jpg\">",
+    );
+    assert_eq!((p.width, p.height), (2048, 1536));
+}
+
+/// A lazy page's placeholder states a pixel or two, not the picture's size.
+#[test]
+fn a_placeholders_size_is_not_stated() {
+    let p = picture("<img src=\"/a.jpg\" width=\"1\" height=\"1\">");
+    assert_eq!((p.width, p.height), (0, 0));
+    let p = picture("<img src=\"/a.jpg\" width=\"1200\" height=\"15\">");
+    assert_eq!((p.width, p.height), (0, 0));
+}
+
+/// One side alone gives no shape, so neither is stated.
+#[test]
+fn one_side_alone_states_no_size() {
+    let p = picture("<img src=\"/a.jpg\" width=\"1200\">");
+    assert_eq!((p.width, p.height), (0, 0));
+}
+
+#[test]
+fn a_picture_without_alt_or_size_has_neither() {
+    assert_eq!(picture("<img src=\"/a.jpg\">"), Picture::default());
 }
 
 #[test]

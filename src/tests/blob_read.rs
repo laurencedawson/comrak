@@ -3,8 +3,9 @@
 
 use crate::blob::{APP_LINK, IMAGE, LINK};
 
-/// A span as the blob holds it. A link's or picture's address is read out as `url` and its packed
-/// offset and length consumed, so its `data` is 0; any other span's data is as written.
+/// A span as the blob holds it. A link's or picture's address is read out as `url` and its
+/// `data` consumed, so its `data` is 0, a picture's payload read into `picture`; any other span's
+/// data is as written.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Span {
     pub start: i32,
@@ -12,6 +13,17 @@ pub(crate) struct Span {
     pub typ: i32,
     pub data: i32,
     pub url: Option<String>,
+    pub picture: Option<Picture>,
+}
+
+/// A picture's payload past its url: its flags, the size its source states (0 where none) and
+/// its alt text.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Picture {
+    pub flags: u8,
+    pub width: u16,
+    pub height: u16,
+    pub alt: String,
 }
 
 impl Span {
@@ -33,7 +45,7 @@ pub(crate) struct Blob {
     pub flags: u8,
     /// In the blob's order: start ascending, end descending, type ascending.
     pub spans: Vec<Span>,
-    url_data: Vec<u8>,
+    pub url_data: Vec<u8>,
 }
 
 impl Blob {
@@ -80,16 +92,23 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
         .map(|i| {
             let at = spans_at + i * 16;
             let (start, end, typ, data) = (int(at), int(at + 4), int(at + 8), int(at + 12));
-            let url = (typ == LINK || typ == APP_LINK || typ == IMAGE).then(|| {
-                let (offset, len) = ((data >> 12) as usize, (data & 0xFFF) as usize);
-                String::from_utf8(url_data[offset..offset + len].to_vec()).unwrap()
-            });
+            let (url, picture) = if typ == IMAGE {
+                let (url, picture) = picture(&url_data, data as usize);
+                (Some(url), Some(picture))
+            } else {
+                let url = (typ == LINK || typ == APP_LINK).then(|| {
+                    let (offset, len) = ((data >> 12) as usize, (data & 0xFFF) as usize);
+                    String::from_utf8(url_data[offset..offset + len].to_vec()).unwrap()
+                });
+                (url, None)
+            };
             Span {
                 start,
                 end,
                 typ,
                 data: if url.is_some() { 0 } else { data },
                 url,
+                picture,
             }
         })
         .collect();
@@ -101,4 +120,22 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
         spans,
         url_data,
     }
+}
+
+/// A picture's url and payload at `at` in `url_data`: flags, width, height, the url's length and
+/// the alt's, then the url and the alt.
+fn picture(url_data: &[u8], at: usize) -> (String, Picture) {
+    let u16_at = |p: usize| u16::from_le_bytes([url_data[at + p], url_data[at + p + 1]]);
+    let (url_len, alt_len) = (u16_at(5) as usize, u16_at(7) as usize);
+    let url = &url_data[at + 9..at + 9 + url_len];
+    let alt = &url_data[at + 9 + url_len..at + 9 + url_len + alt_len];
+    (
+        String::from_utf8(url.to_vec()).unwrap(),
+        Picture {
+            flags: url_data[at],
+            width: u16_at(1),
+            height: u16_at(3),
+            alt: String::from_utf8(alt.to_vec()).unwrap(),
+        },
+    )
 }
