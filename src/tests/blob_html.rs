@@ -19,6 +19,7 @@
 //! - `typed addresses` : addresses among the words linked, as comrak's autolink links them
 //! - `whole`      : a real comment
 //! - `parity`     : the same comments as markdown and as HTML, read the same
+//! - `reader`     : read as the reader, each paragraph of words marked, plain words a blob too
 
 use crate::benchmarks::production_options;
 use crate::blob::sites;
@@ -1215,4 +1216,15 @@ fn parity_chan_tags_read_as_their_markdown() {
             "{html:?} against {md:?}"
         );
     }
+}
+
+// ── reader ───────────────────────────────────────────────────────────────
+
+/// The reader always answers a blob, its plain words too, so the view knows it reads the reader's;
+/// a comment's plain words answer none.
+#[test]
+fn reader_answers_a_blob_for_plain_words() {
+    let b = read(&render_html_blob("just some words", sites::READER, None).expect("a blob"));
+    assert_eq!(b.text, "just some words");
+    assert!(render_html_blob("just some words", sites::HACKER_NEWS, None).is_none());
 }

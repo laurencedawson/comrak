@@ -3,7 +3,7 @@
 //! Produces a compact blob: `[text_len:4][span_count:3|flags:1][text][pad][spans][url_data]`
 //! All positions are UTF-16 code units mapping directly to Java String indices.
 //! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = has_spoiler_body,
-//! bits 2-7 reserved.
+//! bits 2-7 = the site the blob was read for.
 //!
 //! Unlike HTML rendering, this walks the AST once and writes text + span metadata
 //! into a single contiguous buffer with zero intermediate allocations.
@@ -67,7 +67,7 @@ fn utf16_len(s: &str) -> usize {
 /// `APP_LINK` ([`sites::PLAIN`] owns none).
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
-/// (caller should use the raw input string directly).
+/// (caller should use the raw input string directly); never for [`sites::READER`].
 pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, site: u8) -> Option<Vec<u8>> {
     render(input, site, |b| {
         visit(root, b);
@@ -88,7 +88,8 @@ fn render(input: &str, site: u8, walk: impl Fn(&mut BlobWriter)) -> Option<Vec<u
         b = BlobWriter::new(input.len(), false, site);
         walk(&mut b);
     }
-    (!b.spans.is_empty() || b.text() != input).then(|| b.into_blob())
+    // The reader always answers a blob: its paragraphs are spans the view is told, never inferred
+    (site == sites::READER || !b.spans.is_empty() || b.text() != input).then(|| b.into_blob())
 }
 
 pub(crate) struct BlobWriter {
@@ -336,8 +337,10 @@ impl BlobWriter {
     fn link(&mut self, start: usize, text_start: usize, url: &ResolvedUrl<'_>) {
         let page = site::page(self.site, url);
         self.span_url(if page == Page::Own { APP_LINK } else { LINK }, start, url);
-        self.span(LINK_SIZE, start);
-        if page == Page::Elsewhere {
+        if site::link_size(self.site) {
+            self.span(LINK_SIZE, start);
+        }
+        if page == Page::Elsewhere && site::link_domain(self.site) {
             self.append_domain_suffix(text_start, url);
         }
     }
@@ -425,8 +428,10 @@ impl BlobWriter {
         // reused as a flag field so the header stays 8 bytes.
         //   bit 0: is_ascii         — text section is pure ASCII
         //   bit 1: has_spoiler_body — has a LEMMY_SPOILER_CONTENT span
-        //   bits 2-7: reserved
-        let flags: u32 = (self.all_ascii as u32) | ((self.has_spoiler_body as u32) << 1);
+        //   bits 2-7: the site the blob was read for, its id from `sites` (ids fit six bits)
+        let flags: u32 = (self.all_ascii as u32)
+            | ((self.has_spoiler_body as u32) << 1)
+            | (((self.site & 0x3F) as u32) << 2);
         let count_with_flags = (span_count as u32 & 0x00FF_FFFF) | (flags << 24);
         self.blob[0..4].copy_from_slice(&(txt_len as i32).to_le_bytes());
         self.blob[4..8].copy_from_slice(&count_with_flags.to_le_bytes());

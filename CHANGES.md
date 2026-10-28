@@ -144,7 +144,7 @@ It does three things:
 ## Sites and app links ([df385a7], [3edc676], [5fc6ff3], [b381692], [736f5cd], [a721133], [89a23ad], [e277031], [94bb2f6], [d0c39d5])
 
 Both walks take the site they read for: a `u8` from `blob::sites` (`PLAIN`,
-`HACKER_NEWS`, `CHAN`, `LEMMY`, `LOBSTERS`), generated from syncdown's
+`HACKER_NEWS`, `CHAN`, `LEMMY`, `LOBSTERS`, `READER`), generated from syncdown's
 `sites.toml` by its Gradle `generateSites`, as the span types are. Everything a
 site knows about itself is in `src/blob/site.rs`, one function per question
 matching on the id, every other site taking the default, and each site's code in
@@ -154,6 +154,14 @@ matching on the id, every other site taking the default, and each site's code in
 |---|---|
 | `site::html(site)` | How its HTML reads: its [`HtmlRules`](#htmlrules-bca01f9-29b28a5-50226a9-2090141-10e87cf-5fc6ff3) |
 | `site::page(site, url)` | What a resolved address is to it, read once: `Own`, one of its pages, for the app to open itself; `Internal`, on its own host, where the domain after a link's words tells its reader nothing; or `Elsewhere` |
+| `site::link_size(site)` | Whether its links are drawn larger than their words (`LINK_SIZE`), a finger's target in a comment; every site's but `READER`'s |
+| `site::link_domain(site)` | Whether a link elsewhere has the domain after its words; every site's but `READER`'s |
+
+`READER` is an article's site, not an app's: `render_article_blob` writes under
+it whatever the app's own, and its links are words in a sentence, at their size
+and with no domain after them. It owns no pages and reads HTML as plain. So the
+view is always told, it always answers a blob, plain words too; every other
+site's plain words answer none, as before.
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
 a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
@@ -458,7 +466,10 @@ Byte offsets, in order:
 - `7..8` — `flags` (u8):
   - bit 0: `IS_ASCII` — every byte in the text section is < 0x80
   - bit 1: `HAS_SPOILER_BODY` — at least one `LEMMY_SPOILER_CONTENT` span exists ([ea8f274])
-  - bits 2-7: reserved (zero)
+  - bits 2-7: `SITE` — the site the blob was read for, its id from `blob::sites` (`PLAIN` 0
+    … `READER` 5), so a reader of the blob knows the rules it was written under. Ids fit six
+    bits (0-63), which syncdown's `generateSites` checks; renumbering a site means bumping
+    the databases that keep blobs, as renumbering a span type does
 - `8..8 + text_len` — text bytes (UTF-8)
 - next — zero padding to align to a 4-byte boundary (0..3 bytes)
 - next — `span_count × 16` bytes of packed span records

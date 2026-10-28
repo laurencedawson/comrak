@@ -4,8 +4,8 @@
 
 use crate::benchmarks::production_options;
 use crate::blob::site::{Page, page};
-use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN};
-use crate::blob::{APP_LINK, LINK, render_blob};
+use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN, READER};
+use crate::blob::{APP_LINK, LINK, LINK_SIZE, render_blob};
 use crate::parse_document_zerocopy;
 use crate::tests::blob_read::read;
 
@@ -520,6 +520,61 @@ fn markdown_internal_links_show_no_domain() {
         text,
         "newest (lobste.rs) story (lobste.rs) else (example.com)"
     );
+}
+
+/// The reader's links are words in a sentence: no domain after them and no larger size, as a
+/// comment's have.
+#[test]
+fn markdown_reader_links_are_their_words_alone() {
+    let md = "see [the book](https://rust-lang.org/learn) now";
+    let opts = production_options();
+    let blob = |site| {
+        read(
+            &parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site))
+                .expect("a blob"),
+        )
+    };
+    let reader = blob(READER);
+    assert_eq!(reader.text, "see the book now");
+    assert!(!reader.span_iter().any(|s| s.typ == LINK_SIZE));
+    let plain = blob(PLAIN);
+    assert_eq!(plain.text, "see the book (rust-lang.org) now");
+    assert!(plain.span_iter().any(|s| s.typ == LINK_SIZE));
+}
+
+/// `md` read as `site`: its blob, where it answers one.
+fn blob(md: &str, site: u8) -> Option<crate::tests::blob_read::Blob> {
+    let opts = production_options();
+    parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).map(|b| read(&b))
+}
+
+/// The reader always answers a blob, plain words too, so the view knows it reads the reader's; any
+/// other site answers none for them, the view showing the words as they are.
+#[test]
+fn markdown_reader_answers_a_blob_for_plain_words() {
+    let b = blob("just some words", READER).expect("a blob");
+    assert_eq!(b.text, "just some words");
+    assert!(blob("just some words", PLAIN).is_none());
+}
+
+/// A blob says the site it was read for, in bits 2-7 of its flags byte, beside the flags it had.
+#[test]
+fn a_blob_stores_its_site_in_its_flags() {
+    for site in [PLAIN, HACKER_NEWS, CHAN, LEMMY, LOBSTERS, READER] {
+        let b = blob("some **bold** words", site).unwrap();
+        assert_eq!(b.flags >> 2, site, "site {site}");
+        assert!(b.ascii(), "site {site}");
+    }
+}
+
+/// The reader owns no pages, as the plain site does not.
+#[test]
+fn reader_owns_nothing() {
+    assert_eq!(
+        page(READER, "https://news.ycombinator.com/item?id=1"),
+        Page::Elsewhere
+    );
+    assert_eq!(page(READER, "https://lobste.rs/s/cdnepk"), Page::Elsewhere);
 }
 
 /// The plain site marks nothing.

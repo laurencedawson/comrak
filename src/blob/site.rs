@@ -21,6 +21,18 @@ pub(crate) fn html(site: u8) -> &'static HtmlRules<'static> {
     }
 }
 
+/// Whether `site`'s links are drawn larger than their words, a target for a finger in a comment.
+/// Not in an article, where a link is a word in a sentence.
+pub(crate) fn link_size(site: u8) -> bool {
+    !matches!(site, sites::READER)
+}
+
+/// Whether a link to another site has that site's domain after its words, where they lack it, to
+/// say where it goes. Not in an article, where every linked word in a sentence would carry one.
+pub(crate) fn link_domain(site: u8) -> bool {
+    !matches!(site, sites::READER)
+}
+
 /// Plain HTML: no site's tags, and a paragraph opening on `>` is words.
 const PLAIN: HtmlRules<'static> = HtmlRules {
     quote_marks: false,
