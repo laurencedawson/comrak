@@ -386,8 +386,9 @@ leads with is the caller's to show, as a header above the body; the article's
 own copy of that picture is left out, and so is its byline element. The
 authors stand on the line under the title, centred at the body's size, as the
 page's JSON-LD names them (`smoothie::ld_authors`): the `name` of each `author`,
-read off the `ld+json` scripts without a JSON parser, keys found as text and
-values read past. On 25 Hacker News front-page articles (2026-10) JSON-LD named
+wherever it sits in the document, the `ld+json` scripts parsed with `tinyjson`,
+the crate's one dependency past the arena and the text helpers, measured at
+18.8 KB of arm64 library against a one-key reader of our own. On 25 Hacker News front-page articles (2026-10) JSON-LD named
 the author on every page that had one but two personal blogs, cleanly, several
 authors as a list; the page's `<meta>` keys named four, and the byline element
 read "By", a date, or an empty list's "No items found." `None` where

@@ -99,11 +99,41 @@ fn drop_byline(t: &mut Tree, body: Id) {
 }
 
 /// The authors the page's JSON-LD names, in order and each once: the `name` of each `author`,
-/// an object, an array of them, or a string. Read off the page's `ld+json` scripts without a JSON
-/// parser, the keys found as text and the values read past, strings unescaped.
+/// an object, an array of them, or a string, under any object of the document. Parsed with
+/// tinyjson, 19 KB of native library against a reader of our own.
 pub(crate) fn ld_authors(html: &str) -> Vec<String> {
+    use tinyjson::JsonValue;
+    fn walk(v: &JsonValue, out: &mut Vec<String>) {
+        match v {
+            JsonValue::Object(o) => {
+                if let Some(a) = o.get("author") {
+                    author(a, out);
+                }
+                o.values().for_each(|v| walk(v, out));
+            }
+            JsonValue::Array(a) => a.iter().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    fn author(v: &JsonValue, out: &mut Vec<String>) {
+        match v {
+            JsonValue::String(s) => name(s, out),
+            JsonValue::Object(o) => {
+                if let Some(JsonValue::String(s)) = o.get("name") {
+                    name(s, out);
+                }
+            }
+            JsonValue::Array(a) => a.iter().for_each(|v| author(v, out)),
+            _ => {}
+        }
+    }
+    fn name(s: &str, out: &mut Vec<String>) {
+        if !s.trim().is_empty() && !out.iter().any(|n| n == s) {
+            out.push(s.to_string());
+        }
+    }
     let bytes = html.as_bytes();
-    let mut names: Vec<String> = Vec::new();
+    let mut out = Vec::new();
     let mut from = 0;
     while let Some(at) = memchr::memmem::find(&bytes[from..], b"ld+json").map(|i| from + i) {
         let Some(open) = memchr::memchr(b'>', &bytes[at..]).map(|i| at + i + 1) else {
@@ -111,186 +141,12 @@ pub(crate) fn ld_authors(html: &str) -> Vec<String> {
         };
         let close =
             memchr::memmem::find(&bytes[open..], b"</script").map_or(bytes.len(), |i| open + i);
-        let json = &bytes[open..close];
-        let mut key = 0;
-        while let Some(k) = memchr::memmem::find(&json[key..], b"\"author\"").map(|i| key + i) {
-            key = k + 8;
-            // A key, not the word in a string: nothing escapes its quote, and a colon follows
-            if k > 0 && json[k - 1] == b'\\' {
-                continue;
-            }
-            let mut i = skip_space(json, key);
-            if json.get(i) != Some(&b':') {
-                continue;
-            }
-            i = skip_space(json, i + 1);
-            for name in author_names(json, i) {
-                if !name.trim().is_empty() && !names.contains(&name) {
-                    names.push(name);
-                }
-            }
+        if let Ok(v) = html[open..close].parse::<JsonValue>() {
+            walk(&v, &mut out);
         }
         from = close;
     }
-    names
-}
-
-/// The names an `author` value at `i` holds: a string's self, an object's `name`, or each of an
-/// array's.
-fn author_names(json: &[u8], i: usize) -> Vec<String> {
-    match json.get(i) {
-        Some(b'"') => json_string(json, i)
-            .map(|(s, _)| vec![s])
-            .unwrap_or_default(),
-        Some(b'{') => object_name(json, i).into_iter().collect(),
-        Some(b'[') => {
-            let mut names = Vec::new();
-            let mut at = skip_space(json, i + 1);
-            while at < json.len() && json[at] != b']' {
-                match json[at] {
-                    b'"' => {
-                        let Some((s, end)) = json_string(json, at) else {
-                            break;
-                        };
-                        names.push(s);
-                        at = end;
-                    }
-                    b'{' => {
-                        names.extend(object_name(json, at));
-                        at = skip_value(json, at);
-                    }
-                    _ => at = skip_value(json, at),
-                }
-                at = skip_space(json, at);
-                if json.get(at) == Some(&b',') {
-                    at = skip_space(json, at + 1);
-                }
-            }
-            names
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// The `name` of the object opening at `i`, at its own depth.
-fn object_name(json: &[u8], i: usize) -> Option<String> {
-    let mut at = skip_space(json, i + 1);
-    while at < json.len() && json[at] != b'}' {
-        let (key, after) = json_string(json, at)?;
-        at = skip_space(json, after);
-        if json.get(at) != Some(&b':') {
-            return None;
-        }
-        at = skip_space(json, at + 1);
-        if key == "name" {
-            return json_string(json, at).map(|(s, _)| s);
-        }
-        at = skip_space(json, skip_value(json, at));
-        if json.get(at) == Some(&b',') {
-            at = skip_space(json, at + 1);
-        }
-    }
-    None
-}
-
-/// Past the value at `i`: a string, an object or array with what it nests, or a bare literal.
-fn skip_value(json: &[u8], i: usize) -> usize {
-    match json.get(i) {
-        Some(b'"') => json_string(json, i).map_or(json.len(), |(_, end)| end),
-        Some(b'{' | b'[') => {
-            let mut depth = 0;
-            let mut at = i;
-            while at < json.len() {
-                match json[at] {
-                    b'"' => {
-                        at = json_string(json, at).map_or(json.len(), |(_, end)| end);
-                        continue;
-                    }
-                    b'{' | b'[' => depth += 1,
-                    b'}' | b']' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return at + 1;
-                        }
-                    }
-                    _ => {}
-                }
-                at += 1;
-            }
-            json.len()
-        }
-        _ => {
-            let mut at = i;
-            while at < json.len()
-                && !matches!(json[at], b',' | b'}' | b']')
-                && !json[at].is_ascii_whitespace()
-            {
-                at += 1;
-            }
-            at
-        }
-    }
-}
-
-/// The string opening at `i`, unescaped, and where it ends.
-fn json_string(json: &[u8], i: usize) -> Option<(String, usize)> {
-    if json.get(i) != Some(&b'"') {
-        return None;
-    }
-    let mut out = String::new();
-    let mut at = i + 1;
-    while at < json.len() {
-        match json[at] {
-            b'"' => return Some((out, at + 1)),
-            b'\\' => {
-                let esc = *json.get(at + 1)?;
-                at += 2;
-                match esc {
-                    b'n' => out.push('\n'),
-                    b't' => out.push('\t'),
-                    b'r' | b'b' | b'f' => {}
-                    b'u' => {
-                        let code = |at: usize| {
-                            std::str::from_utf8(json.get(at..at + 4)?)
-                                .ok()
-                                .and_then(|h| u32::from_str_radix(h, 16).ok())
-                        };
-                        let mut c = code(at)?;
-                        at += 4;
-                        if (0xD800..0xDC00).contains(&c) && json.get(at..at + 2) == Some(b"\\u") {
-                            let low = code(at + 2)?;
-                            at += 6;
-                            c = 0x10000 + ((c - 0xD800) << 10) + (low - 0xDC00);
-                        }
-                        out.push(char::from_u32(c).unwrap_or('\u{FFFD}'));
-                    }
-                    other => out.push(other as char),
-                }
-            }
-            _ => {
-                let len = utf8_len(json[at]);
-                out.push_str(std::str::from_utf8(json.get(at..at + len)?).ok()?);
-                at += len;
-            }
-        }
-    }
-    None
-}
-
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0x00..=0x7F => 1,
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        _ => 4,
-    }
-}
-
-fn skip_space(json: &[u8], mut i: usize) -> usize {
-    while i < json.len() && json[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    i
+    out
 }
 
 /// The page's `<title>`, its site's name cut off where that can be told apart.

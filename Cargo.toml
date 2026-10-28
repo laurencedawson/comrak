@@ -48,6 +48,7 @@ bon = { version = "3", optional = true }
 caseless = "0.2"
 fmt2io = { version = "1.0.0", optional = true }
 memchr = "2"
+tinyjson = "2"
 memchr-n = "0.1.7"
 phf = "0.14"
 rustc-hash = "2"
