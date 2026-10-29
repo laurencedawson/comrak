@@ -92,8 +92,6 @@ struct Walk<'a, 'o> {
     quote: Option<(usize, usize)>,
     /// Whitespace read since the last word, written as one space before the next.
     space: bool,
-    /// A `<br>` was the last thing read: the next line's leading whitespace is no text.
-    broken: bool,
     /// A `<pre>`'s words so far, written whole at its end.
     pre: Option<String>,
 }
@@ -115,7 +113,6 @@ pub(crate) fn visit(
         marks: 0,
         quote: None,
         space: false,
-        broken: false,
         pre: None,
     };
     let bytes = html.as_bytes();
@@ -318,7 +315,6 @@ impl<'a, 'o> Walk<'a, 'o> {
                 self.out.nl((self.out.p + 1).min(2));
             }
             self.space = false;
-            self.broken = true;
         } else if is("pre") {
             self.end_block();
             // Sized to the rest of the input, which the block cannot outrun, so it never grows
@@ -554,11 +550,10 @@ impl<'a, 'o> Walk<'a, 'o> {
                 self.out.quote_depth += self.marks;
                 self.quote = Some((self.out.pos(), self.marks));
             }
-        } else if self.space && !self.broken {
+        } else if self.space && !self.out.at_line_start() {
             self.out.write_text(" ");
         }
         self.space = false;
-        self.broken = false;
     }
 
     /// Ends the paragraph: closes its quote, and leaves a blank line before whatever follows.

@@ -485,6 +485,27 @@ fn an_item_closes_the_one_before() {
     assert_eq!(items, ["one", "two"]);
 }
 
+/// In a list a picture takes the item's lines, as in markdown: no blank line either side, the
+/// item opening on its picture when the picture comes first.
+#[test]
+fn a_picture_in_an_item_takes_the_items_lines() {
+    let pic = "<img src=\"https://example.com/a.png\">";
+    for (li, item) in [
+        (format!("two {pic} and more"), "two\n\u{1}\nand more"),
+        (format!("two {pic}"), "two\n\u{1}"),
+        (format!("{pic} and more"), "\u{1}\nand more"),
+    ] {
+        let b = within(&format!("<ul><li>one</li><li>{li}</li><li>three</li></ul>"));
+        let items: Vec<_> = of(&b, LIST_ITEM).iter().map(|s| words(&b, s)).collect();
+        assert_eq!(items, ["one", item, "three"], "{li:?}");
+        assert!(
+            b.text.contains(&format!("one\n{item}\nthree")),
+            "{:?}",
+            b.text
+        );
+    }
+}
+
 #[test]
 fn scripts_styles_and_templates_are_no_part_of_the_page() {
     let b = within(

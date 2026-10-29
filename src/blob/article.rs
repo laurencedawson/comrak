@@ -198,6 +198,7 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                     self.out.span_data(LIST_ITEM, start, data);
                 }
                 self.end(true);
+                self.out.list_depth += 1;
                 let first = t
                     .attr(n, "start")
                     .and_then(|s| s.trim().parse().ok())
@@ -324,6 +325,7 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
             }
             Close::List => {
                 self.lists.pop();
+                self.out.list_depth -= 1;
                 self.end(true);
             }
             Close::Item => {

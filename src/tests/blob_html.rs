@@ -486,7 +486,7 @@ fn a_to_a_picture_has_one_blank_line_before_it() {
         ),
         (
             "https://i.imgur.com/a.png https://i.imgur.com/b.png",
-            "\u{1}\n\n \u{1}",
+            "\u{1}\n\n\u{1}",
         ),
     ] {
         assert_eq!(blob(html).text, text, "{html:?}");
@@ -513,7 +513,7 @@ fn a_to_a_picture_mid_sentence() {
             "look <a href=\"https://i.imgur.com/abc.png\">https://i.imgur.com/abc.png</a> here"
         ),
         (
-            "look \n\n\u{1}\n\n here".to_string(),
+            "look \n\n\u{1}\n\nhere".to_string(),
             vec![url(7, 8, IMAGE, "https://i.imgur.com/abc.png")]
         )
     );
@@ -1073,7 +1073,7 @@ fn typed_www_address_is_a_link() {
 #[test]
 fn typed_picture_address_is_the_picture() {
     let (text, spans) = chan("look https://i.imgur.com/abc.png here");
-    assert_eq!(text, "look \n\n\u{1}\n\n here");
+    assert_eq!(text, "look \n\n\u{1}\n\nhere");
     assert_eq!(spans, vec![url(7, 8, IMAGE, "https://i.imgur.com/abc.png")]);
 }
 

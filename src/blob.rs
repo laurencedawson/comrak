@@ -189,6 +189,10 @@ impl BlobWriter {
 
     #[inline]
     pub(crate) fn write_text(&mut self, s: &str) {
+        // Nothing to write leaves the newlines owed, so a gap asked for after it merges with them
+        if s.is_empty() {
+            return;
+        }
         if self.p > 0 {
             self.blob.extend(std::iter::repeat_n(b'\n', self.p));
             self.len += self.p;
@@ -226,7 +230,11 @@ impl BlobWriter {
     /// — so with a dirty prefix the flag stays set and the final scan in
     /// `render_blob` re-renders with exact accounting, as it did before
     /// symbols moved here.
-    fn write_prose(&mut self, s: &str) {
+    fn write_prose(&mut self, mut s: &str) {
+        // Words that start a line, after a picture say, keep no space ahead of them
+        if self.at_line_start() {
+            s = s.trim_start_matches(' ');
+        }
         // One gate for both character passes: prefer_ascii only acts on
         // 0xE2-lead sequences, typographic_symbols only on '(' or '+'.
         // The common clean node takes a single scan and writes as-is.
@@ -350,21 +358,15 @@ impl BlobWriter {
     /// A picture on a line of its own: `width` and `height` the size its source states, 0 by 0
     /// where none, and `alt` its alt text, empty where none.
     fn emit_image(&mut self, url: &ResolvedUrl, width: u16, height: u16, alt: &str) {
+        // A blank line either side, but in a list the item's lines stay together
+        let gap: usize = if self.list_depth > 0 { 1 } else { 2 };
         if self.len != 0 {
-            // Separate the image from prior content by at least two newlines;
-            // existing trailing `\n` (past any trailing spaces/tabs) count.
-            let existing = self.blob[HEADER_SIZE..]
-                .iter()
-                .rev()
-                .skip_while(|&&b| matches!(b, b' ' | b'\t'))
-                .take_while(|&&b| b == b'\n')
-                .count();
-            self.nl(2_usize.saturating_sub(existing));
+            self.nl(gap);
         }
         let start = self.pos();
         self.write_text("\u{0001}");
         self.span_picture(start, url, width, height, alt);
-        self.nl(2);
+        self.nl(gap);
     }
 
     /// A picture's span over the words written since `start`, its data the offset in `url_data`

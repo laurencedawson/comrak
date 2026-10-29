@@ -1011,10 +1011,11 @@ mod images {
         }
     }
 
-    /// An image stands on a line of its own with one blank line before it, wherever it comes:
-    /// after words, a hard break, a paragraph, a heading, a quote, an item, a code block, a mention
-    /// or an email, a link, another image, or with words after it. Spaces alone between two images
-    /// earn no second blank line, and an empty code block no gap, so a document never opens on one.
+    /// An image stands on a line of its own with one blank line before it, wherever it comes
+    /// outside a list: after words, a hard break, a paragraph, a heading, a quote, a code block, a
+    /// mention or an email, a link, another image, or with words after it, which keep no space ahead
+    /// of them. Spaces alone between two images earn no second blank line, and an empty code block
+    /// no gap, so a document never opens on one.
     #[test]
     fn image_has_one_blank_line_before_it() {
         for (md, text) in [
@@ -1035,7 +1036,7 @@ mod images {
             ("para\n\n<https://i.imgur.com/abc.png>", "para\n\n\u{1}"),
             (
                 "para\n\nhttps://i.imgur.com/abc.png more",
-                "para\n\n\u{1}\n\n more",
+                "para\n\n\u{1}\n\nmore",
             ),
             (
                 "para\n\n[![alt](https://i.imgur.com/abc.png)](https://e.com)",
@@ -1050,11 +1051,6 @@ mod images {
             (
                 "> quote\n>\n> https://i.imgur.com/abc.png",
                 "quote\n\n\u{1}",
-            ),
-            ("- item\n\n  https://i.imgur.com/abc.png", "item\n\n\u{1}"),
-            (
-                "- item\n- ![](https://i.imgur.com/abc.png)",
-                "item\n\n\u{1}",
             ),
             (
                 "```\ncode\n```\n\nhttps://i.imgur.com/abc.png",
@@ -1079,17 +1075,57 @@ mod images {
             ),
             (
                 "![](https://example.com/a.png) ![](https://example.com/b.png)",
-                "\u{1}\n\n \u{1}",
+                "\u{1}\n\n\u{1}",
             ),
             (
                 "https://i.imgur.com/a.png https://i.imgur.com/b.png",
-                "\u{1}\n\n \u{1}",
+                "\u{1}\n\n\u{1}",
             ),
             ("```\n```\n\nhttps://i.imgur.com/abc.png", "\u{1}"),
             ("a\n\n```\n```\n\nb", "a\n\nb"),
             ("```\n```\n\n```\n```\n\nb", "b"),
         ] {
             assert_eq!(render_test(md).text(), text, "{md:?}");
+        }
+    }
+
+    /// In a list an image takes the item's lines, with no blank line either side: an item opens
+    /// on its image when the image comes first, and the next item follows straight on when it
+    /// comes last.
+    #[test]
+    fn image_in_a_list_item_takes_the_items_lines() {
+        let cases: [(&str, &str, &[&str]); 4] = [
+            (
+                "- one\n- two ![](https://e.com/a.png) and more\n- three",
+                "one\ntwo \n\u{1}\nand more\nthree",
+                &["one", "two \n\u{1}\nand more", "three"],
+            ),
+            (
+                "- one\n- two ![](https://e.com/a.png)\n- three",
+                "one\ntwo \n\u{1}\nthree",
+                &["one", "two \n\u{1}", "three"],
+            ),
+            (
+                "- one\n- ![](https://e.com/a.png) and more\n- three",
+                "one\n\u{1}\nand more\nthree",
+                &["one", "\u{1}\nand more", "three"],
+            ),
+            (
+                "- one\n\n  https://i.imgur.com/abc.png\n- three",
+                "one\n\u{1}\nthree",
+                &["one\n\u{1}", "three"],
+            ),
+        ];
+        for (md, text, items) in cases {
+            let b = render_test(md);
+            assert_eq!(b.text(), text, "{md:?}");
+            let chars: Vec<char> = b.text().chars().collect();
+            let shown: Vec<String> = b
+                .span_iter()
+                .filter(|s| s.typ == LIST_ITEM)
+                .map(|s| chars[s.start as usize..s.end as usize].iter().collect())
+                .collect();
+            assert_eq!(shown, items, "{md:?}");
         }
     }
 }
