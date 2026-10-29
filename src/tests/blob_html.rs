@@ -252,6 +252,45 @@ fn quote_is_its_paragraph_alone() {
     );
 }
 
+/// A `<blockquote>` is a quote of whole paragraphs, as a site's markdown renders one, its span
+/// over all of them; a quote within it nests a level in.
+#[test]
+fn blockquote_is_a_quote_of_its_paragraphs() {
+    assert_eq!(
+        spanned("<p>a</p><blockquote><p>quoted words</p><p>more quoted</p></blockquote><p>c</p>"),
+        (
+            "a\n\nquoted words\n\nmore quoted\n\nc".to_string(),
+            vec![quote(3, 28, 0)]
+        )
+    );
+}
+
+#[test]
+fn blockquote_nests() {
+    assert_eq!(
+        spanned(
+            "<blockquote><p>outer</p><blockquote><p>inner</p></blockquote><p>after</p></blockquote>"
+        ),
+        (
+            "outer\n\ninner\n\nafter".to_string(),
+            vec![quote(0, 19, 0), quote(7, 12, 1)]
+        )
+    );
+}
+
+/// A close with no open, or an open never closed, is read without a span going wrong.
+#[test]
+fn blockquote_stray_tags_are_harmless() {
+    assert_eq!(
+        spanned("<p>a</p></blockquote><p>b</p>"),
+        ("a\n\nb".to_string(), vec![])
+    );
+    assert_eq!(
+        spanned("<blockquote><p>a</p><p>b</p>"),
+        ("a\n\nb".to_string(), vec![quote(0, 4, 0)])
+    );
+}
+
 /// Two quoted paragraphs are two quotes.
 #[test]
 fn quote_each_paragraph_its_own() {

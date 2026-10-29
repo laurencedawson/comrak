@@ -71,6 +71,8 @@ enum Open<'a> {
     Spoiler(&'a str, usize),
     /// A tag a rule names that means nothing here, held so its end closes nothing else.
     Plain(&'a str),
+    /// A `<blockquote>`: where its words start. Its paragraphs are the quote's until it closes.
+    Quote(usize),
 }
 
 struct Walk<'a, 'o> {
@@ -305,6 +307,11 @@ impl<'a, 'o> Walk<'a, 'o> {
             }
         } else if is("p") {
             self.end_block();
+        } else if is("blockquote") {
+            // A quote of whole paragraphs, as a site's markdown renders one, nested as it nests
+            self.end_block();
+            self.out.quote_depth += 1;
+            self.open.push(Open::Quote(self.out.pos()));
         } else if is("br") {
             // Each break is a newline, a run of them a blank line at most; none before the first words
             if self.out.len > 0 {
@@ -385,6 +392,12 @@ impl<'a, 'o> Walk<'a, 'o> {
         }
         if is("p") {
             self.end_block();
+        } else if is("blockquote") {
+            if let Some(at) = self.open.iter().rposition(|o| matches!(o, Open::Quote(_))) {
+                self.end_block();
+                let quote = self.open.remove(at);
+                self.end_open(quote);
+            }
         } else if is("a") {
             if let Some(at) = self.open.iter().rposition(|o| matches!(o, Open::Link(..))) {
                 let link = self.open.remove(at);
@@ -392,7 +405,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             }
         } else if let Some(at) = self.open.iter().rposition(|o| match o {
             Open::Style(_, tag, _) | Open::Spoiler(tag, _) | Open::Plain(tag) => is(tag),
-            Open::Link(..) => false,
+            Open::Link(..) | Open::Quote(_) => false,
         }) {
             let open = self.open.remove(at);
             self.end_open(open);
@@ -403,6 +416,11 @@ impl<'a, 'o> Walk<'a, 'o> {
         match open {
             Open::Style(span, _, start) => self.out.span(span, start),
             Open::Plain(_) => {}
+            Open::Quote(start) => {
+                self.out.quote_depth -= 1;
+                self.out
+                    .span_data(QUOTE, start, self.out.quote_depth as i32);
+            }
             Open::Spoiler(_, start) => {
                 // The hidden words are a paragraph of their own, the spoiler a block after them
                 self.end_block();

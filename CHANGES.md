@@ -321,7 +321,8 @@ as the scan finds it and writes it at once, holding only the tags still open.
 - One pass, no tree: `src/blob/html.rs`, a child of `blob` so the writer stays
   private. Each tag is written as the writer writes the markdown it stands for
 - Read so far: `<p>` (Hacker News opens every paragraph but the first with a
-  bare one, closing none), `<br>`, `<b>`/`<strong>`, `<i>`/`<em>`, `<a href>`
+  bare one, closing none), `<blockquote>` (a quote of whole paragraphs, nested as
+  it nests, as Lobsters renders one), `<br>`, `<b>`/`<strong>`, `<i>`/`<em>`, `<a href>`
   (resolved, the domain suffix, a link whose words are its own picture address
   as the picture), `<pre>` kept as written, comments, every entity, HTML
   whitespace. A paragraph opening on `>` is a quote, `>>` nested, as the site's
