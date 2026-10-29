@@ -12,9 +12,9 @@ use tree::{Id, Tree};
 
 /// The article on the page `html`, at `base_url`, which its relative links and pictures resolve
 /// against: its title, a first level heading, centred, its authors as the page's JSON-LD names
-/// them on the line under it, centred at the body's size, then its words. The picture it leads
-/// with is the caller's to show, so where the article shows that picture itself it is left out,
-/// and the page's own byline element is no part of it. None where nothing on the page reads as one.
+/// them on the line under it, centred at the body's size, then its words, every picture the
+/// article shows among them; the page's own byline element is no part of it. None where nothing on
+/// the page reads as one.
 pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     let article = smoothie::extract(html)?;
     let title = collapse(title(&article, base_url));
@@ -39,16 +39,13 @@ pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     }
     Walk {
         tree: &article.tree,
-        lead: article
-            .image
-            .as_deref()
-            .and_then(|url| lead(&article.tree, article.root, url)),
         base_url,
         out: &mut out,
         lists: Vec::new(),
         items: Vec::new(),
         block_start: true,
         space: false,
+        rule: usize::MAX,
     }
     .walk(article.root);
     Some(out.into_blob())
@@ -113,36 +110,6 @@ fn similar(a: &str, b: &str) -> bool {
     total > 0 && unique * 4 < total
 }
 
-/// Where the article shows the picture at `url` itself: its first `<img>` offering it at any size,
-/// by its address up to any query and whatever its scheme, or the `<figure>` holding that picture
-/// alone, so its caption goes with it.
-fn lead(tree: &Tree, root: Id, url: &str) -> Option<Id> {
-    let path = url.split(['?', '#']).next().unwrap_or(url).trim();
-    let path = path.split_once("//").map_or(path, |(_, rest)| rest);
-    if path.is_empty() || path.ends_with('/') {
-        return None;
-    }
-    let img = tree.select(root, &["img"]).into_iter().find(|&img| {
-        ["src", "srcset"]
-            .iter()
-            .any(|k| tree.attr(img, k).is_some_and(|v| v.contains(path)))
-    })?;
-    let mut n = img;
-    while let Some(parent) = tree.parent(n)
-        && parent != root
-    {
-        if tree.name(parent) == Some("figure") {
-            return Some(if tree.select(parent, &["img"]).len() == 1 {
-                parent
-            } else {
-                img
-            });
-        }
-        n = parent;
-    }
-    Some(img)
-}
-
 /// What closes when a tag the walk went into ends.
 enum Close<'t> {
     /// A block, the newlines after it: where it starts and the spans over it, as a heading's.
@@ -160,8 +127,6 @@ enum Close<'t> {
 
 struct Walk<'t, 'a, 'o> {
     tree: &'t Tree<'a>,
-    /// The page's lead picture where the article shows it, left to the caller's header.
-    lead: Option<Id>,
     base_url: &'o str,
     out: &'o mut BlobWriter,
     /// Each list the walk is inside: its next item's number, 0 for bullets.
@@ -173,6 +138,8 @@ struct Walk<'t, 'a, 'o> {
     block_start: bool,
     /// Whitespace read since the last word, written as one space before the next.
     space: bool,
+    /// Where the text ended at the last rule written: a rule with nothing written since is none.
+    rule: usize,
 }
 
 impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
@@ -204,9 +171,6 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
         let t = self.tree;
         if let Some(text) = t.text_of(n) {
             self.text(text);
-            return None;
-        }
-        if Some(n) == self.lead {
             return None;
         }
         let name = t.name(n)?;
@@ -271,10 +235,15 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 None
             }
             "hr" => {
+                // Two rules with nothing left between them, a share bar taken out say, are one
+                if self.out.len == self.rule {
+                    return None;
+                }
                 self.end(true);
                 let start = self.out.pos();
                 self.out.write_text("\u{0001}");
                 self.out.span(HRULE, start);
+                self.rule = self.out.len;
                 self.end(true);
                 None
             }

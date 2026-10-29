@@ -7,7 +7,7 @@
 //! - `inline`     : emphasis, code, superscript, whitespace
 //! - `links`      : resolved against the page, the page's own host without its domain, anchors plain
 //! - `pictures`   : `src`, the widest of a `srcset`, a lazy picture's real address, a linked picture,
-//!   the page's lead picture left to the caller, and out of the words where the article shows it
+//!   the page's lead picture kept where the article shows it, a size and alt
 
 use crate::blob::{
     BOLD, CENTERED, CODE, CODE_BLOCK, HEADINGS, HRULE, IMAGE, ITALIC, LINK, LINK_SIZE, LIST_ITEM,
@@ -555,6 +555,15 @@ fn preformatted_code_is_kept_as_written() {
     );
 }
 
+/// Two rules with nothing left between them are one: a page rules off its share bar, which goes.
+#[test]
+fn rules_with_nothing_between_are_one() {
+    let b = within("<hr><div class=\"share-bar\"><a href=\"#\">Share</a></div><hr><hr>");
+    assert_eq!(of(&b, HRULE).len(), 1, "{:?}", b.text);
+    let b = within("<hr><p>between</p><hr>");
+    assert_eq!(of(&b, HRULE).len(), 2, "{:?}", b.text);
+}
+
 #[test]
 fn a_rule() {
     let b = within("<hr>");
@@ -767,64 +776,15 @@ fn pictures(b: &Blob) -> Vec<String> {
         .collect()
 }
 
+/// The page's lead picture stays where the article shows it, the reader having no header of its own
+/// to show it in.
 #[test]
-fn leaves_out_the_lead_picture_the_article_shows_at_another_size() {
-    let b = led_by(
-        "https://cdn.example.com/lead.jpg?w=1200",
-        &format!(
-            "<img src=\"https://cdn.example.com/lead.jpg?w=640\"><p>{PROSE}</p>\
-             <img src=\"https://cdn.example.com/other.jpg\">"
-        ),
-    );
-    assert_eq!(pictures(&b), ["https://cdn.example.com/other.jpg"]);
-    assert!(b.text.starts_with("This paragraph"), "{:?}", b.text);
-}
-
-#[test]
-fn leaves_out_the_lead_pictures_figure_and_its_caption() {
+fn keeps_the_lead_picture_where_the_article_shows_it() {
     let b = led_by(
         "https://cdn.example.com/lead.jpg",
         &format!(
             "<figure><img src=\"https://cdn.example.com/lead.jpg\"><figcaption>Photo by Someone</figcaption></figure>\
              <p>{PROSE}</p>"
-        ),
-    );
-    assert!(pictures(&b).is_empty());
-    assert_eq!(b.text, PROSE);
-}
-
-#[test]
-fn keeps_a_gallery_holding_the_lead_picture_but_that_picture() {
-    let b = led_by(
-        "https://cdn.example.com/lead.jpg",
-        &format!(
-            "<p>{PROSE}</p><figure><img src=\"https://cdn.example.com/lead.jpg\">\
-             <img src=\"https://cdn.example.com/second.jpg\"><figcaption>Two views</figcaption></figure>"
-        ),
-    );
-    assert_eq!(pictures(&b), ["https://cdn.example.com/second.jpg"]);
-    assert!(b.text.ends_with("Two views"), "{:?}", b.text);
-}
-
-#[test]
-fn leaves_out_the_lead_picture_offered_in_a_srcset_whatever_its_scheme() {
-    let b = led_by(
-        "http://cdn.example.com/lead.jpg",
-        &format!(
-            "<img srcset=\"https://cdn.example.com/lead.jpg?w=320 320w, https://cdn.example.com/lead.jpg?w=960 960w\">\
-             <p>{PROSE}</p>"
-        ),
-    );
-    assert!(pictures(&b).is_empty());
-}
-
-#[test]
-fn leaves_out_the_lead_picture_once() {
-    let b = led_by(
-        "https://cdn.example.com/lead.jpg",
-        &format!(
-            "<img src=\"https://cdn.example.com/lead.jpg\"><p>{PROSE}</p>\
-             <img src=\"https://cdn.example.com/lead.jpg\">"
         ),
     );
     assert_eq!(pictures(&b), ["https://cdn.example.com/lead.jpg"]);
@@ -835,14 +795,5 @@ fn keeps_every_picture_without_a_lead() {
     let b = article(&format!(
         "<img src=\"https://cdn.example.com/a.jpg\"><p>{PROSE}</p>"
     ));
-    assert_eq!(pictures(&b), ["https://cdn.example.com/a.jpg"]);
-}
-
-#[test]
-fn a_lead_that_names_no_file_leaves_out_nothing() {
-    let b = led_by(
-        "https://cdn.example.com/",
-        &format!("<img src=\"https://cdn.example.com/a.jpg\"><p>{PROSE}</p>"),
-    );
     assert_eq!(pictures(&b), ["https://cdn.example.com/a.jpg"]);
 }

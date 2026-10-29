@@ -27,6 +27,9 @@ pub struct Article<'a> {
     /// The page's title: its metadata's, else its `<title>` with the site's name cut off.
     pub title: String,
     /// The picture the page's metadata leads with, its address as written.
+    // Read as dom_smoothie reads it; the walk shows the article's own pictures, the preview card being
+    // a logo as often as not
+    #[allow(dead_code)]
     pub image: Option<String>,
     /// The article's title as the page's JSON-LD heads it; none where it gives an article none.
     pub headline: Option<String>,

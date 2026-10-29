@@ -17,7 +17,7 @@ history still resolve. Highlights:
 | [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
-| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its title, centred, then its words, the lead picture the caller's; dom_smoothie's port of Readability.js run on a tree of our own |
+| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its title, centred, then its words and every picture it shows; dom_smoothie's port of Readability.js run on a tree of our own |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -382,9 +382,10 @@ after a quote into it. About 2 us a comment.
 whole web page, picks its article out of it as Readability does, and writes it
 into the same blob through the one `BlobWriter`: the page's title first, a
 `HEADING_1` with a `CENTERED` span over the same words, then the article's
-words, its links and pictures resolved against `base_url`. The picture the page
-leads with is the caller's to show, as a header above the body; the article's
-own copy of that picture is left out, and so is its byline element. The
+words, its links and pictures resolved against `base_url`, every picture the
+article shows kept: the page's `og:image` is not read, as it is the link's
+preview card more often than the article's picture. Its byline element is left
+out. The
 authors stand on the line under the title, centred at the body's size, as the
 page's JSON-LD names them (`smoothie::ld_authors`): the `name` of each `author`,
 wherever it sits in the document, the `ld+json` scripts parsed with `tinyjson`,
@@ -422,7 +423,7 @@ what is left, as `html.rs` is the walk over a comment.
   logic as it was, its byte check before each pattern search kept.
   `smoothie.rs` reads the title (`og:title` and the like, else `<title>` with
   the site's name cut off), which the scoring uses to drop a heading that
-  repeats it, and the lead picture (`og:image`). The rest of JSON-LD, the
+  repeats it. The rest of JSON-LD, the page's picture (`og:image`), the
   readability check and dom_smoothie's text modes are left behind
 - Departures from dom_smoothie 0.19.0, each with the commit that made it.
   `grab.rs` and `prep.rs`, the scoring and the clearing, are as imported
@@ -468,10 +469,7 @@ what is left, as `html.rs` is the walk over a comment.
   Blogger's `data-original-width` and `-height` beside a display width alone,
   in pixels with or without `px`, a fraction rounded; a side under 16 is a lazy
   page's placeholder, and a share of the page, `auto`, another unit or one side
-  alone states none. The lead
-  picture is the caller's header, so where the article shows it too, its first
-  `<img>` offering that address at any size, the walk leaves it out, with the
-  `<figure>` and caption it stands alone in. A link to the
+  alone states none. A link to the
   article's own host takes no domain after it; a `#` or `javascript:` link is
   words. Table rows read across, `a | b`, until tables are `TABLE` spans
 - Checked against dom_smoothie itself, on 27 real pages: Wikipedia, MDN, The
@@ -481,7 +479,7 @@ what is left, as `html.rs` is the walk over a comment.
   written too, 2.7 times dom_smoothie's speed over the 27, and about 150 KB of
   an arm64 build against dom_smoothie's 1 MB with html5ever under it
 - `tests/blob_article.rs` ([ce02d6f]): extraction, the tree, every block and
-  inline, links, pictures and the lead picture
+  inline, links and pictures
 
 ### Standalone use (without the fork's parse-side changes)
 
@@ -853,7 +851,7 @@ src/
 │   ├── article.rs             ← the walk over a page's article + render_article_blob
 │   ├── article/
 │   │   ├── tree.rs            ← the page as a tree: mdream's scan, the closes HTML implies
-│   │   ├── smoothie.rs        ← where the dom_smoothie files come from; title, lead picture, JSON-LD
+│   │   ├── smoothie.rs        ← where the dom_smoothie files come from; title, JSON-LD
 │   │   │                        authors, and our passes: the byline and date lines out
 │   │   └── smoothie/          ← grab.rs, prep.rs, helpers.rs, glob.rs, LICENSE (MIT),
 │   │                            LICENSE-readability (Apache-2.0), NOTICE
