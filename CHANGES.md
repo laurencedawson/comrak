@@ -447,6 +447,19 @@ what is left, as `html.rs` is the walk over a comment.
       (`smoothie.rs`, [36dc294])
     - The authors are read from the page's JSON-LD alone, `ld_authors`, a
       reader of its own with no JSON parser (`smoothie.rs`, [a601f86])
+    - The title shown is the article's JSON-LD `headline`, an `Article`,
+      `NewsArticle`, `BlogPosting` or the like, where most of its words are the
+      page's title (Readability.js's similarity, above three quarters), as
+      Wikipedia's headline is a summary; else the page's title without the
+      site's name at either end, the name being its `og:site_name`, its host or
+      the host's own name (`nullpt.rs •`, `| Quanta Magazine`, `CircuitHub -`,
+      `- Wikipedia`). A `WebPage`'s `name` is the page's title, site and all, so
+      it is not read. `smoothie.rs` reads the headline and the site's name
+      beside the authors, the scripts' scan shared (`ld_json`); `article.rs`
+      chooses. On the top 30 Hacker News pages (2026-10-28) 13 titles lost a
+      site's name or took a clean headline; one, a product's home page, lost
+      its product's name ("SlideBySide - present together, live"). Readability
+      still scores with its own title
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the

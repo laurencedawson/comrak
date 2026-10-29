@@ -28,6 +28,10 @@ pub struct Article<'a> {
     pub title: String,
     /// The picture the page's metadata leads with, its address as written.
     pub image: Option<String>,
+    /// The article's title as the page's JSON-LD heads it; none where it gives an article none.
+    pub headline: Option<String>,
+    /// The site's own name, as the page's metadata gives it.
+    pub site: Option<String>,
     /// Who wrote it, as the page's JSON-LD names its authors, comma separated; none where it names none.
     pub byline: Option<String>,
     pub tree: Tree<'a>,
@@ -43,9 +47,12 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     // author; the author comes from the page's JSON-LD alone, which names one cleanly where the
     // element reads "By", a date or an empty list's "No items found." (25 Hacker News pages, 2026-10)
     drop_byline(&mut tree, body);
-    let authors = ld_authors(html);
+    let ld = ld_json(html);
+    let authors = ld_authors(&ld);
     let byline = (!authors.is_empty()).then(|| authors.join(", "));
     let image = meta(&tree, META_IMAGE_KEYS);
+    let headline = ld_headline(&ld);
+    let site = meta(&tree, &["og:site_name"]);
     prepare(&mut tree);
     let (mut tree, root) = grab::grab_article(&tree, body, &title)?;
     if tree.char_count(root) == 0 {
@@ -56,6 +63,8 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     Some(Article {
         title,
         image,
+        headline,
+        site,
         byline,
         tree,
         root,
@@ -107,7 +116,7 @@ fn drop_byline(t: &mut Tree, body: Id) {
 /// The authors the page's JSON-LD names, in order and each once: the `name` of each `author`,
 /// an object, an array of them, or a string, under any object of the document. Parsed with
 /// tinyjson, 19 KB of native library against a reader of our own.
-pub(crate) fn ld_authors(html: &str) -> Vec<String> {
+pub(crate) fn ld_authors(ld: &[tinyjson::JsonValue]) -> Vec<String> {
     use tinyjson::JsonValue;
     fn walk(v: &JsonValue, out: &mut Vec<String>) {
         match v {
@@ -138,6 +147,13 @@ pub(crate) fn ld_authors(html: &str) -> Vec<String> {
             out.push(s.to_string());
         }
     }
+    let mut out = Vec::new();
+    ld.iter().for_each(|v| walk(v, &mut out));
+    out
+}
+
+/// The page's `ld+json` scripts that parse, in order, parsed once for every reader of them.
+fn ld_json(html: &str) -> Vec<tinyjson::JsonValue> {
     let bytes = html.as_bytes();
     let mut out = Vec::new();
     let mut from = 0;
@@ -147,12 +163,40 @@ pub(crate) fn ld_authors(html: &str) -> Vec<String> {
         };
         let close =
             memchr::memmem::find(&bytes[open..], b"</script").map_or(bytes.len(), |i| open + i);
-        if let Ok(v) = html[open..close].parse::<JsonValue>() {
-            walk(&v, &mut out);
+        if let Ok(v) = html[open..close].parse() {
+            out.push(v);
         }
         from = close;
     }
     out
+}
+
+/// The first `headline` the page's JSON-LD gives an article, a `NewsArticle`, `BlogPosting` and
+/// the like, under any object of the document; a `WebPage`'s `name` is the page's title, site and
+/// all, so it is not read.
+pub(crate) fn ld_headline(ld: &[tinyjson::JsonValue]) -> Option<String> {
+    use tinyjson::JsonValue;
+    fn article(t: Option<&JsonValue>) -> bool {
+        let is = |t: &JsonValue| matches!(t, JsonValue::String(s) if s.ends_with("Article") || s == "BlogPosting" || s == "Report");
+        match t {
+            Some(JsonValue::Array(a)) => a.iter().any(is),
+            Some(t) => is(t),
+            None => false,
+        }
+    }
+    fn find(v: &JsonValue) -> Option<&String> {
+        match v {
+            JsonValue::Object(o) => article(o.get("@type"))
+                .then(|| o.get("headline"))
+                .flatten()
+                .and_then(|h| h.get::<String>())
+                .filter(|h| !h.trim().is_empty())
+                .or_else(|| o.values().find_map(find)),
+            JsonValue::Array(a) => a.iter().find_map(find),
+            _ => None,
+        }
+    }
+    ld.iter().find_map(find).cloned()
 }
 
 /// The page's `<title>`, its site's name cut off where that can be told apart.
@@ -485,7 +529,7 @@ mod survey {
             println!(
                 "{} | {:?}",
                 f.file_name().to_string_lossy(),
-                ld_authors(&html)
+                ld_authors(&ld_json(&html))
             );
         }
     }

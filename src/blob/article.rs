@@ -17,7 +17,7 @@ use tree::{Id, Tree};
 /// and the page's own byline element is no part of it. None where nothing on the page reads as one.
 pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     let article = smoothie::extract(html)?;
-    let title = collapse(article.title.trim());
+    let title = collapse(title(&article, base_url));
     let byline = article.byline.as_deref().unwrap_or_default();
     let mut out = BlobWriter::new(
         title.len() + byline.len() + 3 + article.tree.char_count(article.root),
@@ -52,6 +52,65 @@ pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     }
     .walk(article.root);
     Some(out.into_blob())
+}
+
+/// The title shown over the article: the page's JSON-LD headline where it reads as the page's own
+/// title, else the page's title without the site's name at either end. A headline is a summary on
+/// some sites (Wikipedia's), so it is taken only where most of its words are the title's, as
+/// Readability.js takes a JSON-LD title; a site's name is its `og:site_name`, its host, or the host's
+/// own name, the label before its ending, as `nullpt.rs •`, `| Quanta Magazine`, `CircuitHub -` and
+/// `- Wikipedia` (en.wikipedia.org) stand in titles.
+fn title<'a>(article: &'a smoothie::Article, base_url: &str) -> &'a str {
+    let page = article.title.trim();
+    if let Some(headline) = &article.headline
+        && similar(page, headline)
+    {
+        return headline.trim();
+    }
+    let host = extract_domain(base_url);
+    let host = host.as_deref().map(|h| h.strip_prefix("www.").unwrap_or(h));
+    let names = [
+        article.site.as_deref(),
+        host,
+        host.and_then(|h| h.rsplit('.').nth(1)),
+    ];
+    names
+        .into_iter()
+        .flatten()
+        .find_map(|name| without_site(page, name.trim()))
+        .unwrap_or(page)
+}
+
+/// `title` without `name` at its start or end where a separator stands between them, or none.
+fn without_site<'t>(title: &'t str, name: &str) -> Option<&'t str> {
+    const SEPARATORS: &[char] = &['|', '-', '–', '—', '•', '·', ':', '»', '/', '\\', '~'];
+    let at = title.len().checked_sub(name.len())?;
+    let rest = if title.get(at..)?.eq_ignore_ascii_case(name) {
+        title[..at].trim_end().strip_suffix(SEPARATORS)
+    } else if title.get(..name.len())?.eq_ignore_ascii_case(name) {
+        title[name.len()..].trim_start().strip_prefix(SEPARATORS)
+    } else {
+        None
+    }?
+    .trim();
+    (!name.is_empty() && !rest.is_empty()).then_some(rest)
+}
+
+/// Whether most of `b`'s words are `a`'s, as Readability.js measures it: one less the share of
+/// `b`'s text in words `a` lacks, above three quarters.
+fn similar(a: &str, b: &str) -> bool {
+    fn words(s: &str) -> impl Iterator<Item = &str> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+    }
+    let (mut total, mut unique) = (0, 0);
+    for w in words(b) {
+        total += w.len() + 1;
+        if !words(a).any(|x| x.eq_ignore_ascii_case(w)) {
+            unique += w.len() + 1;
+        }
+    }
+    total > 0 && unique * 4 < total
 }
 
 /// Where the article shows the picture at `url` itself: its first `<img>` offering it at any size,

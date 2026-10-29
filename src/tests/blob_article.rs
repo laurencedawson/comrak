@@ -231,6 +231,83 @@ fn the_pages_byline_element_goes_and_names_no_one() {
     assert_eq!(b.text, format!("A title long enough to keep\n\n{PROSE}"));
 }
 
+/// A page with `head` for its head and enough words to be an article.
+fn headed(head: &str) -> String {
+    format!("<html><head>{head}</head><body><article><p>{PROSE}</p></article></body></html>")
+}
+
+/// The JSON-LD script giving an object of `kind` its `key`.
+fn ld(kind: &str, key: &str, value: &str) -> String {
+    format!(
+        "<script type=\"application/ld+json\">{{\"@context\":\"https://schema.org\",\"@type\":\"{kind}\",\"{key}\":\"{value}\"}}</script>"
+    )
+}
+
+/// An article's JSON-LD headline is its title, the site's name nowhere in it.
+#[test]
+fn heads_the_article_with_its_json_ld_headline() {
+    let html = headed(&format!(
+        "<meta property=\"og:title\" content=\"Scaling Hierarchical Networks | Cartesia\">{}",
+        ld("BlogPosting", "headline", "Scaling Hierarchical Networks")
+    ));
+    assert_eq!(title(&html), "Scaling Hierarchical Networks");
+}
+
+/// A headline that is a summary rather than the title, as Wikipedia's is, gives way to the title.
+#[test]
+fn passes_over_a_headline_that_is_no_title() {
+    let html = headed(&format!(
+        "<meta property=\"og:title\" content=\"Oseberg tapestry fragments - Wikipedia\">\
+         <meta property=\"og:site_name\" content=\"Wikipedia\">{}",
+        ld(
+            "Article",
+            "headline",
+            "fragments of tapestry discovered in the Oseberg ship burial in Norway"
+        )
+    ));
+    assert_eq!(title(&html), "Oseberg tapestry fragments");
+}
+
+/// A web page's JSON-LD name is the page's title, site and all, so it heads nothing.
+#[test]
+fn reads_no_title_from_a_web_pages_name() {
+    let html = headed(&format!(
+        "<meta property=\"og:title\" content=\"CNC Stone Carving\">{}",
+        ld("WebPage", "name", "Something else - Carmelite Gothic")
+    ));
+    assert_eq!(title(&html), "CNC Stone Carving");
+}
+
+/// The site's name comes off either end of the title, as its metadata names it, as its host, or as
+/// the host's name alone, whatever the separator and the case.
+#[test]
+fn takes_the_sites_name_off_the_title() {
+    for (head, expected) in [
+        (
+            "<meta property=\"og:title\" content=\"CNC Stone Carving - Carmelite Gothic\">\
+             <meta property=\"og:site_name\" content=\"Carmelite Gothic\">",
+            "CNC Stone Carving",
+        ),
+        (
+            "<meta property=\"og:title\" content=\"example.com • Why Is This Script Creating Bioweapons?\">",
+            "Why Is This Script Creating Bioweapons?",
+        ),
+        (
+            "<meta property=\"og:title\" content=\"A Health Update · Example\">",
+            "A Health Update",
+        ),
+    ] {
+        assert_eq!(title(&headed(head)), expected, "{head}");
+    }
+}
+
+/// A title that is the site's name alone keeps it.
+#[test]
+fn keeps_a_title_that_is_the_sites_name() {
+    let html = headed("<meta property=\"og:title\" content=\"Example\">");
+    assert_eq!(title(&html), "Example");
+}
+
 #[test]
 fn takes_the_byline_out_of_the_words() {
     let html = page(
