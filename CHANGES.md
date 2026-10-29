@@ -469,7 +469,9 @@ what is left, as `html.rs` is the walk over a comment.
   Blogger's `data-original-width` and `-height` beside a display width alone,
   in pixels with or without `px`, a fraction rounded; a side under 16 is a lazy
   page's placeholder, and a share of the page, `auto`, another unit or one side
-  alone states none. No link takes a domain after it; a `#` or `javascript:`
+  alone states none; one stating both sides at 32 or under is an icon, a
+  footnote's arrow back or a licence's mark, and goes. No link takes a domain
+  after it; a `#` or `javascript:`
   link is words. Table rows read across, `a | b`, until tables are `TABLE` spans
 - Checked against dom_smoothie itself, on 27 real pages: Wikipedia, MDN, The
   Verge, NPR, Substack, GitHub, blogs, a paywall and two bot walls. The same

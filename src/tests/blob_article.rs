@@ -818,3 +818,30 @@ fn keeps_every_picture_without_a_lead() {
     ));
     assert_eq!(pictures(&b), ["https://cdn.example.com/a.jpg"]);
 }
+
+/// A picture that states both its sides at 32 pixels or under is an icon and goes: a footnote's
+/// arrow back up the page, as Epoch AI ends each note on, a licence's mark. One a pixel over stays,
+/// and so does a lazy page's placeholder, whose pixel or two is no size.
+#[test]
+fn drops_an_icon() {
+    let backref = "<a href=\"#fnref-1\" data-footnote-backref class=\"data-footnote-backref\">\
+        <img class=\"footnote-icon\" src=\"/icons/arrow.svg\" width=\"16\" height=\"16\" alt=\"Return\"/></a>";
+    let b = within(&format!(
+        "<ol><li><p>A note. {backref}</p></li><li><p>Another.</p></li></ol>"
+    ));
+    assert!(pictures(&b).is_empty(), "{:?}", b.text);
+    let items: Vec<_> = of(&b, LIST_ITEM).iter().map(|s| words(&b, s)).collect();
+    assert_eq!(items, ["A note.", "Another."]);
+    for icon in [
+        "<img src=\"https://e.com/ring.svg\" width=\"24\" height=\"24\">",
+        "<img src=\"https://e.com/cc.svg\" width=\"32px\" height=\"32px\">",
+    ] {
+        assert!(pictures(&within(icon)).is_empty(), "{icon}");
+    }
+    for kept in [
+        "<img src=\"https://e.com/a.png\" width=\"33\" height=\"33\">",
+        "<img src=\"https://e.com/a.png\" width=\"1\" height=\"1\">",
+    ] {
+        assert_eq!(pictures(&within(kept)), ["https://e.com/a.png"], "{kept}");
+    }
+}

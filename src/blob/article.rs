@@ -253,10 +253,14 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 None
             }
             "img" => {
-                if let Some(src) = self.picture(n) {
+                let (width, height) = size(t, n);
+                // Both sides stated at the icon's size or under: a footnote's arrow back up the page,
+                // a licence's mark, never the article's picture
+                if let Some(src) = self.picture(n)
+                    && !(width > 0 && width.max(height) <= MAX_ICON_SIDE)
+                {
                     self.end(true);
                     let url = relative(src, self.base_url);
-                    let (width, height) = size(t, n);
                     self.out.emit_image(
                         &resolve_url(url.as_deref().unwrap_or(src)),
                         width,
@@ -426,6 +430,9 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
 
 /// A side under this many pixels is a lazy page's placeholder, not the picture's.
 const MIN_STATED_SIDE: u16 = 16;
+
+/// A picture whose stated sides are both this many pixels or under is an icon.
+const MAX_ICON_SIDE: u16 = 32;
 
 /// The size an `<img>` states in its `width` and `height`, else Blogger's `data-original-width`
 /// and `data-original-height` beside a display width alone, as pixels with or without `px`, a
