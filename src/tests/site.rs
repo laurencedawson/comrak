@@ -557,12 +557,12 @@ fn markdown_reader_answers_a_blob_for_plain_words() {
     assert!(blob("just some words", PLAIN).is_none());
 }
 
-/// The reader's blob carries its line heights as a span over each block and the blank line after
-/// it, each ending where the next begins, from the text's start to its end, so no span reaches
-/// past its block and the view's search stays local to the line it is asked about; a one-block
-/// body carries one. No other site writes any.
+/// The reader's blob carries its line heights as a span over each run of lines and the newlines
+/// after it, each ending where the next begins, from the text's start to its end, so no span
+/// reaches past its run and the view's search stays local to the line it is asked about; a
+/// one-run body carries one. No other site writes any.
 #[test]
-fn reader_blob_marks_each_block() {
+fn reader_blob_tiles_each_run_of_lines() {
     for (md, blocks) in [
         ("some words", 1),
         ("> some quoted words", 1),

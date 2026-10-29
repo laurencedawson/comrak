@@ -17,7 +17,7 @@ history still resolve. Highlights:
 | [Sites and app links](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5) | Each site syncdown reads compiled in, one function per question: its HTML's rules, its own pages, written as `APP_LINK` spans for the app to open itself, and its own host, after whose links no domain is written |
 | [Blob renderer](#blob-rendering) | One-pass AST → compact binary blob feeding syncdown's `FastSpannable`; streams straight into pre-sized buffers with no intermediate representation |
 | [HTML into the blob](#html-into-the-blob-b6d9a01-2f00ef6) | `render_html_blob`: a site's comment HTML straight into the same blob through the same writer, with no markdown between; mdream's entities and tag scan; `HtmlRules`, each site's tags |
-| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its title, centred, then its words and every picture it shows; dom_smoothie's port of Readability.js run on a tree of our own |
+| [Articles into the blob](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86-05976b0-0a1f7e2) | `render_article_blob`: a whole web page's article, as Readability picks it, into the same blob: its title, centred, then its words and every picture it shows; dom_smoothie's port of Readability.js run on a tree of our own |
 | [Text normalization](#text-normalization) | The blob's rendering policy, flag-free by design: collapse spaces, typed typographic Unicode → ASCII, `(c)/(r)/(tm)/+-` → ©®™± |
 | [Parse entry](#parse-entry-point) | Single scoped `parse_document_zerocopy` — arenas owned internally, AST dropped with the closure |
 | [Utility helpers](#utility-modules-used-by-the-renderer) | `resolve_url`, `extract_domain`, `is_image_url`, and the `text` normalizers — public, zero-copy on common paths |
@@ -156,7 +156,7 @@ matching on the id, every other site taking the default, and each site's code in
 | `site::page(site, url)` | What a resolved address is to it, read once: `Own`, one of its pages, for the app to open itself; `Internal`, on its own host, where the domain after a link's words tells its reader nothing; or `Elsewhere` |
 | `site::link_size(site)` | Whether its links are drawn larger than their words (`LINK_SIZE`), a finger's target in a comment; every site's but `READER`'s |
 | `site::link_domain(site)` | Whether a link elsewhere has the domain after its words; every site's but `READER`'s |
-| `site::reader_blocks(site)` | Whether its blob marks each block with a `READER_BLOCK` span, from which the view spaces each line; `READER`'s alone |
+| `site::reader_blocks(site)` | Whether its blob marks each run of lines with a `READER_BLOCK` span, from which the view spaces each line; `READER`'s alone |
 
 `READER` is an article's site, not an app's: `render_article_blob` writes under
 it whatever the app's own, and its links are words in a sentence, at their size
@@ -165,9 +165,9 @@ view is always told, it always answers a blob, plain words too; every other
 site's plain words answer none, as before.
 
 Its blob carries the reader's line heights as a `READER_BLOCK` span over each
-block and the blank line after it (`site::reader_blocks`): `BlobWriter` closes
+run of lines and the newlines after it (`site::reader_blocks`): `BlobWriter` closes
 one at the newline flush in `write_text`, the one place newlines land, and
-`into_blob` closes the last, so each record ends where the next block starts
+`into_blob` closes the last, so each record ends where the next run starts
 and the view's span search stays local to the line it is asked about. The view
 works each line's height out from the spans the blob already writes, headings,
 quotes, list items and code; the record itself carries no kind. One span over
@@ -339,7 +339,7 @@ as the scan finds it and writes it at once, holding only the tags still open.
   selectors, Tailwind, URL and plugin code are not here
 - `scan_tag` ([6158cdd]) hands over `Attrs::Only(names)`, at most eight, as the walk reads
   `href` and `class`, or `Attrs::All`, every attribute, as the
-  [article tree](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86) reads them. The mode is chosen once
+  [article tree](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86-05976b0-0a1f7e2) reads them. The mode is chosen once
   and each has its own loop, so the walk's is the loop it was: within noise on
   `bench_all`'s HTML corpora, against the scan before it
 - Built as htmlrak, a crate of its own mirroring this writer, and moved in
@@ -376,7 +376,7 @@ with greentext keep every word, and their quotes cover exactly the quoted
 lines; markdown cannot say those, since its lazy continuation takes the line
 after a quote into it. About 2 us a comment.
 
-### Articles into the blob ([6158cdd], [ce02d6f], [5e1164e], [36dc294], [8184072], [a601f86])
+### Articles into the blob ([6158cdd], [ce02d6f], [5e1164e], [36dc294], [8184072], [a601f86], [05976b0], [0a1f7e2])
 
 `comrak::blob::render_article_blob(html, base_url) -> Option<Vec<u8>>` reads a
 whole web page, picks its article out of it as Readability does, and writes it
@@ -460,7 +460,7 @@ what is left, as `html.rs` is the walk over a comment.
       chooses. On the top 30 Hacker News pages (2026-10-28) 13 titles lost a
       site's name or took a clean headline; one, a product's home page, lost
       its product's name ("SlideBySide - present together, live"). Readability
-      still scores with its own title
+      still scores with its own title (`smoothie.rs`, `article.rs`, [05976b0])
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the
@@ -469,9 +469,8 @@ what is left, as `html.rs` is the walk over a comment.
   Blogger's `data-original-width` and `-height` beside a display width alone,
   in pixels with or without `px`, a fraction rounded; a side under 16 is a lazy
   page's placeholder, and a share of the page, `auto`, another unit or one side
-  alone states none. A link to the
-  article's own host takes no domain after it; a `#` or `javascript:` link is
-  words. Table rows read across, `a | b`, until tables are `TABLE` spans
+  alone states none. No link takes a domain after it; a `#` or `javascript:`
+  link is words. Table rows read across, `a | b`, until tables are `TABLE` spans
 - Checked against dom_smoothie itself, on 27 real pages: Wikipedia, MDN, The
   Verge, NPR, Substack, GitHub, blogs, a paywall and two bot walls. The same
   words on every page; the titles and bylines too, but where dom_smoothie read
@@ -1170,3 +1169,5 @@ Pixel 9 Pro XL).
 [36dc294]: https://github.com/laurencedawson/comrak/commit/36dc294
 [8184072]: https://github.com/laurencedawson/comrak/commit/8184072
 [a601f86]: https://github.com/laurencedawson/comrak/commit/a601f86
+[05976b0]: https://github.com/laurencedawson/comrak/commit/05976b0
+[0a1f7e2]: https://github.com/laurencedawson/comrak/commit/0a1f7e2

@@ -99,7 +99,7 @@ fn render(input: &str, site: u8, walk: impl Fn(&mut BlobWriter)) -> Option<Vec<u
         b = BlobWriter::new(input.len(), false, site);
         walk(&mut b);
     }
-    // The reader always answers a blob: its paragraphs are spans the view is told, never inferred
+    // The reader always answers a blob: its line heights are READER_BLOCK spans the view is told, never inferred
     (site == sites::READER || !b.spans.is_empty() || b.text() != input).then(|| b.into_blob())
 }
 
@@ -127,8 +127,8 @@ pub(crate) struct BlobWriter {
     quote_depth: usize,
     /// The site the input is from, which knows its own pages: a link to one is an `APP_LINK`.
     site: u8,
-    /// Where the reader's current block starts, for the sites that give their lines the reader's
-    /// line heights: a `READER_BLOCK` span closes over each block and its blank line when the next opens.
+    /// Where the reader's current run of lines starts, for the sites that give their lines the reader's
+    /// line heights: a `READER_BLOCK` span closes over each run of lines and its newlines when the next opens.
     tile: Option<usize>,
 }
 
@@ -193,7 +193,7 @@ impl BlobWriter {
             self.blob.extend(std::iter::repeat_n(b'\n', self.p));
             self.len += self.p;
             self.p = 0;
-            // Every newline lands here, so each block ends here: the reader's span over the one
+            // Every newline lands here, so each run of lines ends here: the reader's span over the one
             // just written, its newlines included, and the next opens on these words
             if let Some(start) = self.tile {
                 self.span(READER_BLOCK, start);
@@ -441,7 +441,7 @@ impl BlobWriter {
     }
 
     pub(crate) fn into_blob(mut self) -> Vec<u8> {
-        // The reader's last block, its span closed here as the others were at the block after them
+        // The reader's last run, its span closed here as the others were at the run after them
         if let Some(start) = self.tile {
             self.span(READER_BLOCK, start);
         }
