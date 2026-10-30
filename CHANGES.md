@@ -463,7 +463,7 @@ what is left, as `html.rs` is the walk over a comment.
       still scores with its own title (`smoothie.rs`, `article.rs`, [05976b0])
     - The JSON-LD `headline` is read as HTML, its tags dropped and its entities
       decoded, as WordPress writes it (`We&#8217;re`, Gizmodo); dom_smoothie
-      took the string as JSON gave it (`smoothie.rs`)
+      took the string as JSON gave it (`smoothie.rs`, [c752001])
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the
@@ -1176,3 +1176,4 @@ Pixel 9 Pro XL).
 [a601f86]: https://github.com/laurencedawson/comrak/commit/a601f86
 [05976b0]: https://github.com/laurencedawson/comrak/commit/05976b0
 [0a1f7e2]: https://github.com/laurencedawson/comrak/commit/0a1f7e2
+[c752001]: https://github.com/laurencedawson/comrak/commit/c752001
