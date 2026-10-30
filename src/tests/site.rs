@@ -557,10 +557,10 @@ fn markdown_reader_answers_a_blob_for_plain_words() {
     assert!(blob("just some words", PLAIN).is_none());
 }
 
-/// The reader's blob carries its line heights as a span over each run of lines and the newlines
-/// after it, each ending where the next begins, from the text's start to its end, so no span
-/// reaches past its run and the view's search stays local to the line it is asked about; a
-/// one-run body carries one. No other site writes any.
+/// The reader's blob carries its line heights as a span over each run of lines, its words alone as
+/// every block's span: from the text's start to its end, only newlines between one and the next, so
+/// no span holds a blank line between blocks and a long body may be cut there; a one-run body
+/// carries one. No other site writes any.
 #[test]
 fn reader_blob_tiles_each_run_of_lines() {
     for (md, blocks) in [
@@ -581,8 +581,13 @@ fn reader_blob_tiles_each_run_of_lines() {
         assert_eq!(tiles.len(), blocks, "{md:?}: {tiles:?}");
         assert_eq!(tiles[0].0, 0, "{md:?}");
         assert_eq!(tiles[tiles.len() - 1].1, len, "{md:?}");
+        let utf16: Vec<u16> = b.text.encode_utf16().collect();
         for pair in tiles.windows(2) {
-            assert_eq!(pair[0].1, pair[1].0, "{md:?}: {tiles:?}");
+            let between = &utf16[pair[0].1 as usize..pair[1].0 as usize];
+            assert!(
+                !between.is_empty() && between.iter().all(|&c| c == b'\n' as u16),
+                "{md:?}: {tiles:?}"
+            );
         }
     }
     for site in [PLAIN, HACKER_NEWS, CHAN, LEMMY, LOBSTERS] {

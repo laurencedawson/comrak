@@ -194,13 +194,15 @@ impl BlobWriter {
             return;
         }
         if self.p > 0 {
+            // The reader's span over the run of lines just written covers its words alone, as every block's
+            // does, and the next opens on these words: no span holds the newlines between
+            if let Some(start) = self.tile {
+                self.span(READER_BLOCK, start);
+            }
             self.blob.extend(std::iter::repeat_n(b'\n', self.p));
             self.len += self.p;
             self.p = 0;
-            // Every newline lands here, so each run of lines ends here: the reader's span over the one
-            // just written, its newlines included, and the next opens on these words
-            if let Some(start) = self.tile {
-                self.span(READER_BLOCK, start);
+            if self.tile.is_some() {
                 self.tile = Some(self.len);
             }
         }
@@ -485,6 +487,16 @@ impl BlobWriter {
         }
         if i < span_count {
             spans_view.sort_unstable_by_key(key);
+        }
+        // A heading a span crosses, in a quote, a spoiler or a style around blocks, is no place to cut: its byte goes
+        if self.tile.is_some() {
+            let mut reach = 0;
+            for s in spans_view.iter_mut() {
+                if s[0] < reach && matches!(s[2], HEADING_1..=HEADING_6) {
+                    s[3] = 0;
+                }
+                reach = reach.max(s[1]);
+            }
         }
 
         // Header layout: text_len in bytes 0-3, span_count in bytes 4-6, flags

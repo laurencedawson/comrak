@@ -564,6 +564,35 @@ fn headings() {
     assert!(b.text.contains("\n\nSecond\n\nThird\n\n"));
 }
 
+/// A heading no span crosses carries the byte it starts on, where a long body may be cut, a link over
+/// it alone included; one in a quote, a list item or a link opening ahead of it carries 0. The "é"
+/// ahead of them sets bytes apart from characters.
+#[test]
+fn a_free_heading_carries_its_byte() {
+    let b = within(
+        "<p>Café.</p><h2>Free</h2><blockquote><h3>Quoted</h3></blockquote>\
+         <ul><li><h3>Listed</h3></li></ul><a href=\"/x\"><h3>Own link</h3></a>\
+         <a href=\"/y\"><p>Lead.</p><h3>Linked</h3></a>",
+    );
+    let byte = |s: &Span| {
+        let mut units = 0;
+        b.text
+            .char_indices()
+            .find(|(_, c)| {
+                units += c.len_utf16() as i32;
+                units > s.start
+            })
+            .unwrap()
+            .0 as i32
+    };
+    for s in of(&b, HEADINGS[1]).into_iter().chain(of(&b, HEADINGS[2])) {
+        let free = matches!(words(&b, s), "Free" | "Own link");
+        let expected = if free { byte(s) } else { 0 };
+        assert_eq!(s.data, expected, "{:?}", words(&b, s));
+    }
+    assert_ne!(byte(of(&b, HEADINGS[1])[0]), of(&b, HEADINGS[1])[0].start);
+}
+
 #[test]
 fn an_h1_in_the_article_is_an_h2() {
     let b = within("<h1>Section</h1>");

@@ -123,6 +123,8 @@ enum Close<'t> {
     List,
     Item,
     Quote(usize),
+    /// A heading: where it starts, its type, and the byte it starts on, where a long body may be cut.
+    Heading(usize, i32, usize),
 }
 
 struct Walk<'t, 'a, 'o> {
@@ -184,7 +186,8 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.end(true);
                 let level = (name.as_bytes()[1] - b'1') as usize;
-                Some(Close::Block(self.out.pos(), [HEADINGS[level], -1]))
+                let byte = self.out.blob.len() - HEADER_SIZE + self.out.p;
+                Some(Close::Heading(self.out.pos(), HEADINGS[level], byte))
             }
             "tr" => {
                 self.end(false);
@@ -310,6 +313,10 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
         match close {
             Close::Block(start, spans) => {
                 self.spans(start, spans);
+                self.end(true);
+            }
+            Close::Heading(start, heading, byte) => {
+                self.out.span_data(heading, start, byte as i32);
                 self.end(true);
             }
             Close::Line => self.end(false),
