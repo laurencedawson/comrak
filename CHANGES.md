@@ -165,14 +165,20 @@ view is always told, it always answers a blob, plain words too; every other
 site's plain words answer none, as before.
 
 Its blob carries the reader's line heights as a `READER_BLOCK` span over each
-run of lines and the newlines after it (`site::reader_blocks`): `BlobWriter` closes
-one at the newline flush in `write_text`, the one place newlines land, and
-`into_blob` closes the last, so each record ends where the next run starts
-and the view's span search stays local to the line it is asked about. The view
+run of lines, its words alone as every block's span (`site::reader_blocks`):
+`BlobWriter` closes one at the newline flush in `write_text`, the one place
+newlines land, before writing them, and opens the next on the words after, so
+no span holds a blank line between blocks ([56e5b69]); `into_blob` closes the
+last. The view's span search stays local to the line it is asked about. The view
 works each line's height out from the spans the blob already writes, headings,
 quotes, list items and code; the record itself carries no kind. One span over
 the whole text was tried first: its end pinned the view's search to the first
 record and a link-heavy page took a third of a second to lay out, 32 ms tiled.
+
+A long reader body can be cut into sections, a row each, at a top-level
+heading: the article walk writes each heading's data as the byte it starts on,
+and `into_blob`, once the records are sorted, clears it on any heading a span
+reaches past, so a byte marks a cut that splits nothing ([56e5b69]).
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
 a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
@@ -685,6 +691,18 @@ bit:  31                                                            0
      └─────────────────────────────────────────────────────────────┘
 ```
 
+**Headings** (`HEADING_1`..`HEADING_6`), on the reader alone: the byte in the text the heading
+starts on, where a long body may be cut; 0 where a span crosses it (a heading in a quote, a list
+item or a spoiler, or under a link or style opening ahead of it), at the text's start, and on every
+other site ([56e5b69]):
+
+```
+bit:  31                                                            0
+     ┌─────────────────────────────────────────────────────────────┐
+     │            byte offset into the text (0: no cut)            │
+     └─────────────────────────────────────────────────────────────┘
+```
+
 **All other span types** — `data = 0` (unused).
 
 ### Text-buffer semantics
@@ -1182,3 +1200,4 @@ Pixel 9 Pro XL).
 [0a1f7e2]: https://github.com/laurencedawson/comrak/commit/0a1f7e2
 [c752001]: https://github.com/laurencedawson/comrak/commit/c752001
 [780286c]: https://github.com/laurencedawson/comrak/commit/780286c
+[56e5b69]: https://github.com/laurencedawson/comrak/commit/56e5b69
