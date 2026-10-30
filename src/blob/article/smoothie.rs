@@ -44,7 +44,7 @@ pub struct Article<'a> {
 /// The article on the page `html`, or none where nothing on it reads as one.
 pub fn extract(html: &str) -> Option<Article<'_>> {
     let mut tree = Tree::parse(html);
-    let title = metadata_title(&tree).unwrap_or_else(|| article_title(&tree));
+    let title = plain(&metadata_title(&tree).unwrap_or_else(|| article_title(&tree)));
     let body = tree.select(ROOT, &["body"]).into_iter().next()?;
     // The byline element is the page's chrome, so it goes, whether or not the metadata names the
     // author; the author comes from the page's JSON-LD alone, which names one cleanly where the
@@ -203,7 +203,8 @@ pub(crate) fn ld_headline(ld: &[tinyjson::JsonValue]) -> Option<String> {
 }
 
 /// `s` as the page would show it: tags gone, entities decoded, spaces collapsed. JSON-LD's strings
-/// are HTML as WordPress writes them (`We&#8217;re`), which no parse of the page decodes.
+/// are HTML as WordPress writes them (`We&#8217;re`), which no parse of the page decodes, and a
+/// title's `<meta>` can escape its tags (`&lt;i&gt;Porco Rosso&lt;/i&gt;`), which one parse leaves.
 fn plain(s: &str) -> String {
     normalize_spaces(&Tree::parse(s).text(ROOT))
 }

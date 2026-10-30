@@ -464,6 +464,10 @@ what is left, as `html.rs` is the walk over a comment.
     - The JSON-LD `headline` is read as HTML, its tags dropped and its entities
       decoded, as WordPress writes it (`We&#8217;re`, Gizmodo); dom_smoothie
       took the string as JSON gave it (`smoothie.rs`, [c752001])
+    - The title is read as HTML once more, its tags dropped, as a `<meta>` can
+      escape them (`&lt;i&gt;Porco Rosso&lt;/i&gt;`, Animation Studies
+      Journal), so a title naming a tag (`The &lt;dialog&gt; element`) loses it;
+      dom_smoothie showed the tags (`smoothie.rs`)
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the

@@ -270,6 +270,18 @@ fn decodes_the_json_ld_headline() {
     }
 }
 
+/// A title's tags escaped in its `<meta>` are dropped, not shown (Animation Studies Journal, 2026-10).
+#[test]
+fn drops_the_tags_a_meta_title_escapes() {
+    let html = headed(
+        "<meta property=\"og:title\" content=\"A Pig, the State, and War: &lt;i&gt;Porco Rosso&lt;/i&gt; (&lt;i&gt;Kurenai no Buta&lt;/i&gt;)\">",
+    );
+    assert_eq!(
+        title(&html),
+        "A Pig, the State, and War: Porco Rosso (Kurenai no Buta)"
+    );
+}
+
 /// A headline that is a summary rather than the title, as Wikipedia's is, gives way to the title.
 #[test]
 fn passes_over_a_headline_that_is_no_title() {
