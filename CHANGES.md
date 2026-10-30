@@ -467,7 +467,7 @@ what is left, as `html.rs` is the walk over a comment.
     - The title is read as HTML once more, its tags dropped, as a `<meta>` can
       escape them (`&lt;i&gt;Porco Rosso&lt;/i&gt;`, Animation Studies
       Journal), so a title naming a tag (`The &lt;dialog&gt; element`) loses it;
-      dom_smoothie showed the tags (`smoothie.rs`)
+      dom_smoothie showed the tags (`smoothie.rs`, [780286c])
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the
@@ -1181,3 +1181,4 @@ Pixel 9 Pro XL).
 [05976b0]: https://github.com/laurencedawson/comrak/commit/05976b0
 [0a1f7e2]: https://github.com/laurencedawson/comrak/commit/0a1f7e2
 [c752001]: https://github.com/laurencedawson/comrak/commit/c752001
+[780286c]: https://github.com/laurencedawson/comrak/commit/780286c
