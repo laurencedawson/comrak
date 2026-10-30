@@ -461,6 +461,9 @@ what is left, as `html.rs` is the walk over a comment.
       site's name or took a clean headline; one, a product's home page, lost
       its product's name ("SlideBySide - present together, live"). Readability
       still scores with its own title (`smoothie.rs`, `article.rs`, [05976b0])
+    - The JSON-LD `headline` is read as HTML, its tags dropped and its entities
+      decoded, as WordPress writes it (`We&#8217;re`, Gizmodo); dom_smoothie
+      took the string as JSON gave it (`smoothie.rs`)
 - The walk, `src/blob/article.rs`: headings, paragraphs, lists nested and
   numbered from their `start`, quotes, `<pre>` as written, inline code,
   rules, emphasis, super- and subscript, links and pictures (`src`, or the

@@ -253,6 +253,23 @@ fn heads_the_article_with_its_json_ld_headline() {
     assert_eq!(title(&html), "Scaling Hierarchical Networks");
 }
 
+/// A headline's entities are decoded and its tags dropped, as the page's own title's are; WordPress
+/// writes its JSON-LD as HTML (Gizmodo, 2026-10).
+#[test]
+fn decodes_the_json_ld_headline() {
+    for headline in [
+        "We Asked Starbucks Why Their &#8216;Sugar-Free&#8217; Drinks Have Sugar and Now We&#8217;re Just More Confused",
+        "We <em>Asked</em> Starbucks Why Their Sugar-Free Drinks Have Sugar and Now We Are Just More Confused",
+    ] {
+        let html = headed(&format!(
+            "<title>Starbucks Sugar-Free Drinks Have Sugar and Now We Are Just More Confused</title>{}",
+            ld("NewsArticle", "headline", headline)
+        ));
+        assert!(title(&html).starts_with("We Asked Starbucks"), "{headline}");
+        assert!(!title(&html).contains(['&', '<']), "{headline}");
+    }
+}
+
 /// A headline that is a summary rather than the title, as Wikipedia's is, gives way to the title.
 #[test]
 fn passes_over_a_headline_that_is_no_title() {

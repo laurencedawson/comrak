@@ -54,7 +54,7 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     let authors = ld_authors(&ld);
     let byline = (!authors.is_empty()).then(|| authors.join(", "));
     let image = meta(&tree, META_IMAGE_KEYS);
-    let headline = ld_headline(&ld);
+    let headline = ld_headline(&ld).map(|h| plain(&h));
     let site = meta(&tree, &["og:site_name"]);
     prepare(&mut tree);
     let (mut tree, root) = grab::grab_article(&tree, body, &title)?;
@@ -200,6 +200,12 @@ pub(crate) fn ld_headline(ld: &[tinyjson::JsonValue]) -> Option<String> {
         }
     }
     ld.iter().find_map(find).cloned()
+}
+
+/// `s` as the page would show it: tags gone, entities decoded, spaces collapsed. JSON-LD's strings
+/// are HTML as WordPress writes them (`We&#8217;re`), which no parse of the page decodes.
+fn plain(s: &str) -> String {
+    normalize_spaces(&Tree::parse(s).text(ROOT))
 }
 
 /// The page's `<title>`, its site's name cut off where that can be told apart.
