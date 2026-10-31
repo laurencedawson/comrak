@@ -202,6 +202,15 @@ fn entities_hex_are_decoded() {
 }
 
 /// The named entities read as their characters, a `<` among them staying a word.
+/// HTML 4's spaces and its zero-width and direction marks are named entities like any other.
+#[test]
+fn entities_spaces_zero_width_and_direction_marks_are_decoded() {
+    assert_eq!(
+        plain("a&ensp;b&emsp;c&thinsp;d&zwnj;e&zwj;f&lrm;g&rlm;h"),
+        "a\u{2002}b\u{2003}c\u{2009}d\u{200C}e\u{200D}f\u{200E}g\u{200F}h"
+    );
+}
+
 #[test]
 fn entities_named_are_decoded() {
     assert_eq!(plain("&quot;a&quot; &amp; b &lt; c"), "\"a\" & b < c");
