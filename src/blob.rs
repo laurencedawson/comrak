@@ -76,8 +76,7 @@ fn utf16_len(s: &str) -> usize {
 /// Render a comrak AST into a binary blob, a link to one of `site`'s own pages written as an
 /// `APP_LINK` ([`sites::PLAIN`] owns none).
 ///
-/// Returns `None` if the document has no spans and text is unchanged from input
-/// (caller should use the raw input string directly); never for [`sites::READER`].
+/// Every document answers a blob, plain words too: the view reads every body from one.
 pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, site: u8) -> Option<Vec<u8>> {
     render(input, site, |b| {
         visit(root, b);
@@ -90,7 +89,7 @@ pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, site: u8) -> Option<V
 /// the input replaces thousands of small per-node scans inside `write_text`, but is only a hint:
 /// a decoded entity, a shortcode emoji or a typographic symbol writes non-ASCII from ASCII input,
 /// and the fast path counted bytes as UTF-16 units, so every span offset needs redoing, not just
-/// the flag. `None` where the document has no spans and its text is the input.
+/// the flag.
 fn render(input: &str, site: u8, walk: impl Fn(&mut BlobWriter)) -> Option<Vec<u8>> {
     let mut b = BlobWriter::new(input.len(), input.is_ascii(), site);
     walk(&mut b);
@@ -98,8 +97,7 @@ fn render(input: &str, site: u8, walk: impl Fn(&mut BlobWriter)) -> Option<Vec<u
         b = BlobWriter::new(input.len(), false, site);
         walk(&mut b);
     }
-    // The reader always answers a blob: its line heights are READER_BLOCK spans the view is told, never inferred
-    (site == sites::READER || !b.spans.is_empty() || b.text() != input).then(|| b.into_blob())
+    Some(b.into_blob())
 }
 
 pub(crate) struct BlobWriter {

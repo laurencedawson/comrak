@@ -548,13 +548,15 @@ fn blob(md: &str, site: u8) -> Option<crate::tests::blob_read::Blob> {
     parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).map(|b| read(&b))
 }
 
-/// The reader always answers a blob, plain words too, so the view knows it reads the reader's; any
-/// other site answers none for them, the view showing the words as they are.
+/// Every site answers a blob for plain words, the view reading every body from one: the words as
+/// they are, with no span but the reader's tile over them.
 #[test]
-fn markdown_reader_answers_a_blob_for_plain_words() {
-    let b = blob("just some words", READER).expect("a blob");
-    assert_eq!(b.text, "just some words");
-    assert!(blob("just some words", PLAIN).is_none());
+fn every_site_answers_a_blob_for_plain_words() {
+    for site in [PLAIN, HACKER_NEWS, CHAN, LEMMY, LOBSTERS, READER] {
+        let b = blob("just some words", site).expect("a blob");
+        assert_eq!(b.text, "just some words", "{site}");
+        assert_eq!(b.spans.is_empty(), site != READER, "{site}: {:?}", b.spans);
+    }
 }
 
 /// The reader's blob carries its line heights as a span over each run of lines, its words alone as

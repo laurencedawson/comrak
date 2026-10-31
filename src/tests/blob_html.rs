@@ -99,16 +99,16 @@ fn spanned(html: &str) -> (String, Vec<Span>) {
 
 // ── nothing ──────────────────────────────────────────────────────────────
 
-/// No text, no blob.
+/// No text is a blob of no text, as no words is: the app's entry points answer null for it before any parse.
 #[test]
-fn nothing_empty_is_none() {
-    assert!(parse("").is_none());
+fn nothing_empty_is_empty_text() {
+    assert_eq!(plain(""), "");
 }
 
-/// A `<` that opens no tag is a word, and words read back unchanged need no blob.
+/// A `<` that opens no tag is a word, read back unchanged with no record.
 #[test]
-fn nothing_unchanged_text_is_none() {
-    assert!(parse("a < b").is_none());
+fn nothing_unchanged_text_is_its_words() {
+    assert_eq!(spanned("a < b"), ("a < b".to_string(), vec![]));
 }
 
 /// HTML with no words is a blob of no text, never `None`, which would show its tags.
@@ -1277,11 +1277,11 @@ fn parity_chan_tags_read_as_their_markdown() {
 
 // ── reader ───────────────────────────────────────────────────────────────
 
-/// The reader always answers a blob, its plain words too, so the view knows it reads the reader's;
-/// a comment's plain words answer none.
+/// Every site answers a blob for plain words, a comment's as the reader's: the words as they are.
 #[test]
-fn reader_answers_a_blob_for_plain_words() {
-    let b = read(&render_html_blob("just some words", sites::READER, None).expect("a blob"));
-    assert_eq!(b.text, "just some words");
-    assert!(render_html_blob("just some words", sites::HACKER_NEWS, None).is_none());
+fn every_site_answers_a_blob_for_plain_words() {
+    for site in [sites::HACKER_NEWS, sites::READER] {
+        let b = read(&render_html_blob("just some words", site, None).expect("a blob"));
+        assert_eq!(b.text, "just some words");
+    }
 }

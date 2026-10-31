@@ -2,7 +2,7 @@
 //!
 //! Pins the FINAL blob output (text, flags, urls) of every smart-affected
 //! shape under the production option set, via the real `render_blob` entry
-//! point — including its None short-circuit and ASCII fast-path re-render.
+//! point — including its ASCII fast-path re-render.
 //!
 //! `invariant`: output that must be byte-identical before and after the
 //! retirement. If one of these fails during the migration, the change is
@@ -39,8 +39,7 @@ fn opts() -> Options<'static> {
     opts
 }
 
-/// The production pipeline end to end: None means the caller renders the
-/// raw input as plain text (the fast path the JNI shim exposes as null).
+/// The production pipeline end to end: every input answers a blob.
 fn parity(markdown: &str) -> Option<Vec<u8>> {
     let trimmed = markdown.trim();
     parse_document_zerocopy(trimmed, &opts(), |root| {
@@ -54,6 +53,14 @@ fn render(markdown: &str) -> Vec<u8> {
 
 fn text(blob: &[u8]) -> String {
     read(blob).text
+}
+
+/// The input comes back as typed: its words alone, no record, the text ASCII.
+fn assert_verbatim(markdown: &str) {
+    let b = read(&render(markdown));
+    assert_eq!(b.text, markdown, "{markdown:?}");
+    assert!(b.spans.is_empty(), "{markdown:?}: {:?}", b.spans);
+    assert!(b.ascii(), "{markdown:?}");
 }
 
 fn has_span_type(blob: &[u8], typ: i32) -> bool {
@@ -95,27 +102,27 @@ mod invariant {
     }
 
     #[test]
-    fn apostrophe_only_input_returns_none() {
-        assert!(parity("it's a test").is_none());
+    fn apostrophe_only_input_renders_verbatim() {
+        assert_verbatim("it's a test");
     }
 
     #[test]
-    fn quote_only_input_returns_none() {
-        assert!(parity("don't \"quote\" me").is_none());
+    fn quote_only_input_renders_verbatim() {
+        assert_verbatim("don't \"quote\" me");
     }
 
     #[test]
-    fn ellipsis_only_returns_none() {
-        assert!(parity("wait...").is_none());
-        assert!(parity("wait....").is_none());
-        assert!(parity("wait . . . what").is_none());
+    fn ellipsis_only_renders_verbatim() {
+        assert_verbatim("wait...");
+        assert_verbatim("wait....");
+        assert_verbatim("wait . . . what");
     }
 
     #[test]
-    fn under_threshold_runs_return_none() {
-        assert!(parity("ok??? fine").is_none());
-        assert!(parity("wow!!! nice").is_none());
-        assert!(parity("no, really").is_none());
+    fn under_threshold_runs_render_verbatim() {
+        assert_verbatim("ok??? fine");
+        assert_verbatim("wow!!! nice");
+        assert_verbatim("no, really");
     }
 
     #[test]
@@ -140,7 +147,7 @@ mod invariant {
 
     #[test]
     fn symbol_mixed_case_pairs_not_matched() {
-        assert!(parity("(Tm) and (tM) and (Rr)").is_none());
+        assert_verbatim("(Tm) and (tM) and (Rr)");
     }
 
     #[test]
@@ -237,13 +244,9 @@ mod retired_transforms {
     use super::*;
 
     /// The deleted transforms' shared contract: the reader sees exactly what
-    /// the author typed. None (no blob) and Some with text == input are both
-    /// valid deliveries of that.
+    /// the author typed.
     fn displays_verbatim(markdown: &str) {
-        match parity(markdown) {
-            None => {}
-            Some(b) => assert_eq!(text(&b), markdown.trim()),
-        }
+        assert_eq!(text(&render(markdown)), markdown.trim());
     }
 
     // Guillemets deleted: `<<`/`>>` were unpaired unconditional substitutions

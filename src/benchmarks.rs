@@ -345,11 +345,10 @@ mod tests {
     }
 
     #[test]
-    fn plain_returns_none() {
-        assert!(
-            parse_and_render(PLAIN).is_none(),
-            "plain text should return None"
-        );
+    fn plain_returns_its_words() {
+        let blob = parse_and_render(PLAIN).expect("plain text answers a blob");
+        let len = i32::from_le_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+        assert_eq!(&blob[8..8 + len], PLAIN.trim().as_bytes());
     }
 
     #[test]
