@@ -633,6 +633,51 @@ fn a_free_heading_carries_its_byte() {
     assert_ne!(byte(of(&b, HEADINGS[1])[0]), of(&b, HEADINGS[1])[0].start);
 }
 
+/// A heading carrying its byte follows the blank line's tile, which ends where it starts, and every record
+/// before that tile ends by the word ahead of the blank line: a section runs from its heading to its last
+/// word, and the next follows the newlines after it alone. Each heading here comes after a different block;
+/// the one after a list nested in its item has no blank line ahead of it, and the quote reaches past the one
+/// in it, so both carry 0.
+#[test]
+fn a_cut_heading_follows_its_gap_and_nothing_reaches_it() {
+    use crate::blob::{READER_BLOCK, reader_block};
+    let b = within(
+        "<blockquote><p>A quote, café.</p></blockquote><h2>After a quote</h2><p>Words.</p>\
+         <ul><li>one</li><li>two</li></ul><h2>After a list</h2><p>Words.</p>\
+         <pre><code>code\n</code></pre><h2>After code</h2><p>Words.</p>\
+         <p><img src=\"https://example.com/a.png\"></p><h2>After a picture</h2><p>Words.</p>\
+         <ul><li>words<ul><li>x</li></ul><h2>After a nested list</h2></li></ul>\
+         <blockquote><p>Words.</p><h2>Quoted</h2></blockquote>",
+    );
+    let utf16: Vec<u16> = b.text.encode_utf16().collect();
+    let mut cuts = 0;
+    for (i, s) in b.spans.iter().enumerate() {
+        if !HEADINGS.contains(&s.typ) || s.data == 0 {
+            continue;
+        }
+        cuts += 1;
+        let gap = &b.spans[i - 1];
+        assert_eq!(
+            (gap.typ, gap.data, gap.end),
+            (READER_BLOCK, reader_block::GAP, s.start),
+            "{:?}",
+            words(&b, s)
+        );
+        let mut last_word = s.start as usize;
+        while utf16[last_word - 1] == u16::from(b'\n') {
+            last_word -= 1;
+        }
+        for r in &b.spans[..i - 1] {
+            assert!(
+                r.end as usize <= last_word,
+                "{r:?} reaches past the word before {:?}",
+                words(&b, s)
+            );
+        }
+    }
+    assert_eq!(cuts, 4, "{:?}", b.text);
+}
+
 #[test]
 fn an_h1_in_the_article_is_an_h2() {
     let b = within("<h1>Section</h1>");

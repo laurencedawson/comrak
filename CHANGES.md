@@ -183,8 +183,11 @@ A long reader body can be cut into sections, a row each, at a top-level
 heading: the article walk writes each heading's data as the byte it starts on,
 and `into_blob`, once the records are sorted, clears it on any heading a span
 reaches past, so a byte marks a cut that splits nothing ([56e5b69]), and on any
-heading no gap tile ends right before, so every cut opens on a blank line
-([d887f59]).
+heading no gap tile ends right before ([d887f59]). So a heading carrying its byte
+follows the blank line's tile, and every record before that tile ends by the word
+ahead of the blank line: a reader reads a section from its heading to its last
+word, the newlines between alone, with no data of its own.
+`a_cut_heading_follows_its_gap_and_nothing_reaches_it` pins both.
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
 a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
