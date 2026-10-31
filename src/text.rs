@@ -3,7 +3,8 @@
 //! Author prose renders as typed, with exactly three exceptions:
 //! - runs of spaces collapse to one ([`collapse_whitespace`])
 //! - typed typographic Unicode (curly quotes, en/em dashes, ellipsis)
-//!   normalizes to ASCII, keeping the zero-copy path wide ([`prefer_ascii`])
+//!   normalizes to ASCII, no-break spaces are spaces and soft hyphens drop,
+//!   keeping the zero-copy path wide ([`prefer_ascii`])
 //! - the four symbol codes `(c)` `(r)` `(tm)` `+-` render as ©®™±
 //!   ([`typographic_symbols`])
 //!
@@ -60,21 +61,45 @@ pub fn collapse_whitespace(s: &str) -> Cow<'_, str> {
 /// - U+201C/U+201D (curly double quotes) → `"`
 /// - U+2013 (en dash) / U+2014 (em dash) → `-`
 /// - U+2026 (horizontal ellipsis) → `...`
+/// - U+00A0 (no-break space) → ` `
+/// - U+00AD (soft hyphen) → nothing
 ///
-/// All six share the `E2 80 X` UTF-8 prefix; one window scan covers them.
+/// A no-break space keeps the words either side of it on one line ("5 km"). As
+/// a plain space a line may break there instead, a small loss in a narrow
+/// column, taken for the zero-copy path: pages put them everywhere, and one
+/// costs a whole section its ASCII bytes. Each stays one space, so a run of
+/// them keeps its width and a paragraph of one still stands as a blank line.
+///
+/// A soft hyphen is an invisible mark where a word may break with a hyphen at
+/// a line's end. The view lays out with `HYPHENATION_FREQUENCY_NONE`, under
+/// which Android ignores soft hyphens as break points and draws nothing for
+/// them, so dropping one changes nothing on screen. Kept, it would still split
+/// the word for search and translation and cost its text the zero-copy path.
+/// Typed markdown loses them earlier, to `sanitize_input`; this catches the
+/// ones it never sees: entities decoded after it, and the HTML and article walks.
+///
+/// The quotes, dashes and ellipsis share the `E2 80 X` UTF-8 prefix, and the
+/// no-break space and soft hyphen are `C2 A0` and `C2 AD`; one scan for either
+/// lead byte gates them all.
 /// Zero-copy fast path when none are present (the common case).
 #[inline]
 pub fn prefer_ascii(s: &str) -> Cow<'_, str> {
-    // Fast path: all typographic chars start with `0xE2` in UTF-8. memchr
-    // SIMD-scans for it in one shot; ASCII-only text returns immediately.
-    if memchr::memchr(0xE2, s.as_bytes()).is_none() {
+    // Fast path: every char handled here leads with `0xE2` or `0xC2` in UTF-8.
+    // memchr SIMD-scans for both in one shot; ASCII-only text returns at once.
+    let b = s.as_bytes();
+    if memchr::memchr2(0xE2, 0xC2, b).is_none() {
         return Cow::Borrowed(s);
     }
-    if !s.as_bytes().windows(3).any(|w| {
+    let typographic = b.windows(3).any(|w| {
         w[0] == 0xE2
             && w[1] == 0x80
             && matches!(w[2], 0x93 | 0x94 | 0x98 | 0x99 | 0x9C | 0x9D | 0xA6)
-    }) {
+    });
+    if !typographic
+        && !b
+            .windows(2)
+            .any(|w| w[0] == 0xC2 && matches!(w[1], 0xA0 | 0xAD))
+    {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len());
@@ -84,6 +109,8 @@ pub fn prefer_ascii(s: &str) -> Cow<'_, str> {
             '\u{201C}' | '\u{201D}' => out.push('"'),
             '\u{2013}' | '\u{2014}' => out.push('-'),
             '\u{2026}' => out.push_str("..."),
+            '\u{00A0}' => out.push(' '),
+            '\u{00AD}' => {}
             _ => out.push(ch),
         }
     }

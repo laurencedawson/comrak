@@ -477,6 +477,28 @@ mod format {
         assert_eq!(flags & FLAG_IS_ASCII, 0);
     }
 
+    /// A no-break space is a space and the text ASCII; a paragraph of one alone,
+    /// a comment's blank line, still stands between its neighbours as its blank lines.
+    #[test]
+    fn flags_no_break_space_is_a_space_keeps_is_ascii() {
+        let b = read(&blob_bytes("5&nbsp;km\n\n&nbsp;\n\nafter"));
+        assert_eq!(b.flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        assert_eq!(b.text, "5 km\n\n\n\nafter");
+    }
+
+    /// A soft hyphen from an entity, which `sanitize_input` never sees, drops
+    /// in `prefer_ascii`: the text is ASCII again and the span after it starts
+    /// where the words without it put it.
+    #[test]
+    fn flags_soft_hyphen_entity_dropped_keeps_is_ascii() {
+        let blob = blob_bytes("co&shy;op**er&#xAD;ate** done");
+        let b = read(&blob);
+        assert_eq!(b.text, "cooperate done");
+        assert_eq!(b.flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
+        let (start, end, _) = first_span(&blob);
+        assert_eq!((start, end), (4, 9));
+    }
+
     /// Render through `render_blob` proper so the ASCII-input writer
     /// selection (the ASCII fast path) is exercised, unlike `render_raw`
     /// which always constructs the scanning writer.
@@ -1680,13 +1702,13 @@ mod edge {
     /// Only top-level paragraphs: one inside a quote is the quote's content and stays.
     #[test]
     fn invisible_paragraph_in_a_quote_stays() {
-        assert!(render_test("> a\n>\n> &nbsp;").text().contains('\u{a0}'));
+        assert_eq!(render_test("> a\n>\n> &nbsp;").text(), "a\n\n ");
     }
 
-    /// A no-break space beside a visible character is part of the text.
+    /// A no-break space beside a visible character is part of the text, as a space.
     #[test]
     fn no_break_space_beside_text_stays() {
-        assert_eq!(render_test("&nbsp;word").text(), "\u{a0}word");
+        assert_eq!(render_test("&nbsp;word").text(), " word");
     }
 }
 

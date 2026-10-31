@@ -662,6 +662,21 @@ fn words_prefer_ascii() {
     );
 }
 
+/// A no-break space, typed or an entity, is a space, one for each, and the text stays ASCII.
+#[test]
+fn words_no_break_space_is_a_space() {
+    let b = blob("5&nbsp;km, 10\u{a0}kg and&nbsp;&nbsp;two");
+    assert_eq!((b.text.as_str(), b.ascii()), ("5 km, 10 kg and  two", true));
+}
+
+/// A soft hyphen, typed or an entity, drops, and the text stays ASCII.
+#[test]
+fn words_soft_hyphen_dropped() {
+    let b = blob("co\u{ad}op<b>er&shy;ate</b> done");
+    assert_eq!((b.text.as_str(), b.ascii()), ("cooperate done", true));
+    assert_eq!(b.spans, vec![span(4, 9, BOLD)]);
+}
+
 // ── tags ─────────────────────────────────────────────────────────────────
 
 /// A tag with a class among others still matches.

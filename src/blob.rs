@@ -238,9 +238,10 @@ impl BlobWriter {
             s = s.trim_start_matches(' ');
         }
         // One gate for both character passes: prefer_ascii only acts on
-        // 0xE2-lead sequences, typographic_symbols only on '(' or '+'.
-        // The common clean node takes a single scan and writes as-is.
-        if memchr::memchr3(0xE2, b'(', b'+', s.as_bytes()).is_none() {
+        // 0xE2- and 0xC2-lead sequences, typographic_symbols only on '(' or '+'.
+        // The common clean node takes two scans and writes as-is.
+        let b = s.as_bytes();
+        if memchr::memchr3(0xE2, 0xC2, b'(', b).is_none() && memchr::memchr(b'+', b).is_none() {
             return self.write_text(s);
         }
         let s = prefer_ascii(s);
