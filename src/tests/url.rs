@@ -126,6 +126,14 @@ fn image_proxy_unusable_inner_url_kept_wrapped() {
     unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%00b.png");
 }
 
+/// A proxy whose inner address is no web page's, a script's, is kept wrapped: only an http(s)
+/// address is unwrapped, as a redirect's is.
+#[test]
+fn proxy_to_a_script_kept_wrapped() {
+    unchanged("https://lemmy.ml/api/v3/image_proxy?url=javascript%3Aalert(1)");
+    unchanged("https://images-ext-1.discordapp.net/external/abc?url=javascript%3Aalert(1)");
+}
+
 /// A link's domain is its host alone: it stops at a path, a query or a fragment, whichever comes
 /// first, so a `/` later in the query or the fragment is never read as the path's.
 #[test]

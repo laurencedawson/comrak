@@ -160,7 +160,7 @@ fn unwrap_discord_image(url: &str) -> Option<String> {
     if !(rest.starts_with("images-ext-") && rest.contains(".discordapp.net/external/")) {
         return None;
     }
-    query_param(url, "url")
+    query_param(url, "url").filter(|u| u.starts_with("http"))
 }
 
 fn unwrap_proxy(url: &str) -> Cow<'_, str> {
@@ -170,7 +170,7 @@ fn unwrap_proxy(url: &str) -> Cow<'_, str> {
     if !(url.contains("/api/v3/image_proxy") || url.contains("/api/v4/image/proxy")) {
         return Cow::Borrowed(url);
     }
-    if let Some(original) = query_param(url, "url") {
+    if let Some(original) = query_param(url, "url").filter(|u| u.starts_with("http")) {
         return Cow::Owned(original);
     }
     Cow::Borrowed(url)
