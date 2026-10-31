@@ -47,6 +47,8 @@ type AstNode<'a> = Node<'a, RefCell<Ast<'a>>>;
 use format::{HEADER_SIZE, PICTURE, RULE};
 /// A link's url is cut at the most its data's length bits hold.
 const MAX_URL_LEN: usize = (1 << format::LINK_LENGTH_BITS) - 1;
+/// A link's url must start where its data's offset bits, the 32 its length bits leave, can address it.
+const MAX_URL_OFFSET: usize = 1 << (32 - format::LINK_LENGTH_BITS);
 /// A picture's alt text is cut at this many bytes: words to read out, not a caption.
 const MAX_ALT_LEN: usize = 1024;
 
@@ -321,6 +323,10 @@ impl BlobWriter {
         }
         // Takes only a ResolvedUrl, so no caller can emit a raw URL and none is resolved twice.
         let offset = self.url_data.len();
+        // Past what the data can address the link would read another payload's bytes: its words stay words
+        if offset >= MAX_URL_OFFSET {
+            return;
+        }
         // Back a capped cut off to a char boundary; the host decodes this slice as UTF-8.
         let mut url_len = url.len().min(MAX_URL_LEN);
         while !url.is_char_boundary(url_len) {

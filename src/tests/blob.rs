@@ -292,6 +292,16 @@ mod format {
         assert_eq!(read(&out.into_blob()).spans.len(), 0);
     }
 
+    /// A link whose url would start past the offset a link's data can address, 2^20 bytes of url
+    /// data, is written as its words alone: no LINK that would read another payload's bytes.
+    #[test]
+    fn link_past_the_url_datas_reach_is_its_words() {
+        let picture = format!("![](https://e.com/{})\n\n", "a".repeat(64_000));
+        let b = render_test(&format!("{}[l](https://f.org)", picture.repeat(17)));
+        assert!(b.text().ends_with("l (f.org)"));
+        assert!(!b.span_iter().any(|s| s.typ == LINK));
+    }
+
     /// Multiple URLs pack sequentially in url_data with correct offsets.
     #[test]
     fn multiple_urls_correct_offsets() {
