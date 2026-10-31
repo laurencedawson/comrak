@@ -127,7 +127,10 @@ pub(crate) fn ld_authors(ld: &[tinyjson::JsonValue]) -> Vec<String> {
                 if let Some(a) = o.get("author") {
                     author(a, out);
                 }
-                o.values().for_each(|v| walk(v, out));
+                // An object's fields come back in no order; its keys' order is the same every read
+                let mut fields: smallvec::SmallVec<[_; 16]> = o.iter().collect();
+                fields.sort_unstable_by_key(|(k, _)| *k);
+                fields.into_iter().for_each(|(_, v)| walk(v, out));
             }
             JsonValue::Array(a) => a.iter().for_each(|v| walk(v, out)),
             _ => {}

@@ -264,6 +264,22 @@ fn heads_an_untitled_page_with_its_json_ld_headline() {
     assert_eq!(title(&html), "Real headline here");
 }
 
+/// Authors the JSON-LD names in separate objects stand in the same order every time the page is
+/// read, its keys' order: the parsed object keeps no order of its own.
+#[test]
+fn names_authors_in_separate_objects_the_same_every_read() {
+    let html = ld_page(
+        r#"{"a":{"author":"Ada Lovelace"},"b":{"author":"Grace Hopper"}}"#,
+        &format!("<p>{PROSE}</p>"),
+    );
+    let mut bylines: Vec<String> = (0..64)
+        .map(|_| whole(&html).text.lines().nth(1).unwrap_or("").to_string())
+        .collect();
+    bylines.sort();
+    bylines.dedup();
+    assert_eq!(bylines, ["Ada Lovelace, Grace Hopper"]);
+}
+
 /// A headline's entities are decoded and its tags dropped, as the page's own title's are; WordPress
 /// writes its JSON-LD as HTML (Gizmodo, 2026-10).
 #[test]
