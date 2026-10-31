@@ -223,8 +223,10 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                     }
                     _ => 0,
                 };
-                self.items
-                    .push(Some((self.out.pos(), (indent << 16) | number)));
+                self.items.push(Some((
+                    self.out.pos(),
+                    (indent << format::LIST_INDENT_SHIFT) | number,
+                )));
                 Some(Close::Item)
             }
             "blockquote" => {

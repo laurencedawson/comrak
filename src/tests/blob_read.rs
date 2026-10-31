@@ -1,7 +1,7 @@
 //! A blob read back, for the tests: the header, the text, the spans past the padding with their
 //! addresses, and a table's cells, so no test parses the bytes itself.
 
-use crate::blob::{APP_LINK, IMAGE, LINK};
+use crate::blob::{APP_LINK, IMAGE, LINK, format};
 
 /// A span as the blob holds it. A link's or picture's address is read out as `url` and its
 /// `data` consumed, so its `data` is 0, a picture's payload read into `picture`; any other span's
@@ -29,12 +29,12 @@ pub(crate) struct Picture {
 impl Span {
     /// A list item's indent, from its data.
     pub fn indent(&self) -> i32 {
-        self.data >> 16
+        self.data >> format::LIST_INDENT_SHIFT
     }
 
     /// A list item's number, from its data.
     pub fn number(&self) -> i32 {
-        self.data & 0xFFFF
+        self.data & ((1 << format::LIST_INDENT_SHIFT) - 1)
     }
 }
 
@@ -67,7 +67,10 @@ impl Blob {
         let mut p = (data - 1) as usize;
         let packed = u32::from_le_bytes(self.url_data[p..p + 4].try_into().unwrap());
         p += 4;
-        let (rows, cols) = ((packed >> 16) as usize, (packed & 0xFFFF) as usize);
+        let (rows, cols) = (
+            (packed >> format::TABLE_ROWS_SHIFT) as usize,
+            (packed & ((1 << format::TABLE_ROWS_SHIFT) - 1)) as usize,
+        );
         let cells = (0..rows * cols)
             .map(|_| {
                 let len = u16::from_le_bytes([self.url_data[p], self.url_data[p + 1]]) as usize;
@@ -85,19 +88,22 @@ impl Blob {
 pub(crate) fn read(blob: &[u8]) -> Blob {
     let int = |at: usize| i32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
     let text_len = int(0) as usize;
-    let count = (int(4) & 0xFF_FFFF) as usize;
-    let spans_at = 8 + text_len + (4 - text_len % 4) % 4;
-    let url_data = blob[spans_at + count * 16..].to_vec();
+    let count = (int(4) & ((1 << format::COUNT_BITS) - 1)) as usize;
+    let spans_at = format::HEADER_SIZE + text_len + (4 - text_len % 4) % 4;
+    let url_data = blob[spans_at + count * format::RECORD..].to_vec();
     let spans = (0..count)
         .map(|i| {
-            let at = spans_at + i * 16;
+            let at = spans_at + i * format::RECORD;
             let (start, end, typ, data) = (int(at), int(at + 4), int(at + 8), int(at + 12));
             let (url, picture) = if typ == IMAGE {
                 let (url, picture) = picture(&url_data, data as usize);
                 (Some(url), Some(picture))
             } else {
                 let url = (typ == LINK || typ == APP_LINK).then(|| {
-                    let (offset, len) = ((data >> 12) as usize, (data & 0xFFF) as usize);
+                    let (offset, len) = (
+                        (data >> format::LINK_LENGTH_BITS) as usize,
+                        (data & ((1 << format::LINK_LENGTH_BITS) - 1)) as usize,
+                    );
                     String::from_utf8(url_data[offset..offset + len].to_vec()).unwrap()
                 });
                 (url, None)
@@ -113,7 +119,7 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
         })
         .collect();
     Blob {
-        text: std::str::from_utf8(&blob[8..8 + text_len])
+        text: std::str::from_utf8(&blob[format::HEADER_SIZE..format::HEADER_SIZE + text_len])
             .unwrap()
             .to_string(),
         flags: blob[7],
@@ -126,15 +132,19 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
 /// the alt's, then the url and the alt.
 fn picture(url_data: &[u8], at: usize) -> (String, Picture) {
     let u16_at = |p: usize| u16::from_le_bytes([url_data[at + p], url_data[at + p + 1]]);
-    let (url_len, alt_len) = (u16_at(5) as usize, u16_at(7) as usize);
-    let url = &url_data[at + 9..at + 9 + url_len];
-    let alt = &url_data[at + 9 + url_len..at + 9 + url_len + alt_len];
+    let (url_len, alt_len) = (
+        u16_at(format::PICTURE_URL_LENGTH) as usize,
+        u16_at(format::PICTURE_ALT_LENGTH) as usize,
+    );
+    let url_at = at + format::PICTURE_URL;
+    let url = &url_data[url_at..url_at + url_len];
+    let alt = &url_data[url_at + url_len..url_at + url_len + alt_len];
     (
         String::from_utf8(url.to_vec()).unwrap(),
         Picture {
             flags: url_data[at],
-            width: u16_at(1),
-            height: u16_at(3),
+            width: u16_at(format::PICTURE_WIDTH),
+            height: u16_at(format::PICTURE_HEIGHT),
             alt: String::from_utf8(alt.to_vec()).unwrap(),
         },
     )

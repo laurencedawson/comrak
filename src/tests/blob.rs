@@ -1675,6 +1675,20 @@ mod edge {
         assert!(result.span_iter().any(|s| s.typ == HRULE && s.start == 18));
     }
 
+    /// Every block after an item's words starts a line of its own, as a rule there does: a second paragraph, a code
+    /// block, a quote or a heading ran on from the words with no newline between.
+    #[test]
+    fn a_block_after_an_items_words_starts_a_line_of_its_own() {
+        for (md, text) in [
+            ("- an item\n\n  more words", "an item\nmore words"),
+            ("- an item\n\n  ```\n  code\n  ```", "an item\ncode"),
+            ("- an item\n\n  > quoted", "an item\nquoted"),
+            ("- an item\n\n  ## A heading", "an item\nA heading"),
+        ] {
+            assert_eq!(render_test(md).text(), text, "{md:?}");
+        }
+    }
+
     /// `****` parses as thematic break, not empty bold. ```` `` ```` passes through.
     #[test]
     fn ambiguous_empty_formatting() {

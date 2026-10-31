@@ -33,8 +33,8 @@ pub(crate) fn link_domain(site: u8) -> bool {
     !matches!(site, sites::READER)
 }
 
-/// Whether `site` marks its blocks: a `READER_BLOCK` span over each block and the blank line after
-/// it, from which the view spaces each line. Only the reader's.
+/// Whether `site` marks its blocks: a `READER_BLOCK` span over each block's words and another over the
+/// blank line after it, from which the view spaces each line and the gap between blocks. Only the reader's.
 pub(crate) fn reader_blocks(site: u8) -> bool {
     matches!(site, sites::READER)
 }

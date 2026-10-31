@@ -32,3 +32,35 @@ pub const LEMMY_SPOILER_CONTENT: i32 = 28;
 pub const HEADINGS: [i32; 6] = [
     HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6,
 ];
+
+/// The data of a `READER_BLOCK` span: what its lines are, which sets their height.
+pub mod reader_block {
+    pub const LEVEL_SHIFT: i32 = 8;
+    pub const PARAGRAPH: i32 = 0;
+    pub const HEADING: i32 = 1;
+    pub const QUOTE: i32 = 2;
+    pub const GAP: i32 = 3;
+    pub const LIST: i32 = 4;
+    pub const KEEP: i32 = 5;
+    pub const PICTURE: i32 = 6;
+}
+
+/// The blob's layout, what the writer and the reader must agree on beyond the types.
+pub mod format {
+    pub const HEADER_SIZE: usize = 8;
+    pub const RECORD: usize = 16;
+    pub const COUNT_BITS: usize = 24;
+    pub const ASCII_BIT: usize = 0;
+    pub const SITE_SHIFT: usize = 2;
+    pub const SITE_BITS: usize = 6;
+    pub const PICTURE: &str = "\u{0001}";
+    pub const RULE: &str = "\u{0002}";
+    pub const LINK_LENGTH_BITS: usize = 12;
+    pub const LIST_INDENT_SHIFT: usize = 16;
+    pub const TABLE_ROWS_SHIFT: usize = 16;
+    pub const PICTURE_WIDTH: usize = 1;
+    pub const PICTURE_HEIGHT: usize = 3;
+    pub const PICTURE_URL_LENGTH: usize = 5;
+    pub const PICTURE_ALT_LENGTH: usize = 7;
+    pub const PICTURE_URL: usize = 9;
+}

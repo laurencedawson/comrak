@@ -572,6 +572,7 @@ fn a_free_heading_carries_its_byte() {
     let b = within(
         "<p>Café.</p><h2>Free</h2><blockquote><h3>Quoted</h3></blockquote>\
          <ul><li><h3>Listed</h3></li></ul><a href=\"/x\"><h3>Own link</h3></a>\
+         <ul><li>words<ul><li>x</li></ul><h3>After a nested list</h3></li></ul>\
          <a href=\"/y\"><p>Lead.</p><h3>Linked</h3></a>",
     );
     let byte = |s: &Span| {

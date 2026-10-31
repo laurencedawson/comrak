@@ -560,36 +560,52 @@ fn every_site_answers_a_blob_for_plain_words() {
 }
 
 /// The reader's blob carries its line heights as a span over each run of lines, its words alone as
-/// every block's span: from the text's start to its end, only newlines between one and the next, so
-/// no span holds a blank line between blocks and a long body may be cut there; a one-run body
-/// carries one. No other site writes any.
+/// every block's span, and one over each blank line between two blocks, the space between them:
+/// from the text's start to its end, only newlines between one and the next, the last of the
+/// newlines after a block's last line and none after a line that goes on in the same block. No other
+/// site writes any.
 #[test]
-fn reader_blob_tiles_each_run_of_lines() {
-    for (md, blocks) in [
-        ("some words", 1),
-        ("> some quoted words", 1),
-        ("# A title", 1),
-        ("- an item\n- another", 2),
-        ("one\n\ntwo\n\n# three\n\n> four", 4),
-        ("```\ncode\nmore code\n```", 1),
+fn reader_blob_tiles_each_run_of_lines_and_each_blank_line() {
+    for (md, runs, blanks) in [
+        ("some words", 1, 0),
+        ("> some quoted words", 1, 0),
+        ("# A title", 1, 0),
+        ("- an item\n- another", 2, 0),
+        ("one\n\ntwo\n\n# three\n\n> four", 4, 3),
+        ("- an item\n- another\n\nafter", 3, 1),
+        ("```\ncode\nmore code\n```", 1, 0),
+        ("```\ncode\n\nmore code\n```\n\nafter", 2, 1),
+        ("a\n\n&nbsp;\n\nb", 2, 1),
     ] {
         let b = blob(md, READER).unwrap();
-        let len = b.text.encode_utf16().count() as i32;
-        let tiles: Vec<(i32, i32)> = b
+        let utf16: Vec<u16> = b.text.encode_utf16().collect();
+        let nl = b'\n' as u16;
+        let tiles: Vec<(usize, usize)> = b
             .span_iter()
             .filter(|s| s.typ == crate::blob::READER_BLOCK)
-            .map(|s| (s.start, s.end))
+            .map(|s| (s.start as usize, s.end as usize))
             .collect();
-        assert_eq!(tiles.len(), blocks, "{md:?}: {tiles:?}");
+        let blank = |&(s, e): &(usize, usize)| e == s + 1 && utf16[s] == nl;
+        assert_eq!(
+            tiles.iter().filter(|t| blank(t)).count(),
+            blanks,
+            "{md:?}: {tiles:?}"
+        );
+        assert_eq!(tiles.len(), runs + blanks, "{md:?}: {tiles:?}");
         assert_eq!(tiles[0].0, 0, "{md:?}");
-        assert_eq!(tiles[tiles.len() - 1].1, len, "{md:?}");
-        let utf16: Vec<u16> = b.text.encode_utf16().collect();
+        assert_eq!(tiles[tiles.len() - 1].1, utf16.len(), "{md:?}");
         for pair in tiles.windows(2) {
-            let between = &utf16[pair[0].1 as usize..pair[1].0 as usize];
-            assert!(
-                !between.is_empty() && between.iter().all(|&c| c == b'\n' as u16),
-                "{md:?}: {tiles:?}"
-            );
+            let between = &utf16[pair[0].1..pair[1].0];
+            assert!(between.iter().all(|&c| c == nl), "{md:?}: {tiles:?}");
+            // A blank line's tile stands on the last of the newlines after a block's words, the first ending its line
+            if blank(&pair[1]) {
+                assert!(!between.is_empty(), "{md:?}: {tiles:?}");
+                assert!(!blank(&pair[0]), "{md:?}: {tiles:?}");
+            } else if !blank(&pair[0]) {
+                assert_eq!(between, [nl], "{md:?}: {tiles:?}");
+            } else {
+                assert!(between.is_empty(), "{md:?}: {tiles:?}");
+            }
         }
     }
     for site in [PLAIN, HACKER_NEWS, CHAN, LEMMY, LOBSTERS] {
@@ -598,6 +614,61 @@ fn reader_blob_tiles_each_run_of_lines() {
             !b.span_iter().any(|s| s.typ == crate::blob::READER_BLOCK),
             "site {site}"
         );
+    }
+}
+
+/// Each reader tile carries what its lines are as its data, written as the walk opens the run: a heading with
+/// its level, a quote's or a list's lines, the blank line between blocks a gap, a picture, and a rule or a code
+/// block kept at its own height; any other run of words a paragraph.
+#[test]
+fn reader_tiles_carry_their_kind() {
+    use crate::blob::reader_block::{
+        GAP, HEADING, KEEP, LEVEL_SHIFT, LIST, PARAGRAPH, PICTURE, QUOTE,
+    };
+    let md = "## A heading\n\nwords\n\n> quoted\n\n- an item\n- another\n\n> - in a quote\n\n```\ncode\n```\n\n---\n\n![](https://e.com/a.png)";
+    let b = blob(md, READER).unwrap();
+    let kinds: Vec<i32> = b
+        .span_iter()
+        .filter(|s| s.typ == crate::blob::READER_BLOCK)
+        .map(|s| s.data)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            HEADING | 2 << LEVEL_SHIFT,
+            GAP,
+            PARAGRAPH,
+            GAP,
+            QUOTE,
+            GAP,
+            LIST,
+            LIST,
+            GAP,
+            LIST,
+            GAP,
+            KEEP,
+            GAP,
+            KEEP,
+            GAP,
+            PICTURE,
+        ],
+        "{:?}",
+        b.text
+    );
+    // A container closing after the run, its span pushed behind the run's own, still leaves the run what its
+    // words are: a list item's last block a code block, a quote's last block a heading
+    for (md, kind) in [
+        ("- an item\n\n  ```\n  code\n  ```", KEEP),
+        ("> words\n>\n> ## A heading", HEADING | 2 << LEVEL_SHIFT),
+    ] {
+        let b = blob(md, READER).unwrap();
+        let last = b
+            .span_iter()
+            .filter(|s| s.typ == crate::blob::READER_BLOCK)
+            .last()
+            .unwrap()
+            .data;
+        assert_eq!(last, kind, "{md:?}: {:?}", b.text);
     }
 }
 
