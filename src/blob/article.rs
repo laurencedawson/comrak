@@ -52,15 +52,15 @@ pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
 }
 
 /// The title shown over the article: the page's JSON-LD headline where it reads as the page's own
-/// title, else the page's title without the site's name at either end. A headline is a summary on
-/// some sites (Wikipedia's), so it is taken only where most of its words are the title's, as
-/// Readability.js takes a JSON-LD title; a site's name is its `og:site_name`, its host, or the host's
-/// own name, the label before its ending, as `nullpt.rs •`, `| Quanta Magazine`, `CircuitHub -` and
-/// `- Wikipedia` (en.wikipedia.org) stand in titles.
+/// title, or the page has none, else the page's title without the site's name at either end. A
+/// headline is a summary on some sites (Wikipedia's), so it is taken only where most of its words
+/// are the title's, as Readability.js takes a JSON-LD title; a site's name is its `og:site_name`,
+/// its host, or the host's own name, the label before its ending, as `nullpt.rs •`,
+/// `| Quanta Magazine`, `CircuitHub -` and `- Wikipedia` (en.wikipedia.org) stand in titles.
 fn title<'a>(article: &'a smoothie::Article, base_url: &str) -> &'a str {
     let page = article.title.trim();
     if let Some(headline) = &article.headline
-        && similar(page, headline)
+        && (page.is_empty() || similar(page, headline))
     {
         return headline.trim();
     }

@@ -253,6 +253,17 @@ fn heads_the_article_with_its_json_ld_headline() {
     assert_eq!(title(&html), "Scaling Hierarchical Networks");
 }
 
+/// A page with no title of its own opens on its JSON-LD headline: there is no title for it to be
+/// unlike.
+#[test]
+fn heads_an_untitled_page_with_its_json_ld_headline() {
+    let html = format!(
+        "<html><head>{}</head><body><article><p>{PROSE}</p></article></body></html>",
+        ld("NewsArticle", "headline", "Real headline here")
+    );
+    assert_eq!(title(&html), "Real headline here");
+}
+
 /// A headline's entities are decoded and its tags dropped, as the page's own title's are; WordPress
 /// writes its JSON-LD as HTML (Gizmodo, 2026-10).
 #[test]
