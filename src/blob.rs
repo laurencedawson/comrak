@@ -738,13 +738,16 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
                     BlockQuote | Item(_) | TaskItem(_) | FootnoteDefinition(_)
                 )
             });
-            // A paragraph of only &nbsp; is a pending gap like any other, so none trails the text
+            // A paragraph of only &nbsp; is a pending gap like any other, so none trails the text, and
+            // before any text there is nothing for it to stand between
             if top_level
                 && node
                     .children()
                     .all(|c| matches!(&c.data.borrow().value, Text(t) if t.chars().all(char::is_whitespace)))
             {
-                out.p += 2;
+                if out.len > 0 {
+                    out.p += 2;
+                }
             } else {
                 hold(open, Kind::Plain, start, NO_SPANS, gap(top_level));
             }

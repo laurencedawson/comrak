@@ -1754,6 +1754,12 @@ mod edge {
         assert_eq!(result.span_iter().count(), 0);
     }
 
+    /// Paragraphs of only `&nbsp;` opening a comment are not blank lines over it either.
+    #[test]
+    fn leading_invisible_paragraphs_are_dropped() {
+        assert_eq!(render_test("&nbsp;\n\nword").text(), "word");
+    }
+
     /// A paragraph of only `&nbsp;` shows nothing, so the paragraphs trailing a comment are not
     /// blank lines under it.
     #[test]
