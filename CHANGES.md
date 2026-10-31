@@ -721,6 +721,8 @@ bit:  31                                                            0
 - A picture stands on U+0001 under its `IMAGE` span and a rule on U+0002 under its `HRULE`, written
   through `PICTURE` and `RULE`, so the text alone tells the two apart: a list item reads it to make
   room above a picture under it and none above a rule ([141df8a]).
+- A rule asks for the newline a picture does before it, one in a list and a blank line elsewhere, so
+  it never runs on from an item's words ([a8f8d8f]).
 - An empty code block writes nothing and queues no gap, so a document never
   opens on a blank line because of one, and the blocks around it stay one blank
   line apart.
@@ -1212,3 +1214,4 @@ Pixel 9 Pro XL).
 [243283c]: https://github.com/laurencedawson/comrak/commit/243283c
 [74c06bd]: https://github.com/laurencedawson/comrak/commit/74c06bd
 [141df8a]: https://github.com/laurencedawson/comrak/commit/141df8a
+[a8f8d8f]: https://github.com/laurencedawson/comrak/commit/a8f8d8f
