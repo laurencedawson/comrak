@@ -165,20 +165,23 @@ view is always told, it always answers a blob, plain words too; since [638ec59]
 every site does.
 
 Its blob carries the reader's line heights as a `READER_BLOCK` span over each
-run of lines, its words alone as every block's span (`site::reader_blocks`):
-`BlobWriter` closes one at the newline flush in `write_text`, the one place
-newlines land, before writing them, and opens the next on the words after, so
-no span holds a blank line between blocks ([56e5b69]); `into_blob` closes the
-last. The view's span search stays local to the line it is asked about. The view
-works each line's height out from the spans the blob already writes, headings,
-quotes, list items and code; the record itself carries no kind. One span over
-the whole text was tried first: its end pinned the view's search to the first
-record and a link-heavy page took a third of a second to lay out, 32 ms tiled.
+run of lines, its words alone (`site::reader_blocks`), and one over each blank
+line between two blocks, on the last of its newlines, so the gap stands outside
+the block ([56e5b69], [d887f59]). `BlobWriter` closes one at the newline flush in
+`write_text`, the one place newlines land, and `into_blob` closes the last. The
+view's span search stays local to the line it is asked about. Each tile's data
+says what its lines are, a `reader_block` kind, a heading's level from
+`LEVEL_SHIFT` ([d887f59]), so the view reads what a line is off its tile, not
+off the spans over it. One span over the whole text was tried first: its end
+pinned the view's search to the first record and a link-heavy page took a third
+of a second to lay out, 32 ms tiled.
 
 A long reader body can be cut into sections, a row each, at a top-level
 heading: the article walk writes each heading's data as the byte it starts on,
 and `into_blob`, once the records are sorted, clears it on any heading a span
-reaches past, so a byte marks a cut that splits nothing ([56e5b69]).
+reaches past, so a byte marks a cut that splits nothing ([56e5b69]), and on any
+heading no gap tile ends right before, so every cut opens on a blank line
+([d887f59]).
 
 One `BlobWriter::link` writes every link for both walks, written, autolinked or
 a Lemmy mention: a site's own page is an `APP_LINK` span, any other a `LINK`,
@@ -723,6 +726,8 @@ bit:  31                                                            0
   room above a picture under it and none above a rule ([141df8a]).
 - A rule asks for the newline a picture does before it, one in a list and a blank line elsewhere, so
   it never runs on from an item's words ([a8f8d8f]).
+- A block after a list item's words or inside a quote starts a line of its own: a block that is not
+  top-level asks for one newline after it, not none, so `- a\n\n  b` no longer reads `ab` ([d887f59]).
 - An empty code block writes nothing and queues no gap, so a document never
   opens on a blank line because of one, and the blocks around it stay one blank
   line apart.
@@ -790,7 +795,7 @@ prose parse for two optimisation passes without showing.
 > **Generated files.** `src/blob/span_types.rs` and `src/blob/sites.rs` are
 > written by syncdown's Gradle `generateSpanTypes` and `generateSites` tasks
 > and committed here, so `cargo` runs in isolation. Change the ids in
-> syncdown's `span_types.toml` and `sites.toml`, never in these files.
+> syncdown's `blob_format.toml` and `sites.toml`, never in these files.
 
 ### `src/benchmarks.rs`
 
@@ -1216,3 +1221,4 @@ Pixel 9 Pro XL).
 [141df8a]: https://github.com/laurencedawson/comrak/commit/141df8a
 [a8f8d8f]: https://github.com/laurencedawson/comrak/commit/a8f8d8f
 [d89386d]: https://github.com/laurencedawson/comrak/commit/d89386d
+[d887f59]: https://github.com/laurencedawson/comrak/commit/d887f59
