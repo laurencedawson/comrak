@@ -379,15 +379,12 @@ mod format {
     }
 
     const FLAG_IS_ASCII: u8 = 1 << 0;
-    const FLAG_HAS_SPOILER_BODY: u8 = 1 << 1;
 
-    /// Empty writer: is_ascii vacuously true, no spoiler body.
+    /// Empty writer: is_ascii vacuously true.
     #[test]
     fn flags_empty_blob() {
         let blob = BlobWriter::new(0, false, PLAIN).into_blob();
-        let flags = read(&blob).flags;
-        assert_eq!(flags & FLAG_IS_ASCII, FLAG_IS_ASCII);
-        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, 0);
+        assert_eq!(read(&blob).flags, FLAG_IS_ASCII);
     }
 
     /// Pure ASCII text with formatting spans sets is_ascii and nothing else.
@@ -406,13 +403,12 @@ mod format {
         assert_eq!(read(&blob).flags, FLAG_IS_ASCII);
     }
 
-    /// A spoiler's hidden body is the one span the header speaks for, so the host can
-    /// skip containment checks on every comment that has none.
+    /// A spoiler's body sets no flag either: the host reads whether a body has one off the
+    /// records it walks anyway, so the header's bit 1 is 0.
     #[test]
-    fn flags_lemmy_spoiler_sets_spoiler_body() {
+    fn flags_lemmy_spoiler_sets_nothing_of_its_own() {
         let blob = blob_bytes(":::spoiler the secret\nhidden body\n:::");
-        let flags = read(&blob).flags;
-        assert_eq!(flags & FLAG_HAS_SPOILER_BODY, FLAG_HAS_SPOILER_BODY);
+        assert_eq!(read(&blob).flags, FLAG_IS_ASCII);
     }
 
     /// Non-ASCII content (emoji) clears is_ascii.

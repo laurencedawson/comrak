@@ -41,7 +41,7 @@ impl Span {
 /// The blob read back.
 pub(crate) struct Blob {
     pub text: String,
-    /// The header's flag byte: bit 0 ASCII text, bit 1 a spoiler's body.
+    /// The header's flag byte: bit 0 ASCII text, bits 2-7 the site.
     pub flags: u8,
     /// In the blob's order: start ascending, end descending, type ascending.
     pub spans: Vec<Span>,

@@ -2,8 +2,7 @@
 //!
 //! Produces a compact blob: `[text_len:4][span_count:3|flags:1][text][pad][spans][url_data]`
 //! All positions are UTF-16 code units mapping directly to Java String indices.
-//! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = has_spoiler_body,
-//! bits 2-7 = the site the blob was read for.
+//! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = 0, bits 2-7 = the site the blob was read for.
 //!
 //! Unlike HTML rendering, this walks the AST once and writes text + span metadata
 //! into a single contiguous buffer with zero intermediate allocations.
@@ -119,9 +118,6 @@ pub(crate) struct BlobWriter {
     /// assumption against the finished text; parser transforms that break
     /// it (smartypants, entities, emoji) trigger a slow-path re-render.
     fast_path_ascii: bool,
-    /// Set if any LEMMY_SPOILER_CONTENT span exists. Stored as a header flag so
-    /// consumers can skip hidden-spoiler containment checks for normal content.
-    has_spoiler_body: bool,
     /// How many lists and quotes the walk is inside.
     list_depth: usize,
     quote_depth: usize,
@@ -174,7 +170,6 @@ impl BlobWriter {
             p: 0,
             all_ascii: true,
             fast_path_ascii,
-            has_spoiler_body: false,
             site,
             list_depth: 0,
             quote_depth: 0,
@@ -277,7 +272,6 @@ impl BlobWriter {
         if start < self.len {
             self.spans
                 .extend_from_slice(&[start as i32, self.len as i32, t, data]);
-            self.has_spoiler_body |= t == LEMMY_SPOILER_CONTENT;
         }
     }
 
@@ -503,12 +497,10 @@ impl BlobWriter {
         // Header layout: text_len in bytes 0-3, span_count in bytes 4-6, flags
         // in byte 7. span_count is capped at 24 bits (16M); the high byte is
         // reused as a flag field so the header stays 8 bytes.
-        //   bit 0: is_ascii         — text section is pure ASCII
-        //   bit 1: has_spoiler_body — has a LEMMY_SPOILER_CONTENT span
+        //   bit 0: is_ascii — text section is pure ASCII
+        //   bit 1: 0
         //   bits 2-7: the site the blob was read for, its id from `sites` (ids fit six bits)
-        let flags: u32 = (self.all_ascii as u32)
-            | ((self.has_spoiler_body as u32) << 1)
-            | (((self.site & 0x3F) as u32) << 2);
+        let flags: u32 = (self.all_ascii as u32) | (((self.site & 0x3F) as u32) << 2);
         let count_with_flags = (span_count as u32 & 0x00FF_FFFF) | (flags << 24);
         self.blob[0..4].copy_from_slice(&(txt_len as i32).to_le_bytes());
         self.blob[4..8].copy_from_slice(&count_with_flags.to_le_bytes());
