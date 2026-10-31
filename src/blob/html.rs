@@ -624,6 +624,9 @@ pub(super) fn relative(href: &str, base: &str) -> Option<String> {
         return Some(format!("{}//{rest}", &base[..=colon]));
     }
     let authority = colon + 3;
+    if base.get(colon + 1..authority) != Some("//") {
+        return None;
+    }
     let host_end = base[authority..]
         .find(['/', '?', '#'])
         .map_or(base.len(), |i| authority + i);

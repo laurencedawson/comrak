@@ -926,6 +926,17 @@ fn site_link_elsewhere_is_as_written() {
     );
 }
 
+/// A base with no host after its scheme, `https:` or `a:b`, resolves nothing: the link keeps its
+/// address as written, and nothing is read past the base's end.
+#[test]
+fn site_link_against_a_base_with_no_host_is_as_written() {
+    for base in ["https:", "a:b"] {
+        let b = read(&render_html_blob(sites::PLAIN, "<a href=\"x/y\">w</a>", Some(base)).unwrap());
+        let urls: Vec<_> = b.span_iter().filter_map(|s| s.url.clone()).collect();
+        assert_eq!(urls, ["x/y"], "{base}");
+    }
+}
+
 /// A relative path resolves beside the page; a query replaces the page's own; a fragment keeps
 /// the page's query. Read with a base and no app links, so resolving is all that happens.
 #[test]
