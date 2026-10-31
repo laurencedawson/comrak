@@ -43,7 +43,7 @@ fn opts() -> Options<'static> {
 fn parity(markdown: &str) -> Option<Vec<u8>> {
     let trimmed = markdown.trim();
     parse_document_zerocopy(trimmed, &opts(), |root| {
-        render_blob(root, trimmed, crate::blob::sites::PLAIN)
+        render_blob(crate::blob::sites::PLAIN, root, trimmed)
     })
 }
 

@@ -115,7 +115,7 @@ fn main() {
     // Warmup
     for (_, input) in &inputs {
         parse_document_zerocopy(input.trim(), &opts, |root| {
-            let _ = blob::render_blob(root, input.trim(), comrak::blob::sites::PLAIN);
+            let _ = blob::render_blob(comrak::blob::sites::PLAIN, root, input.trim());
         });
     }
 
@@ -134,7 +134,7 @@ fn main() {
                 let pc = ALLOC_COUNT.load(Ordering::Relaxed);
                 let pb = ALLOC_BYTES.load(Ordering::Relaxed);
                 let nc = root.descendants().count();
-                let _ = blob::render_blob(root, trimmed, comrak::blob::sites::PLAIN);
+                let _ = blob::render_blob(comrak::blob::sites::PLAIN, root, trimmed);
                 (pc, pb, nc)
             });
         let (total_raw_count, total_raw_bytes) = stop_tracking();
@@ -175,13 +175,13 @@ fn main() {
         ("html/prose", html::prose_doc()),
     ];
     for (_, input) in &html_inputs {
-        let _ = blob::render_html_blob(input.trim(), html::SITE, None);
+        let _ = blob::render_html_blob(html::SITE, input.trim(), None);
     }
     println!();
     for (name, input) in &html_inputs {
         let trimmed = input.trim();
         start_tracking();
-        let _ = blob::render_html_blob(trimmed, html::SITE, None);
+        let _ = blob::render_html_blob(html::SITE, trimmed, None);
         let (count, bytes) = stop_tracking();
         println!(
             "{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input)",
@@ -198,13 +198,13 @@ fn main() {
     let md_comments = html::hn_comments_markdown();
     start_tracking();
     for c in &html_comments {
-        let _ = blob::render_html_blob(c, html::SITE, None);
+        let _ = blob::render_html_blob(html::SITE, c, None);
     }
     let (html_count, html_bytes) = stop_tracking();
     start_tracking();
     for c in &md_comments {
         parse_document_zerocopy(c, &opts, |root| {
-            let _ = blob::render_blob(root, c, comrak::blob::sites::PLAIN);
+            let _ = blob::render_blob(comrak::blob::sites::PLAIN, root, c);
         });
     }
     let (md_count, md_bytes) = stop_tracking();

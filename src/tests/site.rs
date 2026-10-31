@@ -418,7 +418,7 @@ fn internal_is_the_sites_own_host_or_relative() {
 fn links(md: &str, site: u8) -> (String, Vec<(i32, String)>) {
     let opts = production_options();
     let b = read(
-        &parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).expect("a blob"),
+        &parse_document_zerocopy(md, &opts, |root| render_blob(site, root, md)).expect("a blob"),
     );
     let found = b
         .span_iter()
@@ -530,7 +530,7 @@ fn markdown_reader_links_are_their_words_alone() {
     let opts = production_options();
     let blob = |site| {
         read(
-            &parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site))
+            &parse_document_zerocopy(md, &opts, |root| render_blob(site, root, md))
                 .expect("a blob"),
         )
     };
@@ -545,7 +545,7 @@ fn markdown_reader_links_are_their_words_alone() {
 /// `md` read as `site`: its blob, where it answers one.
 fn blob(md: &str, site: u8) -> Option<crate::tests::blob_read::Blob> {
     let opts = production_options();
-    parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site)).map(|b| read(&b))
+    parse_document_zerocopy(md, &opts, |root| render_blob(site, root, md)).map(|b| read(&b))
 }
 
 /// Every site answers a blob for plain words, the view reading every body from one: the words as

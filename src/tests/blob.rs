@@ -502,7 +502,7 @@ mod format {
         let opts = test_opts();
         let md = markdown.trim();
         parse_document_zerocopy(md, &opts, |root| {
-            crate::blob::render_blob(root, md, crate::blob::sites::PLAIN)
+            crate::blob::render_blob(crate::blob::sites::PLAIN, root, md)
         })
         .expect("expected a blob")
     }

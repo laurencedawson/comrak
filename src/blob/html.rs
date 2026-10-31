@@ -55,9 +55,9 @@ pub(crate) enum Reads<'r> {
 ///
 /// Returns `None` if the document has no spans and text is unchanged from input
 /// (caller should use the raw input string directly).
-pub fn render_html_blob(input: &str, site: u8, base_url: Option<&str>) -> Option<Vec<u8>> {
+pub fn render_html_blob(site: u8, input: &str, base_url: Option<&str>) -> Option<Vec<u8>> {
     let rules = super::site::html(site);
-    render(input, site, |b| visit(input, rules, base_url, b))
+    render(site, input, |b| visit(input, rules, base_url, b))
 }
 
 /// A tag open around words still to come.

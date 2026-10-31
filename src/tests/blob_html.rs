@@ -35,12 +35,12 @@ const THREAD: &str = "https://boards.4chan.org/g/thread/100";
 
 /// The walk under test, by the name the tests were written against, read as Hacker News.
 fn parse(html: &str) -> Option<Vec<u8>> {
-    render_html_blob(html, sites::HACKER_NEWS, None)
+    render_html_blob(sites::HACKER_NEWS, html, None)
 }
 
 /// The comment's text and spans, read as 4chan on its thread.
 fn chan(html: &str) -> (String, Vec<Span>) {
-    let blob = render_html_blob(html, sites::CHAN, Some(THREAD));
+    let blob = render_html_blob(sites::CHAN, html, Some(THREAD));
     let b = read(&blob.unwrap_or_else(|| panic!("no blob for {html:?}")));
     (b.text, b.spans)
 }
@@ -932,7 +932,7 @@ fn site_link_elsewhere_is_as_written() {
 fn site_link_relative_path_query_and_fragment() {
     let base = Some("https://example.com/a/page?q=1#top");
     let address = |html: &str| {
-        let b = read(&render_html_blob(html, sites::HACKER_NEWS, base).unwrap());
+        let b = read(&render_html_blob(sites::HACKER_NEWS, html, base).unwrap());
         match b
             .spans
             .into_iter()
@@ -1122,7 +1122,7 @@ fn markdown(md: &str) -> Option<Vec<u8>> {
 /// The same comment written as markdown, read as `site`.
 fn markdown_as(md: &str, site: u8) -> Option<Vec<u8>> {
     let opts = production_options();
-    parse_document_zerocopy(md, &opts, |root| render_blob(root, md, site))
+    parse_document_zerocopy(md, &opts, |root| render_blob(site, root, md))
 }
 
 /// What a reader shows: the blob read back, or, with none, its source as it is.
@@ -1252,7 +1252,7 @@ fn parity_chan_tags_read_as_their_markdown() {
     ];
     for (html, md) in pairs {
         assert_eq!(
-            shown(render_html_blob(html, sites::CHAN, Some(THREAD)), html),
+            shown(render_html_blob(sites::CHAN, html, Some(THREAD)), html),
             shown(markdown_as(md, sites::CHAN), md),
             "{html:?} against {md:?}"
         );
@@ -1263,12 +1263,12 @@ fn parity_chan_tags_read_as_their_markdown() {
         "see https://boards.4chan.org/g/thread/123#p456 now",
     );
     assert_eq!(
-        shown(render_html_blob(html, sites::CHAN, Some(THREAD)), html),
+        shown(render_html_blob(sites::CHAN, html, Some(THREAD)), html),
         shown(markdown_as(md, sites::CHAN), md)
     );
     for (html, md) in pairs {
         assert_eq!(
-            shown(render_html_blob(html, sites::CHAN, Some(THREAD)), html),
+            shown(render_html_blob(sites::CHAN, html, Some(THREAD)), html),
             shown(markdown(md), md),
             "{html:?} against {md:?}"
         );
@@ -1281,7 +1281,7 @@ fn hr_is_a_rule_between_blocks() {
     let (text, spans) = spanned("<p>above</p><hr><p>below</p>");
     assert_eq!(text, "above\n\n\u{2}\n\nbelow");
     assert_eq!(spans, vec![span(7, 8, HRULE)]);
-    let b = read(&render_html_blob("above<hr>below", sites::READER, None).expect("a blob"));
+    let b = read(&render_html_blob(sites::READER, "above<hr>below", None).expect("a blob"));
     assert_eq!(b.text, "above\n\n\u{2}\n\nbelow");
     assert!(b.spans.contains(&span(7, 8, HRULE)), "{:?}", b.spans);
 }
@@ -1292,7 +1292,7 @@ fn hr_is_a_rule_between_blocks() {
 #[test]
 fn every_site_answers_a_blob_for_plain_words() {
     for site in [sites::HACKER_NEWS, sites::READER] {
-        let b = read(&render_html_blob("just some words", site, None).expect("a blob"));
+        let b = read(&render_html_blob(site, "just some words", None).expect("a blob"));
         assert_eq!(b.text, "just some words");
     }
 }

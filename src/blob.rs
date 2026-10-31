@@ -83,8 +83,8 @@ fn utf16_len(s: &str) -> usize {
 /// `APP_LINK` ([`sites::PLAIN`] owns none).
 ///
 /// Every document answers a blob, plain words too: the view reads every body from one.
-pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, site: u8) -> Option<Vec<u8>> {
-    render(input, site, |b| {
+pub fn render_blob<'a>(site: u8, root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
+    render(site, input, |b| {
         visit(root, b);
         b.append_footnotes();
     })
@@ -96,7 +96,7 @@ pub fn render_blob<'a>(root: &'a AstNode<'a>, input: &str, site: u8) -> Option<V
 /// a decoded entity, a shortcode emoji or a typographic symbol writes non-ASCII from ASCII input,
 /// and the fast path counted bytes as UTF-16 units, so every span offset needs redoing, not just
 /// the flag.
-fn render(input: &str, site: u8, walk: impl Fn(&mut BlobWriter)) -> Option<Vec<u8>> {
+fn render(site: u8, input: &str, walk: impl Fn(&mut BlobWriter)) -> Option<Vec<u8>> {
     let mut b = BlobWriter::new(input.len(), input.is_ascii(), site);
     walk(&mut b);
     if b.fast_path_ascii && !b.text().is_ascii() {

@@ -340,7 +340,7 @@ mod tests {
 
     fn parse_and_render(input: &str) -> Option<Vec<u8>> {
         parse_document_zerocopy(input, &default_opts(), |root| {
-            blob::render_blob(root, input, crate::blob::sites::PLAIN)
+            blob::render_blob(crate::blob::sites::PLAIN, root, input)
         })
     }
 
@@ -410,7 +410,7 @@ mod tests {
             // Warmup
             for _ in 0..100 {
                 let _ = parse_document_zerocopy(trimmed, &opts, |root| {
-                    blob::render_blob(root, trimmed, crate::blob::sites::PLAIN)
+                    blob::render_blob(crate::blob::sites::PLAIN, root, trimmed)
                 });
             }
 
@@ -418,7 +418,7 @@ mod tests {
             let start = std::time::Instant::now();
             for _ in 0..iterations {
                 let _ = parse_document_zerocopy(trimmed, &opts, |root| {
-                    blob::render_blob(root, trimmed, crate::blob::sites::PLAIN)
+                    blob::render_blob(crate::blob::sites::PLAIN, root, trimmed)
                 });
             }
             let elapsed = start.elapsed() / iterations;
@@ -444,12 +444,12 @@ mod tests {
         for (name, input) in &html_inputs {
             let trimmed = input.trim();
             for _ in 0..100 {
-                let _ = blob::render_html_blob(trimmed, html::SITE, None);
+                let _ = blob::render_html_blob(html::SITE, trimmed, None);
             }
             let iterations = 500;
             let start = std::time::Instant::now();
             for _ in 0..iterations {
-                let _ = blob::render_html_blob(trimmed, html::SITE, None);
+                let _ = blob::render_html_blob(html::SITE, trimmed, None);
             }
             let elapsed = start.elapsed() / iterations;
             eprintln!(
@@ -467,13 +467,13 @@ mod tests {
         for _ in 0..100 {
             html_comments
                 .iter()
-                .for_each(|c| drop(blob::render_html_blob(c, html::SITE, None)));
+                .for_each(|c| drop(blob::render_html_blob(html::SITE, c, None)));
         }
         let start = std::time::Instant::now();
         for _ in 0..iterations {
             html_comments
                 .iter()
-                .for_each(|c| drop(blob::render_html_blob(c, html::SITE, None)));
+                .for_each(|c| drop(blob::render_html_blob(html::SITE, c, None)));
         }
         let html_elapsed = start.elapsed() / iterations;
         for _ in 0..100 {
@@ -493,8 +493,8 @@ mod tests {
 
     #[test]
     fn html_corpora_produce_blobs() {
-        assert!(blob::render_html_blob(html::SIMPLE, html::SITE, None).is_some());
-        assert!(blob::render_html_blob(&html::long_doc(), html::SITE, None).is_some());
+        assert!(blob::render_html_blob(html::SITE, html::SIMPLE, None).is_some());
+        assert!(blob::render_html_blob(html::SITE, &html::long_doc(), None).is_some());
         assert_eq!(html::hn_comments().len(), 10);
         assert_eq!(html::hn_comments_markdown().len(), 10);
     }
