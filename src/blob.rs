@@ -79,10 +79,7 @@ fn utf16_len(s: &str) -> usize {
 ///
 /// Every document answers a blob, plain words too: the view reads every body from one.
 pub fn render_blob<'a>(site: u8, root: &'a AstNode<'a>, input: &str) -> Option<Vec<u8>> {
-    render(site, input, |b| {
-        visit(root, b);
-        b.append_footnotes();
-    })
+    render(site, input, |b| visit(root, b))
 }
 
 /// Renders `input` through `walk`, for both walks: with the ASCII fast path where the input is
@@ -105,7 +102,6 @@ pub(crate) struct BlobWriter {
     blob: Vec<u8>,
     pub(crate) spans: Vec<i32>,
     pub(crate) url_data: Vec<u8>,
-    footnotes: Vec<String>,
     len: usize,
     p: usize,
     /// Set if every byte written to the text section is ASCII (< 0x80).
@@ -170,7 +166,6 @@ impl BlobWriter {
             blob,
             spans: Vec::with_capacity(spans_cap),
             url_data: Vec::with_capacity(url_cap),
-            footnotes: vec![],
             len: 0,
             p: 0,
             all_ascii: true,
@@ -469,27 +464,6 @@ impl BlobWriter {
         self.write_text(")");
     }
 
-    pub(crate) fn append_footnotes(&mut self) {
-        let notes = std::mem::take(&mut self.footnotes);
-        if notes.is_empty() {
-            return;
-        }
-        self.nl(2);
-        let start = self.pos();
-        self.write_text(RULE);
-        self.span(HRULE, start);
-        self.nl(2);
-        for (i, note) in notes.iter().enumerate() {
-            let start = self.pos();
-            self.write_text(&(i + 1).to_string());
-            self.span(SUPERSCRIPT, start);
-            self.span(SUPERSCRIPT_SIZE, start);
-            self.write_text(" ");
-            self.write_text(note);
-            self.nl(1);
-        }
-    }
-
     pub(crate) fn into_blob(mut self) -> Vec<u8> {
         // The reader's last run, its span closed here as the others were at the run after them
         self.close_tile();
@@ -597,8 +571,6 @@ enum Kind {
     /// The item's span type and data, until its own blocks are written and its nested lists are next.
     Item(Option<(i32, i32)>),
     Quote,
-    /// The writer outside it.
-    Footnote(Box<BlobWriter>),
     /// Where the text starts, and whether it stands in for a video.
     Link(usize, bool),
 }
@@ -613,7 +585,40 @@ thread_local! {
 pub(crate) fn visit<'a>(root: &'a AstNode<'a>, out: &mut BlobWriter) {
     let mut open = OPEN.take();
     walk(root, out, &mut open);
+    // The notes under a rule at the end, each its number then its own blocks, walked as the body is so a
+    // note keeps its formatting, links and pictures
+    let is_note = |n: &&AstNode<'a>| matches!(n.data.borrow().value, FootnoteDefinition(_));
+    for (i, note) in root.children().filter(is_note).enumerate() {
+        if i == 0 {
+            out.nl(2);
+            let start = out.pos();
+            out.write_text(RULE);
+            out.span(HRULE, start);
+        }
+        out.nl(if i == 0 { 2 } else { 1 });
+        let start = out.pos();
+        out.write_text(itoa(i + 1, &mut [0; 20]));
+        out.span(SUPERSCRIPT, start);
+        out.span(SUPERSCRIPT_SIZE, start);
+        out.write_text(" ");
+        note.children()
+            .for_each(|block| walk(block, out, &mut open));
+    }
     OPEN.set(open);
+}
+
+/// `n` in decimal, written into `buf`, which holds any `usize`.
+fn itoa(mut n: usize, buf: &mut [u8; 20]) -> &str {
+    let mut at = buf.len();
+    loop {
+        at -= 1;
+        buf[at] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    std::str::from_utf8(&buf[at..]).unwrap()
 }
 
 fn walk<'a>(root: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) {
@@ -721,7 +726,10 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
 
         Paragraph => {
             let top_level = !node.parent().is_some_and(|p| {
-                matches!(p.data.borrow().value, BlockQuote | Item(_) | TaskItem(_))
+                matches!(
+                    p.data.borrow().value,
+                    BlockQuote | Item(_) | TaskItem(_) | FootnoteDefinition(_)
+                )
             });
             // A paragraph of only &nbsp; is a pending gap like any other, so none trails the text
             if top_level
@@ -768,15 +776,13 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
         }
 
         FootnoteReference(nfr) => {
-            out.write_text(&nfr.ix.to_string());
+            out.write_text(itoa(nfr.ix as usize, &mut [0; 20]));
             out.span(SUPERSCRIPT, start);
             out.span(SUPERSCRIPT_SIZE, start);
         }
 
-        FootnoteDefinition(_) => {
-            let outside = std::mem::replace(out, BlobWriter::new(64, false, out.site));
-            hold(open, Kind::Footnote(Box::new(outside)), start, NO_SPANS, 0);
-        }
+        // Walked with the notes at the end, after the body
+        FootnoteDefinition(_) => {}
 
         Text(t) => out.write_prose(&collapse_whitespace(t)),
         #[cfg(feature = "shortcodes")]
@@ -870,10 +876,6 @@ fn leave<'a>(node: &'a AstNode<'a>, o: Open, out: &mut BlobWriter) {
         Kind::Quote => {
             out.quote_depth -= 1;
             out.span_data(QUOTE, o.start, out.quote_depth as i32);
-        }
-        Kind::Footnote(outside) => {
-            let tmp = std::mem::replace(out, *outside);
-            out.footnotes.push(tmp.text().trim().to_string());
         }
         Kind::Link(text_start, video) => {
             let (Link(l) | Image(l)) = &node.data.borrow().value else {

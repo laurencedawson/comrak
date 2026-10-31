@@ -47,12 +47,9 @@ fn render_raw(markdown: &str) -> BlobWriter {
     })
 }
 
-/// `render_raw` with its footnotes appended, serialized and read back: what most rendering
-/// assertions want.
+/// `render_raw` serialized and read back: what most rendering assertions want.
 fn render_test(markdown: &str) -> Blob {
-    let mut out = render_raw(markdown);
-    out.append_footnotes();
-    read(&out.into_blob())
+    read(&render_raw(markdown).into_blob())
 }
 
 /// Render + serialize to the final blob byte representation.
@@ -559,9 +556,8 @@ mod format {
         assert_eq!((s, e), (start, start + 4));
     }
 
-    /// Footnote definitions render into a temporary writer; their text lands
-    /// in the main writer via `append_footnotes`, after the visit. An emoji
-    /// shortcode inside one must still clear is_ascii on the final blob.
+    /// Footnote definitions are walked after the body, by the same writer. An
+    /// emoji shortcode inside one must still clear is_ascii on the final blob.
     #[test]
     #[cfg(feature = "shortcodes")]
     fn flags_ascii_input_footnote_shortcode_clears_is_ascii() {
@@ -1546,6 +1542,26 @@ mod footnotes {
         assert_eq!(spans.iter().filter(|s| s.typ == HRULE).count(), 1);
         assert_eq!(spans.iter().filter(|s| s.typ == SUPERSCRIPT).count(), 4);
     }
+
+    /// A note keeps its own formatting and links, as the body does.
+    #[test]
+    fn definitions_keep_their_spans() {
+        let out = render_test("a[^1]\n\n[^1]: **b** [l](https://e.com)");
+        assert_eq!(out.text(), "a1\n\n\u{0002}\n\n1 b l (e.com)");
+        let bold = out
+            .span_iter()
+            .find(|s| s.typ == BOLD)
+            .expect("the note's bold");
+        assert_eq!((bold.start, bold.end), (9, 10));
+        let link = out
+            .span_iter()
+            .find(|s| s.typ == LINK)
+            .expect("the note's link");
+        assert_eq!(
+            (link.start, link.end, link.url.as_deref()),
+            (11, 12, Some("https://e.com"))
+        );
+    }
 }
 
 // ── edge ─────────────────────────────────────────────────────────────────
@@ -1767,7 +1783,6 @@ mod production {
         parse_document_zerocopy(markdown.trim(), &opts, |root| {
             let mut out = BlobWriter::new(256, false, PLAIN);
             visit(root, &mut out);
-            out.append_footnotes();
             read(&out.into_blob())
         })
     }
