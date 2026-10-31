@@ -646,7 +646,7 @@ fn rules_with_nothing_between_are_one() {
 #[test]
 fn a_rule() {
     let b = within("<hr>");
-    assert_eq!(words(&b, of(&b, HRULE)[0]), "\u{1}");
+    assert_eq!(words(&b, of(&b, HRULE)[0]), "\u{2}");
 }
 
 #[test]

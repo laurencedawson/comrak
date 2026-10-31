@@ -1279,10 +1279,10 @@ fn parity_chan_tags_read_as_their_markdown() {
 #[test]
 fn hr_is_a_rule_between_blocks() {
     let (text, spans) = spanned("<p>above</p><hr><p>below</p>");
-    assert_eq!(text, "above\n\n\u{1}\n\nbelow");
+    assert_eq!(text, "above\n\n\u{2}\n\nbelow");
     assert_eq!(spans, vec![span(7, 8, HRULE)]);
     let b = read(&render_html_blob("above<hr>below", sites::READER, None).expect("a blob"));
-    assert_eq!(b.text, "above\n\n\u{1}\n\nbelow");
+    assert_eq!(b.text, "above\n\n\u{2}\n\nbelow");
     assert!(b.spans.contains(&span(7, 8, HRULE)), "{:?}", b.spans);
 }
 

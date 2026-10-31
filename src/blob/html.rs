@@ -313,7 +313,7 @@ impl<'a, 'o> Walk<'a, 'o> {
             // A rule is a block of its own, as markdown's `---` and the article walk's `<hr>` are
             self.end_block();
             let start = self.out.pos();
-            self.out.write_text("\u{0001}");
+            self.out.write_text(RULE);
             self.out.span(HRULE, start);
             self.end_block();
         } else if is("br") {

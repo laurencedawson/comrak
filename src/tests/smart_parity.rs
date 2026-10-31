@@ -199,7 +199,7 @@ mod invariant {
     #[test]
     fn footnote_body_quotes_verbatim() {
         let b = render("hi[^1]\n\n[^1]: it's fine");
-        assert_eq!(text(&b), "hi1\n\n\u{1}\n\n1 it's fine");
+        assert_eq!(text(&b), "hi1\n\n\u{2}\n\n1 it's fine");
     }
 
     #[test]

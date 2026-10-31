@@ -245,7 +245,7 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 }
                 self.end(true);
                 let start = self.out.pos();
-                self.out.write_text("\u{0001}");
+                self.out.write_text(RULE);
                 self.out.span(HRULE, start);
                 self.rule = self.out.len;
                 self.end(true);

@@ -49,6 +49,12 @@ const MAX_URL_LEN: usize = 4095;
 /// A picture's alt text is cut at this many bytes: words to read out, not a caption.
 const MAX_ALT_LEN: usize = 1024;
 
+/// The character a picture stands on in the text, its IMAGE span over it.
+const PICTURE: &str = "\u{0001}";
+/// The character a rule stands on, its HRULE span over it: another than a picture's, so a reader of the text alone
+/// tells the two apart, as a list item does to make room above a picture under it.
+const RULE: &str = "\u{0002}";
+
 /// `s` cut to at most `max` bytes, backed off to a char boundary.
 fn cut(s: &str, max: usize) -> &str {
     let mut len = s.len().min(max);
@@ -359,7 +365,7 @@ impl BlobWriter {
             self.nl(gap);
         }
         let start = self.pos();
-        self.write_text("\u{0001}");
+        self.write_text(PICTURE);
         self.span_picture(start, url, width, height, alt);
         self.nl(gap);
     }
@@ -423,7 +429,7 @@ impl BlobWriter {
         }
         self.nl(2);
         let start = self.pos();
-        self.write_text("\u{0001}");
+        self.write_text(RULE);
         self.span(HRULE, start);
         self.nl(2);
         for (i, note) in notes.iter().enumerate() {
@@ -696,7 +702,7 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
         }
 
         ThematicBreak => {
-            out.write_text("\u{0001}");
+            out.write_text(RULE);
             out.span(HRULE, start);
             out.nl(2);
         }
