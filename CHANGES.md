@@ -718,6 +718,9 @@ bit:  31                                                            0
   trailing newlines past spaces, so consecutive images don't stack padding, even
   a space apart. Pinned shape by shape, in both walks, by
   `image_has_one_blank_line_before_it` and `a_to_a_picture_has_one_blank_line_before_it`.
+- A picture stands on U+0001 under its `IMAGE` span and a rule on U+0002 under its `HRULE`, written
+  through `PICTURE` and `RULE`, so the text alone tells the two apart: a list item reads it to make
+  room above a picture under it and none above a rule ([141df8a]).
 - An empty code block writes nothing and queues no gap, so a document never
   opens on a blank line because of one, and the blocks around it stay one blank
   line apart.
@@ -1208,3 +1211,4 @@ Pixel 9 Pro XL).
 [638ec59]: https://github.com/laurencedawson/comrak/commit/638ec59
 [243283c]: https://github.com/laurencedawson/comrak/commit/243283c
 [74c06bd]: https://github.com/laurencedawson/comrak/commit/74c06bd
+[141df8a]: https://github.com/laurencedawson/comrak/commit/141df8a
