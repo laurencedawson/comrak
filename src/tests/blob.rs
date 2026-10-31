@@ -1197,10 +1197,11 @@ mod block {
         assert_eq!(result.text(), "Item 1\nNested 1\nNested 2\nItem 2");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!(items.len(), 4);
-        assert_eq!((items[0].indent(), items[0].number()), (0, 0));
-        assert_eq!((items[1].indent(), items[1].number()), (1, 0));
-        assert_eq!((items[2].indent(), items[2].number()), (1, 0));
-        assert_eq!((items[3].indent(), items[3].number()), (0, 0));
+        let bullet = crate::blob::format::LIST_BULLET as i32;
+        assert_eq!((items[0].indent(), items[0].number()), (0, bullet));
+        assert_eq!((items[1].indent(), items[1].number()), (1, bullet));
+        assert_eq!((items[2].indent(), items[2].number()), (1, bullet));
+        assert_eq!((items[3].indent(), items[3].number()), (0, bullet));
 
         let result = render_test("- Level 1\n  - Level 2\n    - Level 3");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
@@ -1223,13 +1224,29 @@ mod block {
         assert_eq!(items[0].number(), 5);
         assert_eq!(items[1].number(), 6);
 
-        // Huge ordinals clamp to the number field and never spill into the indent bits.
+        // Huge ordinals clamp below the bullet's value and never spill into the indent bits.
         let result = render_test("65535. a\n65536. b");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!(items.len(), 2);
         for item in &items {
-            assert_eq!((item.indent(), item.number()), (0, 0xFFFF));
+            assert_eq!(
+                (item.indent(), item.number()),
+                (0, crate::blob::format::LIST_BULLET as i32 - 1)
+            );
         }
+    }
+
+    /// A list counted from 0 numbers its items 0 and 1: its first item is no bullet, and the next
+    /// counts on from it.
+    #[test]
+    fn ordered_list_from_zero() {
+        let result = render_test("0. a\n1. b");
+        let numbers: Vec<_> = result
+            .span_iter()
+            .filter(|s| s.typ == LIST_ITEM)
+            .map(|s| s.number())
+            .collect();
+        assert_eq!(numbers, [0, 1]);
     }
 
     /// Bullet list containing ordered sub-list.
@@ -1238,7 +1255,10 @@ mod block {
         let result = render_test("- Bullet\n  1. Ordered\n  2. Second");
         let items: Vec<_> = result.span_iter().filter(|s| s.typ == LIST_ITEM).collect();
         assert_eq!(items.len(), 3);
-        assert_eq!((items[0].indent(), items[0].number()), (0, 0));
+        assert_eq!(
+            (items[0].indent(), items[0].number()),
+            (0, crate::blob::format::LIST_BULLET as i32)
+        );
         assert_eq!((items[1].indent(), items[1].number()), (1, 1));
         assert_eq!((items[2].indent(), items[2].number()), (1, 2));
     }
@@ -1276,7 +1296,14 @@ mod block {
             .filter(|s| matches!(s.typ, LIST_ITEM | TASK_ITEM))
             .map(|s| (s.typ, s.number()))
             .collect();
-        assert_eq!(items, [(LIST_ITEM, 0), (TASK_ITEM, 0), (TASK_ITEM, 1)]);
+        assert_eq!(
+            items,
+            [
+                (LIST_ITEM, crate::blob::format::LIST_BULLET as i32),
+                (TASK_ITEM, 0),
+                (TASK_ITEM, 1)
+            ]
+        );
     }
 
     /// A task item in an ordered list still takes its ordinal, so the next item numbers on.

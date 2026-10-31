@@ -572,7 +572,7 @@ struct Open {
 
 enum Kind {
     Plain,
-    /// The next item's number.
+    /// The next item's number, -1 for a bullet list's, which have none.
     List(i32),
     /// The item's span type and data, until its own blocks are written and its nested lists are next.
     Item(Option<(i32, i32)>),
@@ -700,7 +700,7 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
             out.list_depth += 1;
             let number = match l.list_type {
                 ListType::Ordered => l.start as i32,
-                ListType::Bullet => 0,
+                ListType::Bullet => -1,
             };
             hold(open, Kind::List(number), start, NO_SPANS, gap(top_level));
         }
@@ -708,13 +708,14 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
         Item(_) | TaskItem(_) => {
             let indent = out.list_depth.saturating_sub(1);
             // Every item takes its ordinal, a task item too, so the next one numbers on. Ordered
-            // starts go up to 999,999,999: clamped so they never spill into the indent bits.
+            // starts go up to 999,999,999: clamped below a bullet's value, so they never spill
+            // into the indent bits or read as one
             let number = match open.last_mut().map(|o| &mut o.kind) {
-                Some(Kind::List(n)) => {
-                    *n += (*n > 0) as i32;
-                    (*n - (*n > 0) as i32).clamp(0, 0xFFFF)
+                Some(Kind::List(n)) if *n >= 0 => {
+                    *n += 1;
+                    (*n - 1).min(format::LIST_BULLET as i32 - 1)
                 }
-                _ => 0,
+                _ => format::LIST_BULLET as i32,
             };
             let (typ, low) = match val {
                 TaskItem(ti) => (TASK_ITEM, ti.symbol.is_some() as i32),

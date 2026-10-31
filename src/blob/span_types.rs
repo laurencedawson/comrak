@@ -57,6 +57,7 @@ pub mod format {
     pub const RULE: &str = "\u{0002}";
     pub const LINK_LENGTH_BITS: usize = 12;
     pub const LIST_INDENT_SHIFT: usize = 16;
+    pub const LIST_BULLET: usize = 65535;
     pub const TABLE_ROWS_SHIFT: usize = 16;
     pub const PICTURE_WIDTH: usize = 1;
     pub const PICTURE_HEIGHT: usize = 3;

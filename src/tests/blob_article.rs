@@ -11,7 +11,7 @@
 
 use crate::blob::{
     BOLD, CENTERED, CODE, CODE_BLOCK, HEADINGS, HRULE, IMAGE, ITALIC, LINK, LINK_SIZE, LIST_ITEM,
-    QUOTE, SUPERSCRIPT, render_article_blob,
+    QUOTE, SUPERSCRIPT, format, render_article_blob,
 };
 use crate::tests::blob_read::{Blob, Picture, Span, read};
 
@@ -647,8 +647,23 @@ fn nested_ordered_lists_number_and_indent() {
         .iter()
         .map(|s| (words(&b, s), s.indent(), s.number()))
         .collect();
-    assert_eq!(items, [("three", 0, 3), ("inner", 1, 0), ("four", 0, 4)]);
+    assert_eq!(
+        items,
+        [
+            ("three", 0, 3),
+            ("inner", 1, format::LIST_BULLET as i32),
+            ("four", 0, 4)
+        ]
+    );
     assert!(b.text.contains("three\ninner\nfour"), "{:?}", b.text);
+}
+
+/// An ordered list from 0 numbers its first item 0, as written: a bullet is another value.
+#[test]
+fn an_ordered_list_from_zero_numbers_from_zero() {
+    let b = within("<ol start=\"0\"><li>zero</li><li>one</li></ol>");
+    let numbers: Vec<_> = of(&b, LIST_ITEM).iter().map(|s| s.number()).collect();
+    assert_eq!(numbers, [0, 1]);
 }
 
 #[test]

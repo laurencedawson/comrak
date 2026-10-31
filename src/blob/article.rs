@@ -133,7 +133,7 @@ struct Walk<'t, 'a, 'o> {
     tree: &'t Tree<'a>,
     base_url: &'o str,
     out: &'o mut BlobWriter,
-    /// Each list the walk is inside: its next item's number, 0 for bullets.
+    /// Each list the walk is inside: its next item's number, -1 for bullets.
     lists: Vec<i32>,
     /// Each item the walk is inside: where it starts and its span's data, until its span is
     /// written, before a list nested in it or at its end.
@@ -209,9 +209,9 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                     .and_then(|s| s.trim().parse().ok())
                     .unwrap_or(1);
                 self.lists.push(if name == "ol" {
-                    first.clamp(1, 0xFFFF)
+                    first.clamp(0, format::LIST_BULLET as i32 - 1)
                 } else {
-                    0
+                    -1
                 });
                 Some(Close::List)
             }
@@ -219,11 +219,11 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 self.end(false);
                 let indent = self.lists.len().saturating_sub(1) as i32;
                 let number = match self.lists.last_mut() {
-                    Some(n) if *n > 0 => {
+                    Some(n) if *n >= 0 => {
                         *n += 1;
-                        (*n - 1).min(0xFFFF)
+                        (*n - 1).min(format::LIST_BULLET as i32 - 1)
                     }
-                    _ => 0,
+                    _ => format::LIST_BULLET as i32,
                 };
                 self.items.push(Some((
                     self.out.pos(),
