@@ -604,7 +604,9 @@ Each span is four packed i32 fields, stored in a contiguous array sorted by
 The `data` field is a 32-bit slot whose meaning depends on `type`:
 
 **Links** (`LINK`, `APP_LINK`): offset + length into the trailing `url_data` section, the url
-capped at 4095 bytes:
+capped at 4095 bytes. A url that would start past 1 MiB of `url_data`, which the offset cannot
+address, is written as the link's words alone, no `LINK` ([b90af0e]); the largest saved article,
+2.1 MB of page, uses 32 KB:
 
 ```
 bit:  31                                                         12 11              0
@@ -690,8 +692,9 @@ bit:  31                      16 15                               0
 ```
 
 `number`:
-- `0` for bullet lists
-- `1..n` for ordered lists
+- the item's number as written, `0` included, for ordered lists, clamped below `LIST_BULLET`
+- `LIST_BULLET` (65535, from syncdown's `blob_format.toml`) for bullet lists ([3ebcf59]); `0`
+  meant a bullet before, so a list counted from 0 read as bullets
 
 **Task items** (`TASK_ITEM`) — a list item drawn as a checkbox, nesting indent + checked:
 
@@ -748,6 +751,9 @@ bit:  31                                                            0
 - An empty code block writes nothing and queues no gap, so a document never
   opens on a blank line because of one, and the blocks around it stay one blank
   line apart.
+- A top-level paragraph of only `&nbsp;` queues a gap, kept between paragraphs and never
+  written at the end; before any text it queues none, so a comment never opens on one's blank
+  lines ([b54f698]).
 - Zero-length spans (start ≥ end in UTF-16 units) are silently dropped at
   emission time — they carry no information.
 
@@ -1250,3 +1256,6 @@ Pixel 9 Pro XL).
 [ab3a168]: https://github.com/laurencedawson/comrak/commit/ab3a168
 [861f82b]: https://github.com/laurencedawson/comrak/commit/861f82b
 [f0300e5]: https://github.com/laurencedawson/comrak/commit/f0300e5
+[b90af0e]: https://github.com/laurencedawson/comrak/commit/b90af0e
+[3ebcf59]: https://github.com/laurencedawson/comrak/commit/3ebcf59
+[b54f698]: https://github.com/laurencedawson/comrak/commit/b54f698
