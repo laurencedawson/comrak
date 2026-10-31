@@ -82,9 +82,11 @@ fn title<'a>(article: &'a smoothie::Article, base_url: &str) -> &'a str {
 fn without_site<'t>(title: &'t str, name: &str) -> Option<&'t str> {
     const SEPARATORS: &[char] = &['|', '-', '–', '—', '•', '·', ':', '»', '/', '\\', '~'];
     let at = title.len().checked_sub(name.len())?;
-    let rest = if title.get(at..)?.eq_ignore_ascii_case(name) {
+    // A cut inside a character is no match there, and the other end is still looked at
+    let is_name = |s: Option<&str>| s.is_some_and(|s| s.eq_ignore_ascii_case(name));
+    let rest = if is_name(title.get(at..)) {
         title[..at].trim_end().strip_suffix(SEPARATORS)
-    } else if title.get(..name.len())?.eq_ignore_ascii_case(name) {
+    } else if is_name(title.get(..name.len())) {
         title[name.len()..].trim_start().strip_prefix(SEPARATORS)
     } else {
         None

@@ -330,6 +330,18 @@ fn takes_the_sites_name_off_the_title() {
     }
 }
 
+/// The site's name ahead of a title is taken off though the name's length from the title's end
+/// falls inside a character, where the check for it at the end finds no boundary.
+#[test]
+fn takes_the_sites_name_off_a_title_ending_mid_character() {
+    assert_eq!(
+        title(&headed(
+            "<meta property=\"og:title\" content=\"example.com • Hôtel review\">"
+        )),
+        "Hôtel review"
+    );
+}
+
 /// A title that is the site's name alone keeps it.
 #[test]
 fn keeps_a_title_that_is_the_sites_name() {
