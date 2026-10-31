@@ -1667,6 +1667,14 @@ mod edge {
         assert_eq!(result.span_iter().filter(|s| s.typ == ITALIC).count(), 0);
     }
 
+    /// A rule in a list item stands on a line of its own, as a picture there does, not run on from the item's words.
+    #[test]
+    fn thematic_break_in_a_list_item_is_a_line_of_its_own() {
+        let result = render_test("- words of the item\n\n  ---");
+        assert_eq!(result.text(), "words of the item\n\u{0002}");
+        assert!(result.span_iter().any(|s| s.typ == HRULE && s.start == 18));
+    }
+
     /// `****` parses as thematic break, not empty bold. ```` `` ```` passes through.
     #[test]
     fn ambiguous_empty_formatting() {

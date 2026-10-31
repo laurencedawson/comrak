@@ -702,6 +702,11 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
         }
 
         ThematicBreak => {
+            // A line of its own, as a picture is: an item's words before it end on no newline of their own
+            if out.len != 0 {
+                out.nl(if out.list_depth > 0 { 1 } else { 2 });
+            }
+            let start = out.pos();
             out.write_text(RULE);
             out.span(HRULE, start);
             out.nl(2);
