@@ -264,7 +264,7 @@ third of the allocations it did.
 
 ```rust
 let blob = comrak::parse_document_zerocopy(md, &opts, |root| {
-    comrak::blob::render_blob(root, md, comrak::blob::sites::PLAIN)
+    comrak::blob::render_blob(comrak::blob::sites::PLAIN, root, md)
 });
 ```
 
@@ -301,7 +301,7 @@ offsets remain exact because everything before the substitution was ASCII.
 
 ### Render entry point
 
-`comrak::blob::render_blob(root, input, site) -> Option<Vec<u8>>` renders the
+`comrak::blob::render_blob(site, root, input) -> Option<Vec<u8>>` ([d89386d]) renders the
 AST at `root` against the original source `input`, its links marked as
 [`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5). Every document answers a blob, plain
 words and empty input too ([638ec59]): the consumer reads every body from one,
@@ -309,7 +309,7 @@ and answers null for empty input itself, before any parse.
 
 ### HTML into the blob ([b6d9a01], [2f00ef6])
 
-`comrak::blob::render_html_blob(input, site, base_url) -> Option<Vec<u8>>`
+`comrak::blob::render_html_blob(site, input, base_url) -> Option<Vec<u8>>`
 reads a site's comment HTML, as its API sends it, into the same blob, its
 relative links resolved against `base_url` as a browser resolves them, with no
 markdown between. A second walk, over the HTML in place of comrak's tree,
@@ -507,7 +507,7 @@ parse just as well as the optimized one:
 ```rust
 let arena = comrak::Arena::new();
 let root = comrak::parse_document(&arena, md, &options); // vanilla entry, no zero-copy pooling
-let blob = comrak::blob::render_blob(root, md, sites::PLAIN); // identical bytes to the zerocopy path
+let blob = comrak::blob::render_blob(sites::PLAIN, root, md); // identical bytes to the zerocopy path
 ```
 
 [`parse_document_zerocopy`](#parse-entry-point) and the fork's allocation/throughput
@@ -1215,3 +1215,4 @@ Pixel 9 Pro XL).
 [74c06bd]: https://github.com/laurencedawson/comrak/commit/74c06bd
 [141df8a]: https://github.com/laurencedawson/comrak/commit/141df8a
 [a8f8d8f]: https://github.com/laurencedawson/comrak/commit/a8f8d8f
+[d89386d]: https://github.com/laurencedawson/comrak/commit/d89386d
