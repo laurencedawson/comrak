@@ -24,7 +24,7 @@
 use crate::benchmarks::production_options;
 use crate::blob::sites;
 use crate::blob::{
-    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT,
+    APP_LINK, BOLD, CODE_BLOCK, GREENTEXT, HRULE, IMAGE, ITALIC, LEMMY_SPOILER_CONTENT,
     LEMMY_SPOILER_TITLE, LINK, LINK_SIZE, QUOTE, STRIKETHROUGH, render_blob, render_html_blob,
 };
 use crate::parse_document_zerocopy;
@@ -1273,6 +1273,17 @@ fn parity_chan_tags_read_as_their_markdown() {
             "{html:?} against {md:?}"
         );
     }
+}
+
+/// A rule is a block of its own between the blocks around it, a comment's as the reader's.
+#[test]
+fn hr_is_a_rule_between_blocks() {
+    let (text, spans) = spanned("<p>above</p><hr><p>below</p>");
+    assert_eq!(text, "above\n\n\u{1}\n\nbelow");
+    assert_eq!(spans, vec![span(7, 8, HRULE)]);
+    let b = read(&render_html_blob("above<hr>below", sites::READER, None).expect("a blob"));
+    assert_eq!(b.text, "above\n\n\u{1}\n\nbelow");
+    assert!(b.spans.contains(&span(7, 8, HRULE)), "{:?}", b.spans);
 }
 
 // ── reader ───────────────────────────────────────────────────────────────

@@ -309,6 +309,13 @@ impl<'a, 'o> Walk<'a, 'o> {
             self.end_block();
             self.out.quote_depth += 1;
             self.open.push(Open::Quote(self.out.pos()));
+        } else if is("hr") {
+            // A rule is a block of its own, as markdown's `---` and the article walk's `<hr>` are
+            self.end_block();
+            let start = self.out.pos();
+            self.out.write_text("\u{0001}");
+            self.out.span(HRULE, start);
+            self.end_block();
         } else if is("br") {
             // Each break is a newline, a run of them a blank line at most; none before the first words
             if self.out.len > 0 {
