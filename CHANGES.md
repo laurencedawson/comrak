@@ -46,7 +46,7 @@ Hidden content with **markdown** support
 :::
 ```
 
-Renders as `<details>/<summary>` in HTML. In the blob it emits a title/content pair — `LEMMY_SPOILER_TITLE` over the title line (alongside `BOLD` and `LINK_SIZE` for a generous touch target) and `LEMMY_SPOILER_CONTENT` over the body. The two sort adjacently so the consumer pairs them via `cache[i±1]` with no extra plumbing; the blob's `has_spoiler_body` flag ([ea8f274]) lets the consumer detect spoiler bodies without scanning spans. The inline `>!…!<` / `||…||` spoiler span was retired ([f753071]).
+Renders as `<details>/<summary>` in HTML. In the blob it emits a title/content pair — `LEMMY_SPOILER_TITLE` over the title line (alongside `BOLD` and `LINK_SIZE` for a generous touch target) and `LEMMY_SPOILER_CONTENT` over the body. The two sort adjacently so the consumer pairs them via `cache[i±1]` with no extra plumbing: the body opens one byte past the title, and the title's type is the highest of every span over its words, so the title sorts last of them; the reader's `READER_BLOCK` tile, which shares the title's range since [56e5b69], is numbered below it ([243283c]). The blob's `has_spoiler_body` flag ([ea8f274]) went unread and is retired ([e19d70a]). The inline `>!…!<` / `||…||` spoiler span was retired ([f753071]).
 
 ### `sanitize_input` ([f0bf9d9], [24cd0cc])
 
@@ -161,8 +161,8 @@ matching on the id, every other site taking the default, and each site's code in
 `READER` is an article's site, not an app's: `render_article_blob` writes under
 it whatever the app's own, and its links are words in a sentence, at their size
 and with no domain after them. It owns no pages and reads HTML as plain. So the
-view is always told, it always answers a blob, plain words too; every other
-site's plain words answer none, as before.
+view is always told, it always answers a blob, plain words too; since [638ec59]
+every site does.
 
 Its blob carries the reader's line heights as a `READER_BLOCK` span over each
 run of lines, its words alone as every block's span (`site::reader_blocks`):
@@ -279,7 +279,7 @@ callers can reuse the same logic elsewhere.
 | `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. |
 | `comrak::image_url::is_image_url(&str)` | `bool` | Heuristic URL → image detection (by known host, path pattern, or file extension). |
 | `comrak::text::collapse_whitespace(&str)` | `Cow<'_, str>` | Collapses runs of spaces to a single space. Zero-copy when the input has no double-space. |
-| `comrak::text::prefer_ascii(&str)` | `Cow<'_, str>` | Typed typographic Unicode (curly quotes, en/em dashes, ellipsis) → ASCII. Zero-copy when none present. |
+| `comrak::text::prefer_ascii(&str)` | `Cow<'_, str>` | Typed typographic Unicode (curly quotes, en/em dashes, ellipsis) → ASCII, a no-break space → a space, a soft hyphen dropped ([fa93e2b]). Zero-copy when none present. |
 | `comrak::text::typographic_symbols(&str)` | `Cow<'_, str>` | `(c)/(r)/(tm)/+-` → ©®™±. Zero-copy when nothing matches; an `Owned` return always carries non-ASCII (used for the writer's in-place fast-path downgrade). |
 
 ### Text normalization
@@ -288,7 +288,8 @@ The blob writer's rendering policy, stated once in `src/text.rs`'s module doc
 and applied unconditionally to author prose (`Text` nodes) via
 `BlobWriter::write_prose` — deliberately not options: rendering opinions never
 live in flags. Author text renders as typed, with exactly three exceptions:
-runs of spaces collapse to one, typed typographic Unicode normalizes to ASCII
+runs of spaces collapse to one, typed typographic Unicode normalizes to ASCII,
+a no-break space becoming a space and a soft hyphen dropping ([fa93e2b])
 (keeping the consumer's zero-copy `byte[]` path wide), and the four symbol
 codes render as their glyphs. The last two act on disjoint character sets, so
 the passes commute and the pipeline is idempotent — pinned by a tripwire test
@@ -302,9 +303,9 @@ offsets remain exact because everything before the substitution was ASCII.
 
 `comrak::blob::render_blob(root, input, site) -> Option<Vec<u8>>` renders the
 AST at `root` against the original source `input`, its links marked as
-[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5). Returns `None` when the
-document has no spans and the output text equals the input (the caller can
-then use the raw input string directly and skip allocating a blob).
+[`site`'s](#sites-and-app-links-df385a7-3edc676-5fc6ff3-b381692-736f5cd-a721133-89a23ad-e277031-94bb2f6-d0c39d5). Every document answers a blob, plain
+words and empty input too ([638ec59]): the consumer reads every body from one,
+and answers null for empty input itself, before any parse.
 
 ### HTML into the blob ([b6d9a01], [2f00ef6])
 
@@ -334,8 +335,8 @@ as the scan finds it and writes it at once, holding only the tags still open.
   whitespace. A paragraph opening on `>` is a quote, `>>` nested, as the site's
   posters write one. Other tags keep their words
 - The same shape as `render_blob`: the ASCII fast path, the re-render when the
-  output is not ASCII, `None` for unchanged text. No plain-text gate: as for
-  markdown's `needs_parse`, that is syncdown's
+  output is not ASCII, and a blob for every input ([638ec59]). No plain-text
+  gate: syncdown retired its own with it
 - `<br>` is a newline and a run of them a blank line at most, as markdown caps
   them; a `<wbr>` inside a word is read through
 - From mdream 2.0.3 (MIT, `src/blob/html/mdream/`): `entities.rs` and
@@ -551,7 +552,7 @@ Byte offsets, in order:
 - `4..7` — `span_count` (low 24 bits; max 16 M spans)
 - `7..8` — `flags` (u8):
   - bit 0: `IS_ASCII` — every byte in the text section is < 0x80
-  - bit 1: `HAS_SPOILER_BODY` — at least one `LEMMY_SPOILER_CONTENT` span exists ([ea8f274])
+  - bit 1: 0. Once `HAS_SPOILER_BODY` ([ea8f274]), unread by any consumer and retired ([e19d70a])
   - bits 2-7: `SITE` — the site the blob was read for, its id from `blob::sites` (`PLAIN` 0
     … `READER` 5), so a reader of the blob knows the rules it was written under. Ids fit six
     bits (0-63), which syncdown's `generateSites` checks; renumbering a site means bumping
@@ -1201,3 +1202,7 @@ Pixel 9 Pro XL).
 [c752001]: https://github.com/laurencedawson/comrak/commit/c752001
 [780286c]: https://github.com/laurencedawson/comrak/commit/780286c
 [56e5b69]: https://github.com/laurencedawson/comrak/commit/56e5b69
+[fa93e2b]: https://github.com/laurencedawson/comrak/commit/fa93e2b
+[e19d70a]: https://github.com/laurencedawson/comrak/commit/e19d70a
+[638ec59]: https://github.com/laurencedawson/comrak/commit/638ec59
+[243283c]: https://github.com/laurencedawson/comrak/commit/243283c
