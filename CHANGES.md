@@ -131,6 +131,9 @@ It does three things:
 | Lemmy v3 proxy | `<instance>/api/v3/image_proxy?url=<url>` | unwrapped URL |
 | Lemmy v4 proxy | `<instance>/api/v4/image/proxy?url=<url>` | unwrapped URL |
 
+A redirect's, a Discord proxy's or a Lemmy proxy's inner address is unwrapped only where it starts with
+`http`; anything else, a `javascript:` address, keeps the proxy's own ([6503b9f]).
+
 **2. pict-rs thumbnail rewrite** ([7c60125]). Lemmy pict-rs image URLs gain a `thumbnail=400&format=webp` query so the body shows a server-rendered preview instead of the full-size original (thumbnailing is the only processing Lemmy honors on image URLs; crop/resize are ignored). The full-size original is one tap away because the host's image viewer strips the query. Non-static formats (gif and video) are left untouched.
 
 **3. Video exclusion** ([7c60125], [79f72b4]). Video extensions on image hosts and pict-rs paths (`mp4`, `webm`, `gifv`, …) are kept out of image handling via a shared `path_ext` check:
@@ -279,7 +282,7 @@ callers can reuse the same logic elsewhere.
 | Function | Returns | Notes |
 |---|---|---|
 | `comrak::resolve_url(&str)` | `ResolvedUrl<'_>` | Re-export of `comrak::parser::url::resolve_url`. URL finalization (proxy unwrap, short-URL expansion, pict-rs thumbnail, video exclusion). Returns a newtype that derefs to `str`; the only way to obtain one, so the blob writer can require it. See [URL resolution](#url-resolution) for the full table. |
-| `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. Strips `www.`; zero-copy when the host is already lowercase ASCII. |
+| `comrak::parser::url::extract_domain(&str)` | `Option<Cow<'_, str>>` | Host extraction for display-suffix dedup. The host ends at whichever of a path, a query or a fragment comes first, one `memchr3` ([7639661]). Strips `www.`; zero-copy when the host is already lowercase ASCII. |
 | `comrak::image_url::is_image_url(&str)` | `bool` | Heuristic URL → image detection (by known host, path pattern, or file extension). |
 | `comrak::text::collapse_whitespace(&str)` | `Cow<'_, str>` | Collapses runs of spaces to a single space. Zero-copy when the input has no double-space. |
 | `comrak::text::prefer_ascii(&str)` | `Cow<'_, str>` | Typed typographic Unicode (curly quotes, en/em dashes, ellipsis) → ASCII, a no-break space → a space, a soft hyphen dropped ([fa93e2b]). Zero-copy when none present. |
@@ -343,11 +346,16 @@ as the scan finds it and writes it at once, holding only the tags still open.
   gate: syncdown retired its own with it
 - `<br>` is a newline and a run of them a blank line at most, as markdown caps
   them; a `<wbr>` inside a word is read through
+- A base with no `//` after its scheme, `https:` or `a:b`, resolves nothing, and
+  a link keeps its address as written, as with no base ([4d4594c])
 - From mdream 2.0.3 (MIT, `src/blob/html/mdream/`): `entities.rs` and
-  `entities_generated.rs` as written, every WHATWG entity with the standard's
-  text and attribute rules; `scan.rs` cut to a whole string, its chunk carries,
-  discarded-byte scans and attribute budgets left behind. Its markdown writer,
-  selectors, Tailwind, URL and plugin code are not here
+  `entities_generated.rs` as written, HTML 4's named entities with the
+  standard's text and attribute rules, and one departure: `ensp`, `emsp`,
+  `thinsp`, `zwnj`, `zwj`, `lrm` and `rlm`, which its table lacked, added in
+  their sorted places, the table re-encoded by a script that first rebuilt its
+  252 entries byte for byte ([861f82b]); `scan.rs` cut to a whole string, its
+  chunk carries, discarded-byte scans and attribute budgets left behind. Its
+  markdown writer, selectors, Tailwind, URL and plugin code are not here
 - `scan_tag` ([6158cdd]) hands over `Attrs::Only(names)`, at most eight, as the walk reads
   `href` and `class`, or `Attrs::All`, every attribute, as the
   [article tree](#articles-into-the-blob-6158cdd-ce02d6f-5e1164e-36dc294-8184072-a601f86-05976b0-0a1f7e2) reads them. The mode is chosen once
@@ -457,8 +465,8 @@ what is left, as `html.rs` is the walk over a comment.
       [8184072])
     - The title is handed to the walk, which writes it first, centred
       (`smoothie.rs`, [36dc294])
-    - The authors are read from the page's JSON-LD alone, `ld_authors`, a
-      reader of its own with no JSON parser (`smoothie.rs`, [a601f86])
+    - The authors are read from the page's JSON-LD alone, `ld_authors`, its
+      scripts parsed with `tinyjson` (`smoothie.rs`, [a601f86])
     - The title shown is the article's JSON-LD `headline`, an `Article`,
       `NewsArticle`, `BlogPosting` or the like, where most of its words are the
       page's title (Readability.js's similarity, above three quarters), as
@@ -472,6 +480,15 @@ what is left, as `html.rs` is the walk over a comment.
       site's name or took a clean headline; one, a product's home page, lost
       its product's name ("SlideBySide - present together, live"). Readability
       still scores with its own title (`smoothie.rs`, `article.rs`, [05976b0])
+    - The site's name comes off a title whatever its characters: a slice the
+      name's length from the end that falls inside a character is no match,
+      and the start is still looked at; and the headline is the title where
+      the page names none of its own, as there is nothing for it to be unlike
+      (`article.rs`, [af18032], [ac13e2e])
+    - An object's fields are walked in their keys' order, sorted on the stack,
+      as tinyjson's map keeps no order, so a page's authors stand in the same
+      order every read; the page's own order is gone before the walk
+      (`smoothie.rs`, [ab3a168])
     - The JSON-LD `headline` is read as HTML, its tags dropped and its entities
       decoded, as WordPress writes it (`We&#8217;re`, Gizmodo); dom_smoothie
       took the string as JSON gave it (`smoothie.rs`, [c752001])
@@ -736,9 +753,12 @@ bit:  31                                                            0
 
 ### Footnotes
 
-Footnote definitions are buffered during walk, then emitted at the tail
-after an `HRULE` separator. Inline references become SUPERSCRIPT spans
-containing a 1-based index; definitions are prefixed with the same index.
+The walk passes footnote definitions by; after the body, under an `HRULE`
+separator, each note's own blocks are walked by the same walk and writer, so a
+note keeps its formatting, links and pictures, and its paragraphs sit a line
+apart as an item's do ([f0300e5]). Inline references become SUPERSCRIPT spans
+containing a 1-based index; definitions are prefixed with the same index, both
+written from a stack buffer.
 
 ### Span sort
 
@@ -1222,3 +1242,11 @@ Pixel 9 Pro XL).
 [a8f8d8f]: https://github.com/laurencedawson/comrak/commit/a8f8d8f
 [d89386d]: https://github.com/laurencedawson/comrak/commit/d89386d
 [d887f59]: https://github.com/laurencedawson/comrak/commit/d887f59
+[7639661]: https://github.com/laurencedawson/comrak/commit/7639661
+[6503b9f]: https://github.com/laurencedawson/comrak/commit/6503b9f
+[4d4594c]: https://github.com/laurencedawson/comrak/commit/4d4594c
+[af18032]: https://github.com/laurencedawson/comrak/commit/af18032
+[ac13e2e]: https://github.com/laurencedawson/comrak/commit/ac13e2e
+[ab3a168]: https://github.com/laurencedawson/comrak/commit/ab3a168
+[861f82b]: https://github.com/laurencedawson/comrak/commit/861f82b
+[f0300e5]: https://github.com/laurencedawson/comrak/commit/f0300e5
