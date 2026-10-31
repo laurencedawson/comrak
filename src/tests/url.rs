@@ -1,4 +1,4 @@
-use crate::parser::url::resolve_url;
+use crate::parser::url::{extract_domain, resolve_url};
 
 fn check(url: &str, expected: &str) {
     assert_eq!(resolve_url(url).as_ref(), expected, "\ninput: {url:?}");
@@ -124,6 +124,21 @@ fn image_proxy_unusable_inner_url_kept_wrapped() {
     unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fmy%20pic.png");
     // Control char (%00) likewise.
     unchanged("https://lemmy.ml/api/v3/image_proxy?url=https%3A%2F%2Fx.com%2Fa%00b.png");
+}
+
+/// A link's domain is its host alone: it stops at a path, a query or a fragment, whichever comes
+/// first, so a `/` later in the query or the fragment is never read as the path's.
+#[test]
+fn domain_stops_at_the_path_query_or_fragment() {
+    for (url, domain) in [
+        ("https://e.com/a?b", "e.com"),
+        ("https://e.com?a=b/c", "e.com"),
+        ("https://e.com#x/y", "e.com"),
+        ("https://e.com#x", "e.com"),
+        ("https://www.E.com?q", "e.com"),
+    ] {
+        assert_eq!(extract_domain(url).as_deref(), Some(domain), "{url}");
+    }
 }
 
 #[test]

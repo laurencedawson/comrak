@@ -280,9 +280,7 @@ pub(crate) fn percent_decode(raw: &str) -> Option<String> {
 /// leading `www.` prefix; returns `None` when scheme or host is missing.
 pub fn extract_domain(url: &str) -> Option<Cow<'_, str>> {
     let start = SCHEME_SEP.find(url.as_bytes())? + 3;
-    let after = &url.as_bytes()[start..];
-    let end = memchr::memchr(b'/', after)
-        .or_else(|| memchr::memchr(b'?', after))
+    let end = memchr::memchr3(b'/', b'?', b'#', &url.as_bytes()[start..])
         .map_or(url.len(), |i| start + i);
     let mut host = &url[start..end];
     if host.starts_with("www.") {
