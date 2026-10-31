@@ -25,9 +25,9 @@ pub const GREENTEXT: i32 = 22;
 pub const LINK: i32 = 23;
 pub const APP_LINK: i32 = 24;
 pub const LINK_SIZE: i32 = 25;
-pub const LEMMY_SPOILER_TITLE: i32 = 26;
-pub const LEMMY_SPOILER_CONTENT: i32 = 27;
-pub const READER_BLOCK: i32 = 28;
+pub const READER_BLOCK: i32 = 26;
+pub const LEMMY_SPOILER_TITLE: i32 = 27;
+pub const LEMMY_SPOILER_CONTENT: i32 = 28;
 
 pub const HEADINGS: [i32; 6] = [
     HEADING_1, HEADING_2, HEADING_3, HEADING_4, HEADING_5, HEADING_6,
