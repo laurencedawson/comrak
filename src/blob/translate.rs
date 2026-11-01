@@ -1,10 +1,10 @@
 //! A blob translated: its text handed out as one string, a line for each of its lines, and the
 //! translated string written back over the same blob.
 //!
-//! [`translation_text`] marks what a translator must hand back as it was: a link's words between
+//! [`mark_for_translation`] marks what a translator must hand back as it was: a link's words between
 //! `[n]` and `[/n]`, and as `{n}` each part of a line that is no words to translate, code, a
 //! picture, a rule, a table, a mention, a link whose words are an address. The domain the writer
-//! puts after a link's words, a reader's aid, is left out and not put back. [`translated`] takes
+//! puts after a link's words, a reader's aid, is left out and not put back. [`build_translated_blob`] takes
 //! the answer line for line: the text is written again, each record finding its place from where
 //! its line, its kept part or its link's markers landed; a line that came back as it went is
 //! written as it was, every record on it kept. A record whose ends fall on none of them,
@@ -19,13 +19,20 @@
 //! walk, the edge and kept-part lookups, the UTF-16 copies.
 
 use super::format::{ASCII_BIT, COUNT_BITS, HEADER_SIZE, LINK_LENGTH_BITS, RECORD};
+use std::ops::Range;
+
 use super::*;
 use crate::parser::url::extract_domain;
 
-/// The blob's text as one string to translate, its lines kept one for one, its links and kept
-/// parts marked; `None` for a blob too short to hold its own header.
-pub fn translation_text(blob: &[u8]) -> Option<String> {
-    let plan = Plan::of(&Blob::read(blob)?);
+/// The blob's `records` over its text's `bytes`, as the view shows a body or one of its sections,
+/// as one string to translate, its lines kept one for one, its links and kept parts marked. The
+/// caller says where both lie, as the view's own reads do; `None` for a part the blob does not hold.
+pub fn mark_for_translation(
+    blob: &[u8],
+    records: Range<usize>,
+    bytes: Range<usize>,
+) -> Option<String> {
+    let plan = Plan::of(&Blob::read(blob, records, bytes)?);
     Some(
         (0..plan.lines.len())
             .map(|i| plan.marked(i))
@@ -34,11 +41,17 @@ pub fn translation_text(blob: &[u8]) -> Option<String> {
     )
 }
 
-/// The blob with its text replaced by `answer`, a translation of its [`translation_text`]; `None`
-/// where the answer has not as many lines, which leaves nothing to place a block's records by, so
-/// the caller sends the lines one at a time and joins them.
-pub fn translated(blob: &[u8], answer: &str) -> Option<Vec<u8>> {
-    let read = Blob::read(blob)?;
+/// A blob of the blob's `records` over its text's `bytes`, that text replaced by `answer`, a
+/// translation of its [`mark_for_translation`]; the whole blob where they are all of it. `None` where
+/// the answer has not as many lines, which leaves nothing to place a block's records by, so the
+/// caller sends the lines one at a time and joins them.
+pub fn build_translated_blob(
+    blob: &[u8],
+    records: Range<usize>,
+    bytes: Range<usize>,
+    answer: &str,
+) -> Option<Vec<u8>> {
+    let read = Blob::read(blob, records, bytes)?;
     let plan = Plan::of(&read);
     let answers: Vec<&str> = answer.trim_end().split('\n').collect();
     if answers.len() != plan.lines.len() {
@@ -430,31 +443,52 @@ struct Blob<'a> {
 }
 
 impl<'a> Blob<'a> {
-    fn read(blob: &'a [u8]) -> Option<Blob<'a>> {
+    /// The blob's `records` over its text's `bytes`, moved to start at 0: the first record opens the
+    /// part, a section on its heading, so its start is where the text starts.
+    fn read(blob: &'a [u8], records: Range<usize>, bytes: Range<usize>) -> Option<Blob<'a>> {
         let int = |at: usize| -> Option<u32> {
             Some(u32::from_le_bytes(blob.get(at..at + 4)?.try_into().ok()?))
         };
         let text_len = int(0)? as usize;
         let head = int(4)?;
         let count = (head & ((1 << COUNT_BITS) - 1)) as usize;
-        let text = std::str::from_utf8(blob.get(HEADER_SIZE..HEADER_SIZE + text_len)?).ok()?;
         let records_at = HEADER_SIZE + text_len.div_ceil(4) * 4;
-        let mut records = Vec::with_capacity(count);
-        for i in 0..count {
+        if records.start > records.end || records.end > count {
+            return None;
+        }
+        let mut read = Vec::with_capacity(records.len());
+        for i in records.clone() {
             let at = records_at + i * RECORD;
-            records.push(Record {
+            read.push(Record {
                 start: int(at)? as usize,
                 end: int(at + 4)? as usize,
                 typ: int(at + 8)? as i32,
                 data: int(at + 12)? as i32,
             });
         }
+        if bytes.start > bytes.end || bytes.end > text_len {
+            return None;
+        }
+        let text: Vec<u16> =
+            std::str::from_utf8(blob.get(HEADER_SIZE + bytes.start..HEADER_SIZE + bytes.end)?)
+                .ok()?
+                .encode_utf16()
+                .collect();
+        let from = if bytes.start == 0 {
+            0
+        } else {
+            read.first()?.start
+        };
+        for r in &mut read {
+            r.start = r.start.checked_sub(from)?;
+            r.end = r.end.checked_sub(from)?;
+        }
         let flags = head >> COUNT_BITS;
         Some(Blob {
             flags,
             site: ((flags >> format::SITE_SHIFT) & ((1 << format::SITE_BITS) - 1)) as u8,
-            text: text.encode_utf16().collect(),
-            records,
+            text,
+            records: read,
             urls: blob.get(records_at + count * RECORD..)?,
         })
     }

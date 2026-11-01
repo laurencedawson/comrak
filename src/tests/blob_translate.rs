@@ -4,7 +4,9 @@
 
 use crate::benchmarks::production_options;
 use crate::blob::sites::{HACKER_NEWS, LEMMY, PLAIN};
-use crate::blob::translate::{translated, translation_text};
+use std::ops::Range;
+
+use crate::blob::translate::{build_translated_blob, mark_for_translation};
 use crate::blob::{
     APP_LINK, BOLD, CODE, CODE_BLOCK, HEADINGS, IMAGE, LEMMY_SPOILER_CONTENT, LEMMY_SPOILER_TITLE,
     LINK, LINK_SIZE, LIST_ITEM, QUOTE, READER_BLOCK, SUBSCRIPT_SIZE, TABLE, render_article_blob,
@@ -99,8 +101,12 @@ fn words(b: &Blob, typ: i32) -> Vec<String> {
 #[test]
 fn the_text_given_back_unchanged_is_the_same_blob() {
     for blob in samples() {
-        let text = translation_text(&blob).unwrap();
-        assert_eq!(translated(&blob, &text).unwrap(), blob, "{text:?}");
+        let text = mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap();
+        assert_eq!(
+            build_translated_blob(&blob, all(&blob), all_bytes(&blob), &text).unwrap(),
+            blob,
+            "{text:?}"
+        );
     }
 }
 
@@ -117,7 +123,7 @@ fn the_text_marks_links_and_kept_parts_and_leaves_the_domain_out() {
         "See the docs (example.com) and code here."
     );
     assert_eq!(
-        translation_text(&blob).unwrap(),
+        mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap(),
         "See [1]the docs[/1] and {2} here."
     );
 }
@@ -129,7 +135,10 @@ fn a_link_whose_words_are_its_address_is_kept() {
         "More at [example.com](https://example.com/more) today.",
         PLAIN,
     );
-    assert_eq!(translation_text(&blob).unwrap(), "More at {1} today.");
+    assert_eq!(
+        mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap(),
+        "More at {1} today."
+    );
 }
 
 /// Why: the lines go out one for one, blank ones and a code block's included, so every block's
@@ -137,7 +146,7 @@ fn a_link_whose_words_are_its_address_is_kept() {
 #[test]
 fn the_text_has_a_line_for_every_line() {
     let blob = md(SHAPES, PLAIN);
-    let text = translation_text(&blob).unwrap();
+    let text = mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap();
     assert_eq!(
         text.split('\n').count(),
         read(&blob).text.split('\n').count()
@@ -153,7 +162,15 @@ fn the_text_has_a_line_for_every_line() {
 #[test]
 fn longer_words_keep_every_block_over_its_words() {
     for blob in samples() {
-        let out = read(&translated(&blob, &doubled(&translation_text(&blob).unwrap())).unwrap());
+        let out = read(
+            &build_translated_blob(
+                &blob,
+                all(&blob),
+                all_bytes(&blob),
+                &doubled(&mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap()),
+            )
+            .unwrap(),
+        );
         let before = read(&blob);
         let blocks = |t: i32| !(BOLD..=SUBSCRIPT_SIZE).contains(&t);
         assert_eq!(
@@ -164,9 +181,18 @@ fn longer_words_keep_every_block_over_its_words() {
         );
     }
     let out = read(
-        &translated(
+        &build_translated_blob(
             &md(SHAPES, PLAIN),
-            &doubled(&translation_text(&md(SHAPES, PLAIN)).unwrap()),
+            all(&md(SHAPES, PLAIN)),
+            all_bytes(&md(SHAPES, PLAIN)),
+            &doubled(
+                &mark_for_translation(
+                    &md(SHAPES, PLAIN),
+                    all(&md(SHAPES, PLAIN)),
+                    all_bytes(&md(SHAPES, PLAIN)),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );
@@ -190,7 +216,15 @@ fn a_reordered_answer_lands_each_link_and_kept_part_on_its_own() {
         "See [the docs](https://example.com/a) and `code` here.",
         PLAIN,
     );
-    let out = read(&translated(&blob, "{2} hier und siehe [1]die Doku[/1].").unwrap());
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            "{2} hier und siehe [1]die Doku[/1].",
+        )
+        .unwrap(),
+    );
     assert_eq!(out.text, "code hier und siehe die Doku.");
     assert_eq!(words(&out, LINK), ["die Doku"]);
     assert_eq!(words(&out, LINK_SIZE), ["die Doku"]);
@@ -212,7 +246,15 @@ fn a_broken_link_marker_drops_the_link_and_keeps_its_words() {
         "See [the docs](https://example.com/a) and `code` here.",
         PLAIN,
     );
-    let out = read(&translated(&blob, "Siehe [1]die Doku und {2} hier.").unwrap());
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            "Siehe [1]die Doku und {2} hier.",
+        )
+        .unwrap(),
+    );
     assert_eq!(out.text, "Siehe die Doku und code hier.");
     assert!(words(&out, LINK).is_empty() && words(&out, LINK_SIZE).is_empty());
     assert_eq!(words(&out, CODE), ["code"]);
@@ -225,7 +267,15 @@ fn a_lost_kept_part_goes_at_the_end_of_its_line() {
         "See [the docs](https://example.com/a) and `code` here.",
         PLAIN,
     );
-    let out = read(&translated(&blob, "Siehe [1]die Doku[/1] hier.").unwrap());
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            "Siehe [1]die Doku[/1] hier.",
+        )
+        .unwrap(),
+    );
     assert_eq!(out.text, "Siehe die Doku hier.code");
     assert_eq!(words(&out, CODE), ["code"]);
 }
@@ -237,7 +287,15 @@ fn markers_are_read_with_spaces_and_full_width_brackets() {
         "See [the docs](https://example.com/a) and `code` here.",
         PLAIN,
     );
-    let out = read(&translated(&blob, "[ 1 ]ドキュメント［/1］と｛2｝を参照").unwrap());
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            "[ 1 ]ドキュメント［/1］と｛2｝を参照",
+        )
+        .unwrap(),
+    );
     assert_eq!(out.text, "ドキュメントとcodeを参照");
     assert_eq!(words(&out, LINK), ["ドキュメント"]);
     assert!(!out.ascii());
@@ -247,7 +305,10 @@ fn markers_are_read_with_spaces_and_full_width_brackets() {
 #[test]
 fn a_line_of_kept_parts_alone_is_written_as_it_was() {
     let blob = md("Words\n\n```\nnpm test\n```", PLAIN);
-    let out = read(&translated(&blob, "Wörter\n\nnpm prüfen").unwrap());
+    let out = read(
+        &build_translated_blob(&blob, all(&blob), all_bytes(&blob), "Wörter\n\nnpm prüfen")
+            .unwrap(),
+    );
     assert_eq!(out.text, "Wörter\n\nnpm test");
     assert_eq!(words(&out, CODE_BLOCK), ["npm test"]);
 }
@@ -256,9 +317,9 @@ fn a_line_of_kept_parts_alone_is_written_as_it_was() {
 #[test]
 fn an_answer_of_another_count_of_lines_is_none() {
     let blob = md("one\n\ntwo", PLAIN);
-    assert!(translated(&blob, "eins zwei").is_none());
+    assert!(build_translated_blob(&blob, all(&blob), all_bytes(&blob), "eins zwei").is_none());
     assert!(
-        translated(&blob, "eins\n\nzwei\n").is_some(),
+        build_translated_blob(&blob, all(&blob), all_bytes(&blob), "eins\n\nzwei\n").is_some(),
         "a trailing newline is no line"
     );
 }
@@ -270,7 +331,15 @@ fn a_spoiler_title_still_sorts_just_before_its_content() {
         "before\n\n::: spoiler A title\nthe hidden words\n:::\n\nafter",
         LEMMY,
     );
-    let out = read(&translated(&blob, &doubled(&translation_text(&blob).unwrap())).unwrap());
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            &doubled(&mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap()),
+        )
+        .unwrap(),
+    );
     let i = out
         .spans
         .iter()
@@ -287,7 +356,13 @@ fn a_reader_body_keeps_its_tiles_and_its_headings_bytes() {
     let blob = article(
         "<p>Some café words, long enough to stand as the article itself here.</p><h2>Later</h2><p>More words of the article.</p>",
     );
-    let out_bytes = translated(&blob, &doubled(&translation_text(&blob).unwrap())).unwrap();
+    let out_bytes = build_translated_blob(
+        &blob,
+        all(&blob),
+        all_bytes(&blob),
+        &doubled(&mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap()),
+    )
+    .unwrap();
     let out = read(&out_bytes);
     let before = read(&blob);
     assert_eq!(
@@ -314,18 +389,35 @@ fn a_reader_body_keeps_its_tiles_and_its_headings_bytes() {
 fn the_ascii_bit_follows_the_new_text() {
     let blob = md("plain words", PLAIN);
     assert!(read(&blob).ascii());
-    assert!(!read(&translated(&blob, "Wörter").unwrap()).ascii());
+    assert!(
+        !read(&build_translated_blob(&blob, all(&blob), all_bytes(&blob), "Wörter").unwrap())
+            .ascii()
+    );
     let accented = md("café", PLAIN);
-    assert!(read(&translated(&accented, "coffee").unwrap()).ascii());
+    assert!(
+        read(
+            &build_translated_blob(&accented, all(&accented), all_bytes(&accented), "coffee")
+                .unwrap()
+        )
+        .ascii()
+    );
 }
 
 /// Why: a mention is the site's own page, kept as written.
 #[test]
 fn a_mention_is_kept() {
     let blob = md("hi @someone@lemmy.world, how are you", LEMMY);
-    let text = translation_text(&blob).unwrap();
+    let text = mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap();
     assert!(text.starts_with("hi {1}"), "{text:?}");
-    let out = read(&translated(&blob, "hallo {1}, wie geht es").unwrap());
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            "hallo {1}, wie geht es",
+        )
+        .unwrap(),
+    );
     assert_eq!(words(&out, APP_LINK).len(), 1);
 }
 
@@ -335,5 +427,79 @@ fn a_reader_link_is_sent_as_words() {
     let blob = article(
         "<p>A paragraph with <a href=\"https://other.org/x\">a link</a> in it, long enough to read as the article itself.</p>",
     );
-    assert!(translation_text(&blob).unwrap().contains("[1]a link[/1]"));
+    assert!(
+        mark_for_translation(&blob, all(&blob), all_bytes(&blob))
+            .unwrap()
+            .contains("[1]a link[/1]")
+    );
+}
+
+/// Every record of `blob`: the whole of it, as a body is shown.
+fn all(blob: &[u8]) -> Range<usize> {
+    0..read(blob).spans.len()
+}
+
+/// All of `blob`'s text, in bytes.
+fn all_bytes(blob: &[u8]) -> Range<usize> {
+    0..read(blob).text.len()
+}
+
+/// Each section of `blob` as the view cuts it: its records from a heading carrying its byte to the
+/// record before the next, the tile of the blank line ahead of it, the first from 0; its text's
+/// bytes from that heading's byte to the next's, the newlines before it stepped back over.
+fn sections(blob: &[u8]) -> Vec<(Range<usize>, Range<usize>)> {
+    let b = read(blob);
+    let bytes = b.text.as_bytes();
+    let opens: Vec<usize> = (1..b.spans.len())
+        .filter(|&i| (HEADINGS[0]..=HEADINGS[5]).contains(&b.spans[i].typ) && b.spans[i].data != 0)
+        .collect();
+    let mut out = Vec::new();
+    let (mut first, mut start) = (0, 0);
+    for &next in &opens {
+        let mut end = b.spans[next].data as usize;
+        while bytes[end - 1] == b'\n' {
+            end -= 1;
+        }
+        out.push((first..next - 1, start..end));
+        first = next;
+        start = b.spans[next].data as usize;
+    }
+    out.push((first..b.spans.len(), start..bytes.len()));
+    out
+}
+
+/// Why: a long body is translated a section at a time, told which records and bytes it is, as the
+/// view is told to show one; each given back unchanged must be that section alone, its text the
+/// section's, its records moved to start at 0, the heading opening it cutting nothing.
+#[test]
+fn a_section_given_back_unchanged_is_that_section_alone() {
+    let blob = article(
+        "<p>Some café words, long enough to stand as the article itself here.</p><h2>Later</h2>\
+         <p>More words of the article, with <a href=\"https://other.org/x\">a link</a>.</p><h2>Last</h2>\
+         <ul><li>one</li><li>two</li></ul>",
+    );
+    let whole = read(&blob);
+    let sections = sections(&blob);
+    assert_eq!(sections.len(), 3, "{sections:?}");
+    for (records, bytes) in sections {
+        let text = mark_for_translation(&blob, records.clone(), bytes.clone()).unwrap();
+        let part =
+            read(&build_translated_blob(&blob, records.clone(), bytes.clone(), &text).unwrap());
+        assert_eq!(part.text, whole.text[bytes]);
+        assert_eq!(part.spans.len(), records.len());
+        assert_eq!(part.spans[0].start, 0);
+        assert!(
+            part.span_iter()
+                .all(|s| s.data == 0 || !(HEADINGS[0]..=HEADINGS[5]).contains(&s.typ))
+        );
+    }
+}
+
+/// Why: records or bytes the blob does not hold are a mistake the caller is told of, not a read
+/// past them.
+#[test]
+fn a_part_past_the_blobs_is_none() {
+    let blob = md("plain words", PLAIN);
+    assert!(mark_for_translation(&blob, 0..5, all_bytes(&blob)).is_none());
+    assert!(mark_for_translation(&blob, all(&blob), 0..99).is_none());
 }
