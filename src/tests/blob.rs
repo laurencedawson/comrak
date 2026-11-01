@@ -295,7 +295,7 @@ mod format {
     /// A link whose url would start past the offset a link's data can address, 2^20 bytes of url
     /// data, is written as its words alone: no LINK that would read another payload's bytes.
     #[test]
-    fn link_past_the_url_datas_reach_is_its_words() {
+    fn link_past_what_the_url_data_can_address_is_its_words() {
         let picture = format!("![](https://e.com/{})\n\n", "a".repeat(64_000));
         let b = render_test(&format!("{}[l](https://f.org)", picture.repeat(17)));
         assert!(b.text().ends_with("l (f.org)"));

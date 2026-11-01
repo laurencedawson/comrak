@@ -8,4 +8,7 @@ extend-ignore-re = [
 
   # it's german
   "egal",
+
+  # café, written as an entity in a test of decoding
+  "caf&eacute;",
 ]
