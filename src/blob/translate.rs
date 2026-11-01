@@ -18,7 +18,7 @@
 //! the position lookups being linear searches, then refactor with the numbers: the plan's piece
 //! walk, the edge and kept-part lookups, the UTF-16 copies.
 
-use super::format::{ASCII_BIT, COUNT_BITS, HEADER_SIZE, LINK_LENGTH_BITS, RECORD};
+use super::format::{ASCII_BIT, HEADER_SIZE, RECORD};
 use std::ops::Range;
 
 use super::*;
@@ -449,10 +449,8 @@ impl<'a> Blob<'a> {
         let int = |at: usize| -> Option<u32> {
             Some(u32::from_le_bytes(blob.get(at..at + 4)?.try_into().ok()?))
         };
-        let text_len = int(0)? as usize;
-        let head = int(4)?;
-        let count = (head & ((1 << COUNT_BITS) - 1)) as usize;
-        let records_at = HEADER_SIZE + text_len.div_ceil(4) * 4;
+        let (text_len, count, flags) = read_header(blob)?;
+        let records_at = records_at(text_len);
         if records.start > records.end || records.end > count {
             return None;
         }
@@ -483,7 +481,6 @@ impl<'a> Blob<'a> {
             r.start = r.start.checked_sub(from)?;
             r.end = r.end.checked_sub(from)?;
         }
-        let flags = head >> COUNT_BITS;
         Some(Blob {
             flags,
             site: ((flags >> format::SITE_SHIFT) & ((1 << format::SITE_BITS) - 1)) as u8,
@@ -495,10 +492,8 @@ impl<'a> Blob<'a> {
 
     /// The url of the link whose record holds `data`, its offset over its length.
     fn url(&self, data: i32) -> &str {
-        let offset = (data as u32 >> LINK_LENGTH_BITS) as usize;
-        let len = (data as u32 & ((1 << LINK_LENGTH_BITS) - 1)) as usize;
         self.urls
-            .get(offset..offset + len)
+            .get(link_range(data))
             .and_then(|b| std::str::from_utf8(b).ok())
             .unwrap_or("")
     }
@@ -521,23 +516,15 @@ impl<'a> Blob<'a> {
                 r[3] = byte_at[r[0] as usize] as i32;
             }
         }
-        let key = |s: &[i32; 4]| {
-            let end_inv = (0xFF_FFFF - (s[1] as u32 & 0xFF_FFFF)) as u64;
-            ((s[0] as u32 as u64) << 32) | (end_inv << 8) | (s[2] as u32 & 0xFF) as u64
-        };
-        records.sort_by_key(key);
+        records.sort_by_key(sort_key);
 
         let flags = (self.flags & !(1 << ASCII_BIT)) | ((text.is_ascii() as u32) << ASCII_BIT);
         let mut out = Vec::with_capacity(
             HEADER_SIZE + text.len() + 3 + records.len() * RECORD + self.urls.len(),
         );
-        out.extend_from_slice(&(text.len() as u32).to_le_bytes());
-        out.extend_from_slice(
-            &((records.len() as u32 & ((1 << COUNT_BITS) - 1)) | (flags << COUNT_BITS))
-                .to_le_bytes(),
-        );
+        out.extend_from_slice(&header(text.len(), records.len(), flags));
         out.extend_from_slice(text.as_bytes());
-        out.resize(HEADER_SIZE + text.len().div_ceil(4) * 4, 0);
+        out.resize(records_at(text.len()), 0);
         for r in &records {
             for v in r {
                 out.extend_from_slice(&v.to_le_bytes());

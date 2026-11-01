@@ -48,10 +48,54 @@ pub(crate) use span_types::*;
 type AstNode<'a> = Node<'a, RefCell<Ast<'a>>>;
 
 use format::{HEADER_SIZE, PICTURE, RULE};
+// The reader finds a record's index by shifting its offset
+const _: () = assert!(format::RECORD == 1 << format::RECORD_SHIFT);
 /// A link's url is cut at the most its data's length bits hold.
 const MAX_URL_LEN: usize = (1 << format::LINK_LENGTH_BITS) - 1;
 /// A link's url must start where its data's offset bits, the 32 its length bits leave, can address it.
 const MAX_URL_OFFSET: usize = 1 << (32 - format::LINK_LENGTH_BITS);
+/// The order every blob keeps its records in, start ascending, end descending, type ascending, as one
+/// u64 so a compare is one compare: the start in the high 32 bits, the end inverted in 24, the type in
+/// 8. Starts and ends are text offsets well under 2^24, and a type fits a byte.
+pub(crate) fn sort_key(s: &[i32; 4]) -> u64 {
+    let end_inv = (0xFF_FFFF - (s[1] as u32 & 0xFF_FFFF)) as u64;
+    ((s[0] as u32 as u64) << 32) | (end_inv << 8) | (s[2] as u32 & 0xFF) as u64
+}
+
+/// A blob's header: the text's length in bytes, and the record count with the flags byte above it.
+pub(crate) fn header(text_len: usize, count: usize, flags: u32) -> [u8; HEADER_SIZE] {
+    let mut h = [0u8; HEADER_SIZE];
+    h[format::TEXT_LENGTH_AT..format::TEXT_LENGTH_AT + 4]
+        .copy_from_slice(&(text_len as u32).to_le_bytes());
+    let count = (count as u32 & ((1 << format::COUNT_BITS) - 1)) | (flags << format::COUNT_BITS);
+    h[format::COUNT_AT..format::COUNT_AT + 4].copy_from_slice(&count.to_le_bytes());
+    h
+}
+
+/// A blob's header read back: the text's length in bytes, the record count and the flags; none for
+/// bytes too short to hold one.
+pub(crate) fn read_header(blob: &[u8]) -> Option<(usize, usize, u32)> {
+    let int = |at: usize| Some(u32::from_le_bytes(blob.get(at..at + 4)?.try_into().ok()?));
+    let (text_len, head) = (int(format::TEXT_LENGTH_AT)?, int(format::COUNT_AT)?);
+    let count = head & ((1 << format::COUNT_BITS) - 1);
+    Some((
+        text_len as usize,
+        count as usize,
+        head >> format::COUNT_BITS,
+    ))
+}
+
+/// Where the records start after a text of `text_len` bytes: past the header and the text, padded.
+pub(crate) fn records_at(text_len: usize) -> usize {
+    HEADER_SIZE + text_len.next_multiple_of(format::TEXT_ALIGN)
+}
+
+/// Where a link's url lies in the url data, from its record's data: the offset over the length.
+pub(crate) fn link_range(data: i32) -> std::ops::Range<usize> {
+    let offset = (data as u32 >> format::LINK_LENGTH_BITS) as usize;
+    offset..offset + (data as u32 & ((1 << format::LINK_LENGTH_BITS) - 1)) as usize
+}
+
 /// A picture's alt text is cut at this many bytes: words to read out, not a caption.
 const MAX_ALT_LEN: usize = 1024;
 
@@ -345,7 +389,7 @@ impl BlobWriter {
     }
 
     /// Emit a TABLE span whose cells are packed into `url_data` and addressed by
-    /// `data = offset + 1` (0 stays reserved for a legacy/no-table placeholder).
+    /// `data = offset + format::TABLE_DATA_BIAS`, so 0 is no table.
     /// Payload: `[ (rows<<16 | cols):u32 ] [ (len:u16)(utf8) x rows*cols ]`, cells
     /// row-major as inline markdown for the UI to re-parse. Self-delimiting, so no
     /// length cap.
@@ -362,6 +406,7 @@ impl BlobWriter {
         let offset = self.url_data.len();
         let packed = (rows << format::TABLE_ROWS_SHIFT) | cols as u32;
         self.url_data.extend_from_slice(&packed.to_le_bytes());
+        debug_assert_eq!(self.url_data.len(), offset + format::TABLE_CELLS);
         for row in node.children().take(rows as usize) {
             // Each row writes exactly `cols` cells: its own, padded with empties. A cell's markdown is
             // written straight after its length slot, trimmed in place, and the slot filled in after
@@ -397,8 +442,12 @@ impl BlobWriter {
                 self.url_data.extend_from_slice(&[0, 0]);
             }
         }
-        self.spans
-            .extend_from_slice(&[start as i32, self.len as i32, TABLE, (offset as i32) + 1]);
+        self.spans.extend_from_slice(&[
+            start as i32,
+            self.len as i32,
+            TABLE,
+            (offset + format::TABLE_DATA_BIAS) as i32,
+        ]);
     }
 
     /// A picture on a line of its own: `width` and `height` the size its source states, 0 by 0
@@ -483,18 +532,7 @@ impl BlobWriter {
             let ptr = self.spans.as_mut_ptr() as *mut [i32; 4];
             std::slice::from_raw_parts_mut(ptr, span_count)
         };
-        // Pack the sort key (start asc, end desc, type asc) into a single u64
-        // so the comparator is a plain u64 compare instead of a 3-field tuple
-        // walk. Layout: bits 63..32 = start, bits 31..8 = inverted 24-bit end
-        // (for descending order), bits 7..0 = span type. Safe because start/end
-        // are non-negative text offsets (well under 2^24 for all realistic
-        // documents) and span types fit in u8.
-        let key = |s: &[i32; 4]| {
-            let start = s[0] as u32 as u64;
-            let end_inv = (0xFF_FFFF - (s[1] as u32 & 0xFF_FFFF)) as u64;
-            let ty = (s[2] as u32 & 0xFF) as u64;
-            (start << 32) | (end_inv << 8) | ty
-        };
+        let key = sort_key;
         // Spans arrive after their node's children, so each only has to move back past its own
         // descendants: an insertion sort is linear plus those moves. Deep nesting could make the
         // moves quadratic, so past a budget per span the rest goes to the general sort.
@@ -531,20 +569,12 @@ impl BlobWriter {
             }
         }
 
-        // Header layout: text_len in bytes 0-3, span_count in bytes 4-6, flags
-        // in byte 7. span_count is capped at 24 bits (16M); the high byte is
-        // reused as a flag field so the header stays 8 bytes.
-        //   bit 0: is_ascii — text section is pure ASCII
-        //   bit 1: 0
-        //   bits 2-7: the site the blob was read for, its id from `sites` (ids fit six bits)
+        // The flags byte: whether the text is all ASCII, and the site the blob was read for
         let flags: u32 = ((self.all_ascii as u32) << format::ASCII_BIT)
             | ((self.site as u32 & ((1 << format::SITE_BITS) - 1)) << format::SITE_SHIFT);
-        let count_with_flags =
-            (span_count as u32 & ((1 << format::COUNT_BITS) - 1)) | (flags << format::COUNT_BITS);
-        self.blob[0..4].copy_from_slice(&(txt_len as i32).to_le_bytes());
-        self.blob[4..8].copy_from_slice(&count_with_flags.to_le_bytes());
+        self.blob[..HEADER_SIZE].copy_from_slice(&header(txt_len, span_count, flags));
 
-        let padding = (4 - (txt_len % 4)) % 4;
+        let padding = records_at(txt_len) - HEADER_SIZE - txt_len;
         let span_bytes = unsafe {
             std::slice::from_raw_parts(
                 self.spans.as_ptr() as *const u8,
@@ -554,7 +584,7 @@ impl BlobWriter {
         // Sized for all of it at new(); a page past the span budget grows the blob once, exactly
         self.blob
             .reserve_exact(padding + span_bytes.len() + self.url_data.len());
-        self.blob.extend_from_slice(&[0u8; 3][..padding]);
+        self.blob.resize(records_at(txt_len), 0);
         self.blob.extend_from_slice(span_bytes);
         self.blob.extend_from_slice(&self.url_data);
         self.blob
@@ -721,7 +751,10 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
                 _ => format::LIST_BULLET as i32,
             };
             let (typ, low) = match val {
-                TaskItem(ti) => (TASK_ITEM, ti.symbol.is_some() as i32),
+                TaskItem(ti) => (
+                    TASK_ITEM,
+                    (ti.symbol.is_some() as i32) << format::TASK_CHECKED_BIT,
+                ),
                 _ => (LIST_ITEM, number),
             };
             let data = ((indent as i32) << format::LIST_INDENT_SHIFT) | low;

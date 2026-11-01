@@ -1,7 +1,7 @@
 //! A blob read back, for the tests: the header, the text, the spans past the padding with their
 //! addresses, and a table's cells, so no test parses the bytes itself.
 
-use crate::blob::{APP_LINK, IMAGE, LINK, format};
+use crate::blob::{APP_LINK, IMAGE, LINK, format, link_range, read_header, records_at};
 
 /// A span as the blob holds it. A link's or picture's address is read out as `url` and its
 /// `data` consumed, so its `data` is 0, a picture's payload read into `picture`; any other span's
@@ -61,12 +61,12 @@ impl Blob {
         self.spans.iter()
     }
 
-    /// A table's rows, columns and cells, row-major, from its span's data: a `(rows<<16|cols)`
-    /// header at `data - 1`, then each cell's length and its markdown.
+    /// A table's rows, columns and cells, row-major, from its span's data: its rows over its cols at
+    /// `data - TABLE_DATA_BIAS`, then from `TABLE_CELLS` each cell's length and its markdown.
     pub fn table(&self, data: i32) -> (usize, usize, Vec<String>) {
-        let mut p = (data - 1) as usize;
-        let packed = u32::from_le_bytes(self.url_data[p..p + 4].try_into().unwrap());
-        p += 4;
+        let at = data as usize - format::TABLE_DATA_BIAS;
+        let packed = u32::from_le_bytes(self.url_data[at..at + 4].try_into().unwrap());
+        let mut p = at + format::TABLE_CELLS;
         let (rows, cols) = (
             (packed >> format::TABLE_ROWS_SHIFT) as usize,
             (packed & ((1 << format::TABLE_ROWS_SHIFT) - 1)) as usize,
@@ -87,9 +87,8 @@ impl Blob {
 /// Reads a blob back: the header, the text, the spans past the padding and their addresses.
 pub(crate) fn read(blob: &[u8]) -> Blob {
     let int = |at: usize| i32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
-    let text_len = int(0) as usize;
-    let count = (int(4) & ((1 << format::COUNT_BITS) - 1)) as usize;
-    let spans_at = format::HEADER_SIZE + text_len + (4 - text_len % 4) % 4;
+    let (text_len, count, flags) = read_header(blob).unwrap();
+    let spans_at = records_at(text_len);
     let url_data = blob[spans_at + count * format::RECORD..].to_vec();
     let spans = (0..count)
         .map(|i| {
@@ -99,13 +98,8 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
                 let (url, picture) = picture(&url_data, data as usize);
                 (Some(url), Some(picture))
             } else {
-                let url = (typ == LINK || typ == APP_LINK).then(|| {
-                    let (offset, len) = (
-                        (data >> format::LINK_LENGTH_BITS) as usize,
-                        (data & ((1 << format::LINK_LENGTH_BITS) - 1)) as usize,
-                    );
-                    String::from_utf8(url_data[offset..offset + len].to_vec()).unwrap()
-                });
+                let url = (typ == LINK || typ == APP_LINK)
+                    .then(|| String::from_utf8(url_data[link_range(data)].to_vec()).unwrap());
                 (url, None)
             };
             Span {
@@ -122,7 +116,7 @@ pub(crate) fn read(blob: &[u8]) -> Blob {
         text: std::str::from_utf8(&blob[format::HEADER_SIZE..format::HEADER_SIZE + text_len])
             .unwrap()
             .to_string(),
-        flags: blob[7],
+        flags: flags as u8,
         spans,
         url_data,
     }
