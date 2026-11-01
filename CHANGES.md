@@ -849,6 +849,12 @@ prose parse for two optimisation passes without showing.
 > written by syncdown's Gradle `generateSpanTypes` and `generateSites` tasks
 > and committed here, so `cargo` runs in isolation. Change the ids in
 > syncdown's `blob_format.toml` and `sites.toml`, never in these files.
+>
+> The blob's layout comes from the same file, `span_types.rs`'s `format`
+> module: the header's fields, the text's padding, the record size and the
+> payloads' packing. `blob.rs` writes and reads it once, `sort_key`, `header`,
+> `read_header`, `records_at` and `link_range`, for the writer, a translation
+> and the tests' reader alike ([f1ca1c0]).
 
 ### `src/benchmarks.rs`
 
@@ -1288,3 +1294,4 @@ Pixel 9 Pro XL).
 [b54f698]: https://github.com/laurencedawson/comrak/commit/b54f698
 [497cd49]: https://github.com/laurencedawson/comrak/commit/497cd49
 [3ecf35e]: https://github.com/laurencedawson/comrak/commit/3ecf35e
+[f1ca1c0]: https://github.com/laurencedawson/comrak/commit/f1ca1c0
