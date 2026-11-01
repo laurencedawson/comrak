@@ -11,9 +11,9 @@ use super::*;
 use tree::{Id, Tree};
 
 /// The article on the page `html`, at `base_url`, which its relative links and pictures resolve
-/// against: its title, a first level heading, centred, its authors as the page's JSON-LD names
-/// them on the line under it, centred at the body's size, then its words, every picture the
-/// article shows among them; the page's own byline element is no part of it. None where nothing on
+/// against: its title, written as a heading, which the writer makes the page's title, its authors
+/// as the page's JSON-LD names them on the line under it, its byline, then its words, every
+/// picture the article shows among them; the page's own byline element is no part of it. None where nothing on
 /// the page reads as one.
 pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     let article = smoothie::extract(html)?;
@@ -27,13 +27,13 @@ pub fn render_article_blob(html: &str, base_url: &str) -> Option<Vec<u8>> {
     if !title.is_empty() {
         let start = out.pos();
         out.write_prose(&title);
+        // A heading, the first block written: the writer makes it the page's title
         out.span(HEADINGS[0], start);
-        out.span(CENTERED, start);
         if !byline.is_empty() {
             out.nl(1);
             let start = out.pos();
             out.write_prose(byline);
-            out.span(CENTERED, start);
+            out.span(HEADING_BYLINE, start);
         }
         out.nl(2);
     }
@@ -125,8 +125,9 @@ enum Close<'t> {
     List,
     Item,
     Quote(usize),
-    /// A heading: where it starts, its type, and the byte it starts on, where a long body may be cut.
-    Heading(usize, i32, usize),
+    /// A heading: where it starts, its type, and the byte it starts on; the writer works out where a long body
+    /// may be cut.
+    Heading(usize, i32, i32),
 }
 
 struct Walk<'t, 'a, 'o> {
@@ -188,8 +189,11 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.end(true);
                 let level = (name.as_bytes()[1] - b'1') as usize;
-                let byte = self.out.blob.len() - HEADER_SIZE + self.out.p;
-                Some(Close::Heading(self.out.pos(), HEADINGS[level], byte))
+                Some(Close::Heading(
+                    self.out.pos(),
+                    HEADINGS[level],
+                    self.out.byte(),
+                ))
             }
             "tr" => {
                 self.end(false);
@@ -320,7 +324,7 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 self.end(true);
             }
             Close::Heading(start, heading, byte) => {
-                self.out.span_data(heading, start, byte as i32);
+                self.out.span_data(heading, start, byte);
                 self.end(true);
             }
             Close::Line => self.end(false),

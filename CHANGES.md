@@ -566,6 +566,24 @@ line. On an M1 Max, an answer accented, Japanese and emoji as a translator's, ag
 Building a page's sections one by one still allocates 4.3 MB: each section's blob carries the
 page's whole url data, which its records' offsets point into.
 
+### A reader body's title and sections, worked out by the writer
+
+`BlobWriter::into_blob` works out a reader body's headings for every walk, in the one pass it
+already made over the sorted records. The first block written, where it is a heading no span
+crosses, is the page's title, `HEADING_TITLE`, with no data, and the tile over its line a title's,
+`reader_block::TITLE`: an article's title and a markdown page's opening heading alike, whatever its
+level. Any other heading no span crosses, with a blank line's tile right before it, carries the
+byte it starts on, where a long body may be cut, which both walks give it as they write it,
+`BlobWriter::byte`, the bytes written and the newlines owed; one a quote, a list or a spoiler holds,
+or with no gap before it, has it cleared. A tile crosses nothing, being no container.
+So a markdown page read for the reader cuts into sections as an article does. An article's authors under its title are its byline,
+`HEADING_BYLINE`. `CENTERED` is retired, the title and byline the only centred lines; the two new
+types sit after the containers and before the six levels, which stay one run, and everything after
+them moves up one. Another site's blob is untouched: a comment opening on a heading keeps its
+level and carries no byte. `tests/blob_headings.rs` pins both rules, past accents, CJK and a
+surrogate pair, against the view's own reading of a cut, and a page given back unchanged by a
+translation is the same blob.
+
 ### Standalone use (without the fork's parse-side changes)
 
 The blob renderer is decoupled from how the AST is built. `render_blob` walks a

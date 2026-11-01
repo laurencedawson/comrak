@@ -233,6 +233,17 @@ impl BlobWriter {
         self.len + self.p
     }
 
+    /// On a reader body, the byte the next words start on, past the newlines owed: what a heading opening there
+    /// carries, a place a long body may be cut; 0 elsewhere, where no body is cut.
+    #[inline]
+    pub(crate) fn byte(&self) -> i32 {
+        if self.tile.is_some() {
+            (self.blob.len() - HEADER_SIZE + self.p) as i32
+        } else {
+            0
+        }
+    }
+
     #[inline]
     pub(crate) fn write_text(&mut self, s: &str) {
         // Nothing to write leaves the newlines owed, so a gap asked for after it merges with them
@@ -553,19 +564,35 @@ impl BlobWriter {
         if i < span_count {
             spans_view.sort_unstable_by_key(key);
         }
-        // A heading a span crosses, in a quote, a spoiler or a style around blocks, is no place to cut, nor one with no
-        // blank line's tile right before it, as after a list nested in its item: its byte goes, so every cut opens on
-        // a gap
+        // A reader body's headings, worked out here for every walk. The first block written, where it is a heading
+        // no span crosses, is the page's title, and its line's tile a title's. Any other heading no span crosses, with
+        // a blank line's tile right before it, is a place a long body may be cut, keeping the byte the walk gave it;
+        // one in a quote, a spoiler or a style around blocks, or with no gap before it, as after a list nested in its
+        // item, is none, so every cut opens on a gap. A tile is no container: it crosses nothing
         if self.tile.is_some() {
-            let (mut reach, mut prev) = (0, [0; 4]);
+            let (mut reach, mut prev, mut title) = (0, [0; 4], false);
             for s in spans_view.iter_mut() {
-                let after_gap =
-                    prev[2] == READER_BLOCK && prev[3] == reader_block::GAP && prev[1] == s[0];
-                if matches!(s[2], HEADING_1..=HEADING_6) && (s[0] < reach || !after_gap) {
-                    s[3] = 0;
+                if matches!(s[2], HEADING_1..=HEADING_6) {
+                    let free = s[0] >= reach;
+                    let after_gap =
+                        prev[2] == READER_BLOCK && prev[3] == reader_block::GAP && prev[1] == s[0];
+                    if s[0] == 0 && free {
+                        (s[2], s[3], title) = (HEADING_TITLE, 0, true);
+                    } else if !(free && after_gap) {
+                        s[3] = 0;
+                    }
                 }
-                reach = reach.max(s[1]);
+                if s[2] != READER_BLOCK {
+                    reach = reach.max(s[1]);
+                }
                 prev = *s;
+            }
+            if title {
+                for s in spans_view.iter_mut().take_while(|s| s[0] == 0) {
+                    if s[2] == READER_BLOCK {
+                        s[3] = reader_block::TITLE;
+                    }
+                }
             }
         }
 
@@ -612,6 +639,8 @@ enum Kind {
     Quote,
     /// Where the text starts, and whether it stands in for a video.
     Link(usize, bool),
+    /// A heading's span type, and on a reader body the byte it starts on, where a long body may be cut.
+    Heading(i32, i32),
 }
 
 const NO_SPANS: [i32; 2] = [-1, -1];
@@ -791,7 +820,7 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
 
         Heading(h) => {
             let heading = HEADINGS[(h.level as usize).saturating_sub(1).min(5)];
-            hold(open, Kind::Plain, start, [heading, -1], 2);
+            hold(open, Kind::Heading(heading, out.byte()), start, NO_SPANS, 2);
         }
 
         CodeBlock(c) => {
@@ -933,6 +962,7 @@ fn leave<'a>(node: &'a AstNode<'a>, o: Open, out: &mut BlobWriter) {
             }
             out.link(o.start, text_start, &url);
         }
+        Kind::Heading(heading, byte) => out.span_data(heading, o.start, byte),
         Kind::Plain | Kind::Item(_) => {}
     }
     for t in o.spans {

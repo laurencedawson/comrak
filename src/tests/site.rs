@@ -625,7 +625,7 @@ fn reader_tiles_carry_their_kind() {
     use crate::blob::reader_block::{
         GAP, HEADING, KEEP, LEVEL_SHIFT, LIST, PARAGRAPH, PICTURE, QUOTE,
     };
-    let md = "## A heading\n\nwords\n\n> quoted\n\n- an item\n- another\n\n> - in a quote\n\n```\ncode\n```\n\n---\n\n![](https://e.com/a.png)";
+    let md = "first words\n\n## A heading\n\nwords\n\n> quoted\n\n- an item\n- another\n\n> - in a quote\n\n```\ncode\n```\n\n---\n\n![](https://e.com/a.png)";
     let b = blob(md, READER).unwrap();
     let kinds: Vec<i32> = b
         .span_iter()
@@ -635,6 +635,8 @@ fn reader_tiles_carry_their_kind() {
     assert_eq!(
         kinds,
         [
+            PARAGRAPH,
+            GAP,
             HEADING | 2 << LEVEL_SHIFT,
             GAP,
             PARAGRAPH,

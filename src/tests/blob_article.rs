@@ -1,7 +1,7 @@
 //! Tests for the blob renderer's walk over a web page's article (`comrak::blob::render_article_blob`).
 //!
-//! - `extraction` : the article kept, the page around it dropped, the title first and centred, the
-//!   byline out
+//! - `extraction` : the article kept, the page around it dropped, the title first as the page's
+//!   title, its authors under it as its byline
 //! - `tree`       : the closes HTML implies, scripts, styles and templates no part of the page
 //! - `blocks`     : paragraphs, headings, lists, quotes, code, rules, table rows
 //! - `inline`     : emphasis, code, superscript, whitespace
@@ -10,8 +10,8 @@
 //!   the page's lead picture kept where the article shows it, a size and alt
 
 use crate::blob::{
-    BOLD, CENTERED, CODE, CODE_BLOCK, HEADINGS, HRULE, IMAGE, ITALIC, LINK, LINK_SIZE, LIST_ITEM,
-    QUOTE, SUPERSCRIPT, format, render_article_blob,
+    BOLD, CODE, CODE_BLOCK, HEADING_BYLINE, HEADING_TITLE, HEADINGS, HRULE, IMAGE, ITALIC, LINK,
+    LINK_SIZE, LIST_ITEM, QUOTE, SUPERSCRIPT, format, render_article_blob,
 };
 use crate::tests::blob_read::{Blob, Picture, Span, read};
 
@@ -40,7 +40,7 @@ fn whole(html: &str) -> Blob {
 /// The page's title, as the heading the blob opens with.
 fn title(html: &str) -> String {
     let b = whole(html);
-    words(&b, of(&b, HEADINGS[0])[0]).to_string()
+    words(&b, of(&b, HEADING_TITLE)[0]).to_string()
 }
 
 /// `body` set among enough prose to be the article.
@@ -117,8 +117,8 @@ fn prefers_the_metadata_title() {
     assert_eq!(title(&html), "The real one");
 }
 
-/// The title is the blob's first line, a first level heading with a `CENTERED` span over the same
-/// words; no heading of the article's own is centred.
+/// The title is the blob's first line, the page's title heading, which the view centres; the
+/// article's own headings stay their levels.
 #[test]
 fn opens_on_its_title_centred() {
     let html = page(
@@ -130,10 +130,11 @@ fn opens_on_its_title_centred() {
         b.text,
         format!("A title long enough to keep\n\nA section\n\n{PROSE}")
     );
-    let title: Vec<_> = of(&b, HEADINGS[0]).iter().map(|s| words(&b, s)).collect();
-    let centred: Vec<_> = of(&b, CENTERED).iter().map(|s| words(&b, s)).collect();
+    let title: Vec<_> = of(&b, HEADING_TITLE).iter().map(|s| words(&b, s)).collect();
+    let sections: Vec<_> = of(&b, HEADINGS[1]).iter().map(|s| words(&b, s)).collect();
     assert_eq!(title, ["A title long enough to keep"]);
-    assert_eq!(centred, title);
+    assert_eq!(sections, ["A section"]);
+    assert!(of(&b, HEADINGS[0]).is_empty());
 }
 
 /// A page with JSON-LD in its head naming `author`, and `body` after the title.
@@ -144,8 +145,9 @@ fn ld_page(ld: &str, body: &str) -> String {
     )
 }
 
-/// The authors the page's JSON-LD names stand on the line under the title, centred at the body's
-/// size, however the JSON writes them: a person, several, or a bare string.
+/// The authors the page's JSON-LD names stand on the line under the title, its byline, which the
+/// view centres at the body's size, however the JSON writes them: a person, several, or a bare
+/// string.
 #[test]
 fn names_the_author_under_the_title() {
     let b = whole(&ld_page(
@@ -156,13 +158,13 @@ fn names_the_author_under_the_title() {
         b.text,
         format!("A title long enough to keep\nYasemin Saplakoglu\n\n{PROSE}")
     );
-    let centred: Vec<_> = of(&b, CENTERED).iter().map(|s| words(&b, s)).collect();
-    assert_eq!(
-        centred,
-        ["A title long enough to keep", "Yasemin Saplakoglu"]
-    );
-    let headings: Vec<_> = of(&b, HEADINGS[0]).iter().map(|s| words(&b, s)).collect();
-    assert_eq!(headings, ["A title long enough to keep"]);
+    let byline: Vec<_> = of(&b, HEADING_BYLINE)
+        .iter()
+        .map(|s| words(&b, s))
+        .collect();
+    assert_eq!(byline, ["Yasemin Saplakoglu"]);
+    let title: Vec<_> = of(&b, HEADING_TITLE).iter().map(|s| words(&b, s)).collect();
+    assert_eq!(title, ["A title long enough to keep"]);
 }
 
 #[test]
