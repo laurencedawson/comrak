@@ -520,7 +520,7 @@ what is left, as `html.rs` is the walk over a comment.
 - `tests/blob_article.rs` ([ce02d6f]): extraction, the tree, every block and
   inline, links and pictures
 
-### Translating a blob ([497cd49], [3ecf35e])
+### Translating a blob ([497cd49], [3ecf35e], [b29ec43], [e86f8f3])
 
 `blob::translate`, experimental, translates a blob after it is written, so one implementation
 serves markdown, every site's HTML and the reader, and an app that stores only blobs needs no
@@ -541,8 +541,30 @@ list, a quote over lines and hard breaks among them. Both take the part to work 
 records and text bytes, as the view is told what to show, so a reader's section is translated
 straight from the page's blob: only those bytes are decoded and those records read, moved to start
 at the first's, and the blob built back is that part alone. The whole blob is every record over
-all the text; no section is known here. Unmeasured for speed: the module carries a TODO to
-benchmark, then refactor.
+all the text; no section is known here.
+
+Text the page itself writes as a marker, a citation's `[1]` or braces round a number, goes as a
+kept part of its own and comes back as written, so a translator handing it back never moves a
+link or a kept part onto it; a marker in another script's digits (Arabic-Indic, Persian,
+Devanagari and sixteen more) is read; and an answer whose last lines came back empty builds, only
+blank lines past the text's dropped ([e86f8f3]).
+
+Measured, then made linear and moved to UTF-8 ([b29ec43], [e86f8f3]). The text is read and built
+as the UTF-8 it is, the blob's own bytes borrowed, lines found with memchr, pieces byte ranges, a
+line marked by slices and the new text a `String`; only the records count in UTF-16 units, their
+ends moved to bytes once as the blob is read and back once as it is written, neither for ASCII
+text. Before it, `write_answer` made two arrays as long as the text's markers for every line it
+wrote, the plan looked up the next link at every character, and placing a record scanned every
+line. On an M1 Max, an answer accented, Japanese and emoji as a translator's, against [66815e1]:
+
+| | mark | build |
+|---|---|---|
+| a 185 KB reader page | 8.70 ms -> 373 us, 9535 -> 63 allocs | 18.12 -> 0.92 ms, 10952 -> 186 allocs, 12.6 -> 1.6 MB |
+| its 91 sections | 2.13 -> 0.37 ms | 4.04 -> 0.99 ms |
+| a 4 KB comment | 32 -> 5.5 us, 128 -> 20 allocs | 56 -> 10.4 us, 141 -> 40 allocs |
+
+Building a page's sections one by one still allocates 4.3 MB: each section's blob carries the
+page's whole url data, which its records' offsets point into.
 
 ### Standalone use (without the fork's parse-side changes)
 
@@ -1295,3 +1317,6 @@ Pixel 9 Pro XL).
 [497cd49]: https://github.com/laurencedawson/comrak/commit/497cd49
 [3ecf35e]: https://github.com/laurencedawson/comrak/commit/3ecf35e
 [f1ca1c0]: https://github.com/laurencedawson/comrak/commit/f1ca1c0
+[b29ec43]: https://github.com/laurencedawson/comrak/commit/b29ec43
+[e86f8f3]: https://github.com/laurencedawson/comrak/commit/e86f8f3
+[66815e1]: https://github.com/laurencedawson/comrak/commit/66815e1
