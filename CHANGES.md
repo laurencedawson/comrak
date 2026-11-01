@@ -520,24 +520,29 @@ what is left, as `html.rs` is the walk over a comment.
 - `tests/blob_article.rs` ([ce02d6f]): extraction, the tree, every block and
   inline, links and pictures
 
-### Translating a blob ([497cd49])
+### Translating a blob ([497cd49], [3ecf35e])
 
 `blob::translate`, experimental, translates a blob after it is written, so one implementation
 serves markdown, every site's HTML and the reader, and an app that stores only blobs needs no
-source to translate. `translation_text(blob)` hands out the text as one string, a line for each
-of its lines: a link's words between `[n]` and `[/n]`, and as `{n}`, numbered across the text,
-code, each line of a code block, a picture, a rule, a table, a mention and a link whose words are
-an address, which a translator was seen moving words into. The domain the writer puts after a
-link's words (`site::link_domain`) is left out and not written back; the translator rewrote its
-brackets, and a reader's aid needs no translation. `translated(blob, answer)` takes the answer
-line for line and gives `None` where the lines do not match, so the caller sends them one at a
-time and joins them. Each record lands where its kept part, its untranslated line, its link's
-markers or its line's ends did; emphasis inside a translated line is dropped, and a line that came
-back as it went is written as it was. The records are sorted with the writer's key, a free
-heading's section byte and the ASCII bit read off the new text, the site and the url data copied.
-Sending a page's whole text as one string, its lines came back one for one in German, Spanish,
-Italian and Japanese on a Pixel, a list, a quote over lines and hard breaks among them. Unmeasured
-for speed: the module carries a TODO to benchmark, then refactor.
+source to translate. `mark_for_translation(blob, records, bytes)` hands out the text as one
+string, a line for each of its lines: a link's words between `[n]` and `[/n]`, and as `{n}`,
+numbered across the text, code, each line of a code block, a picture, a rule, a table, a mention
+and a link whose words are an address, which a translator was seen moving words into. The domain
+the writer puts after a link's words (`site::link_domain`) is left out and not written back; the
+translator rewrote its brackets, and a reader's aid needs no translation.
+`build_translated_blob(blob, records, bytes, answer)` takes the answer line for line and gives
+`None` where the lines do not match, so the caller sends them one at a time and joins them. Each
+record lands where its kept part, its untranslated line, its link's markers or its line's ends
+did; emphasis inside a translated line is dropped, and a line that came back as it went is written
+as it was. The records are sorted with the writer's key, a free heading's section byte and the
+ASCII bit read off the new text, the site and the url data copied. Sending a page's whole text as
+one string, its lines came back one for one in German, Spanish, Italian and Japanese on a Pixel, a
+list, a quote over lines and hard breaks among them. Both take the part to work on as the caller's
+records and text bytes, as the view is told what to show, so a reader's section is translated
+straight from the page's blob: only those bytes are decoded and those records read, moved to start
+at the first's, and the blob built back is that part alone. The whole blob is every record over
+all the text; no section is known here. Unmeasured for speed: the module carries a TODO to
+benchmark, then refactor.
 
 ### Standalone use (without the fork's parse-side changes)
 
@@ -1282,3 +1287,4 @@ Pixel 9 Pro XL).
 [3ebcf59]: https://github.com/laurencedawson/comrak/commit/3ebcf59
 [b54f698]: https://github.com/laurencedawson/comrak/commit/b54f698
 [497cd49]: https://github.com/laurencedawson/comrak/commit/497cd49
+[3ecf35e]: https://github.com/laurencedawson/comrak/commit/3ecf35e
