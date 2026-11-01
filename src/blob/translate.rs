@@ -56,7 +56,11 @@ pub fn build_translated_blob(
 ) -> Option<Vec<u8>> {
     let read = Blob::read(blob, records, bytes)?;
     let plan = Plan::of(&read);
-    let answers: Vec<&str> = answer.trim_end().split('\n').collect();
+    // An empty last line is a line; only blank lines past the text's, a trailing newline, are not
+    let mut answers: Vec<&str> = answer.split('\n').collect();
+    while answers.len() > plan.lines.len() && answers.last().is_some_and(|l| l.trim().is_empty()) {
+        answers.pop();
+    }
     if answers.len() != plan.lines.len() {
         return None;
     }
@@ -204,15 +208,34 @@ impl<'t> Plan<'t> {
             let mut i = start;
             let mut from = start;
             let mut letters = false;
-            let flush = |pieces: &mut Vec<Piece>, from: usize, to: usize, letters: &mut bool| {
+            // Words, but for any of them a translator would read as a marker, a citation's [1], which
+            // goes as a kept part of its own and comes back as the page wrote it
+            let flush = |pieces: &mut Vec<Piece>,
+                         kept: &mut Vec<Option<(usize, usize)>>,
+                         marks: &mut usize,
+                         from: usize,
+                         to: usize,
+                         letters: &mut bool| {
                 if from < to {
                     *letters |= !*letters && text[from..to].chars().any(char::is_alphabetic);
-                    pieces.push(Piece::Words(from, to));
+                    let mut at = from;
+                    while let Some((m, len, _)) = next_marker(&text[at..to]) {
+                        if m > 0 {
+                            pieces.push(Piece::Words(at, at + m));
+                        }
+                        kept.push(Some((at + m, at + m + len)));
+                        pieces.push(Piece::Kept(*marks));
+                        *marks += 1;
+                        at += m + len;
+                    }
+                    if at < to {
+                        pieces.push(Piece::Words(at, to));
+                    }
                 }
             };
             while i < at {
                 if let Some(c) = closes.iter().position(|&(end, _)| end == i) {
-                    flush(&mut pieces, from, i, &mut letters);
+                    flush(&mut pieces, &mut kept, &mut marks, from, i, &mut letters);
                     pieces.push(Piece::Close(closes.remove(c).1));
                     from = i;
                     continue;
@@ -222,7 +245,7 @@ impl<'t> Plan<'t> {
                 }
                 if let Some(&(s, e)) = sent.get(next_sent).filter(|&&(s, e)| s == i && e <= at) {
                     next_sent += 1;
-                    flush(&mut pieces, from, i, &mut letters);
+                    flush(&mut pieces, &mut kept, &mut marks, from, i, &mut letters);
                     links.push((s, e, marks));
                     kept.push(None);
                     pieces.push(Piece::Open(marks));
@@ -236,7 +259,7 @@ impl<'t> Plan<'t> {
                 if let Some(&(s, e, dropped)) = outer.get(k).filter(|&&(s, _, _)| s == i) {
                     // A kept part runs to its own end or its line's, a code block's lines each their own
                     let to = e.min(at);
-                    flush(&mut pieces, from, i, &mut letters);
+                    flush(&mut pieces, &mut kept, &mut marks, from, i, &mut letters);
                     if !dropped {
                         kept.push(Some((s, to)));
                         pieces.push(Piece::Kept(marks));
@@ -260,7 +283,7 @@ impl<'t> Plan<'t> {
                     .filter(|&p| p > i)
                     .fold(at, usize::min);
             }
-            flush(&mut pieces, from, at, &mut letters);
+            flush(&mut pieces, &mut kept, &mut marks, from, at, &mut letters);
             for (_, n) in closes.drain(..).rev() {
                 pieces.push(Piece::Close(n));
             }
@@ -376,15 +399,9 @@ enum Marker {
 /// The first marker in `s`: where it starts, how long it is, and what it is. A translator may put
 /// spaces inside one, `[ 1 ]`, or a full-width bracket round it.
 fn next_marker(s: &str) -> Option<(usize, usize, Marker)> {
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if let Some((len, marker)) = marker_at(&s[i..]) {
-            return Some((i, len, marker));
-        }
-        i += s[i..].chars().next().map_or(1, char::len_utf8);
-    }
-    None
+    // A marker opens on '[' or '{', or a full-width one, whose UTF-8 starts 0xEF
+    memchr::memchr3_iter(b'[', b'{', 0xEF, s.as_bytes())
+        .find_map(|i| marker_at(&s[i..]).map(|(len, marker)| (i, len, marker)))
 }
 
 fn marker_at(s: &str) -> Option<(usize, Marker)> {
@@ -409,7 +426,7 @@ fn marker_at(s: &str) -> Option<(usize, Marker)> {
     let mut n = 0usize;
     let mut digits = 0;
     while let Some(&(_, c)) = chars.peek() {
-        let Some(d) = c.to_digit(10) else { break };
+        let Some(d) = digit(c) else { break };
         n = n * 10 + d as usize;
         digits += 1;
         chars.next();
@@ -425,6 +442,19 @@ fn marker_at(s: &str) -> Option<(usize, Marker)> {
         (_, true) => (len, Marker::Close(n)),
         _ => (len, Marker::Open(n)),
     })
+}
+
+/// A decimal digit's value, in any script a translator writes a number in: each script's digits
+/// run on from its zero.
+fn digit(c: char) -> Option<u32> {
+    const ZEROS: [char; 19] = [
+        '0', '\u{660}', '\u{6F0}', '\u{7C0}', '\u{966}', '\u{9E6}', '\u{A66}', '\u{AE6}',
+        '\u{B66}', '\u{BE6}', '\u{C66}', '\u{CE6}', '\u{D66}', '\u{E50}', '\u{ED0}', '\u{F20}',
+        '\u{1040}', '\u{17E0}', '\u{FF10}',
+    ];
+    ZEROS
+        .iter()
+        .find_map(|&z| (c as u32).checked_sub(z as u32).filter(|&d| d < 10))
 }
 
 /// Whether a link's `words` are an address, its own url or its host: kept as written, since a

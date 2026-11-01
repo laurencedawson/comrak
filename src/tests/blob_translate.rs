@@ -551,3 +551,209 @@ fn a_part_past_the_blobs_is_none() {
     assert!(mark_for_translation(&blob, 0..5, all_bytes(&blob)).is_none());
     assert!(mark_for_translation(&blob, all(&blob), 0..99).is_none());
 }
+
+/// `blob` built back from `answer`, all of it, read.
+fn translated(blob: &[u8], answer: &str) -> Blob {
+    read(&build_translated_blob(blob, all(blob), all_bytes(blob), answer).expect("a blob"))
+}
+
+/// The url of each link of `b`, in the text's order.
+fn urls(b: &Blob) -> Vec<&str> {
+    b.span_iter()
+        .filter(|s| s.typ == LINK)
+        .filter_map(|s| s.url.as_deref())
+        .collect()
+}
+
+/// Why: a page's own citation, `[1]`, comes back from the translator as it went; it is the page's
+/// words, not link 1's marker, so the link still stands over its own words and the citation stays.
+#[test]
+fn a_citation_in_the_text_is_not_a_link_marker() {
+    let blob = md(
+        "A claim[1] made by [the docs](https://example.com/a).",
+        PLAIN,
+    );
+    let out = translated(
+        &blob,
+        &mark_for_translation(&blob, all(&blob), all_bytes(&blob))
+            .unwrap()
+            .replace("A claim", "Eine Behauptung")
+            .replace("made by", "von")
+            .replace("the docs", "der Doku"),
+    );
+    assert_eq!(out.text, "Eine Behauptung[1] von der Doku.");
+    assert_eq!(words(&out, LINK), ["der Doku"]);
+}
+
+/// Why: braces round a number in the page's words, `{1}`, are words too, not kept part 1, which
+/// keeps its own place.
+#[test]
+fn braces_in_the_text_are_not_a_kept_part() {
+    let blob = md("Set {1} to `x` first.", PLAIN);
+    let out = translated(
+        &blob,
+        &mark_for_translation(&blob, all(&blob), all_bytes(&blob))
+            .unwrap()
+            .replace("Set", "Setze")
+            .replace(" to ", " auf ")
+            .replace("first", "zuerst"),
+    );
+    assert_eq!(out.text, "Setze {1} auf x zuerst.");
+    assert_eq!(words(&out, CODE), ["x"]);
+}
+
+/// Why: a translator into Arabic, Persian or Hindi may write a marker's number in its own digits.
+#[test]
+fn markers_in_another_scripts_digits_are_read() {
+    let blob = md(
+        "See [the docs](https://example.com/a) and `code` here.",
+        PLAIN,
+    );
+    let out = translated(&blob, "انظر [١]الوثائق[/١] و{٢} هنا.");
+    assert_eq!(out.text, "انظر الوثائق وcode هنا.");
+    assert_eq!(words(&out, LINK), ["الوثائق"]);
+    assert_eq!(words(&out, CODE), ["code"]);
+}
+
+/// Why: an answer may come back with Windows line ends; its lines are the same lines, no `\r` left
+/// in the text.
+#[test]
+fn an_answer_with_crlf_lines_is_read_line_for_line() {
+    let blob = md("First line\n\nSecond [link](https://example.com/a)", PLAIN);
+    let out = translated(&blob, "Erste Zeile\r\n\r\nZweite [1]Verweis[/1]\r\n");
+    assert_eq!(out.text, "Erste Zeile\n\nZweite Verweis");
+    assert_eq!(words(&out, LINK), ["Verweis"]);
+}
+
+/// Why: a translator that writes a link's markers twice gives the link the words it put first
+/// between them, and the rest are plain words.
+#[test]
+fn a_link_marked_twice_takes_its_first_words() {
+    let blob = md("See [the docs](https://example.com/a) here.", PLAIN);
+    let out = translated(&blob, "Siehe [1]die[/1] [1]Doku[/1] hier.");
+    assert_eq!(out.text, "Siehe die Doku hier.");
+    assert_eq!(words(&out, LINK), ["die"]);
+}
+
+/// Why: a kept part's number moved onto another line is no marker there; the part stays on its own
+/// line, at that line's end where its own number went missing.
+#[test]
+fn a_kept_part_moved_to_another_line_stays_on_its_own() {
+    let blob = md("First `a` line.\n\nSecond `b` line.", PLAIN);
+    let out = translated(&blob, "Erste {2} Zeile.\n\nZweite {1} Zeile.");
+    assert_eq!(out.text, "Erste  Zeile.a\n\nZweite  Zeile.b");
+    assert_eq!(words(&out, CODE), ["a", "b"]);
+}
+
+/// Why: a line of words given back empty loses its words, not what it keeps.
+#[test]
+fn a_line_given_back_empty_keeps_its_kept_parts() {
+    let blob = md("Some words `code` here.", PLAIN);
+    let out = translated(&blob, "");
+    assert_eq!(out.text, "code");
+    assert_eq!(words(&out, CODE), ["code"]);
+}
+
+/// Why: two links a translator swaps each keep their own url, over their own words.
+#[test]
+fn two_links_swapped_keep_their_own_urls() {
+    let blob = md(
+        "See [one](https://example.com/1) and [two](https://example.com/2).",
+        PLAIN,
+    );
+    let out = translated(&blob, "Siehe [2]zwei[/2] und [1]eins[/1].");
+    assert_eq!(words(&out, LINK), ["zwei", "eins"]);
+    assert_eq!(
+        urls(&out),
+        ["https://example.com/2", "https://example.com/1"]
+    );
+}
+
+/// Why: a link over a hard break has no markers, its words on two lines; translated, it is dropped
+/// whole, never left over half its words.
+#[test]
+fn a_link_over_a_hard_break_is_dropped_whole() {
+    let blob = md("[first line  \nsecond](https://example.com/a) after", PLAIN);
+    assert_eq!(
+        mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap(),
+        "first line\nsecond after"
+    );
+    let out = translated(&blob, "erste Zeile\nzweite danach");
+    assert_eq!(out.text, "erste Zeile\nzweite danach");
+    assert!(words(&out, LINK).is_empty());
+}
+
+/// Why: code inside a link's words is kept inside the link, both landing where the answer put them.
+#[test]
+fn code_inside_a_link_keeps_both() {
+    let blob = md("See [the `npm` docs](https://example.com/a).", PLAIN);
+    assert_eq!(
+        mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap(),
+        "See [1]the {2} docs[/1]."
+    );
+    let out = translated(&blob, "Siehe [1]die {2} Doku[/1].");
+    assert_eq!(words(&out, LINK), ["die npm Doku"]);
+    assert_eq!(words(&out, CODE), ["npm"]);
+}
+
+/// Why: whatever the answer, every record the blob keeps lies in the new text, and the records sort
+/// as the writer sorts them, which spoiler pairing and the view's reads rely on.
+#[test]
+fn every_record_lies_in_the_new_text_in_the_writers_order() {
+    for blob in samples() {
+        let text = mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap();
+        let emptied: String = text
+            .split('\n')
+            .map(|l| {
+                if l.chars().any(char::is_alphabetic) {
+                    ""
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for answer in [text.clone(), doubled(&text), emptied] {
+            let out = translated(&blob, &answer);
+            let len = out.text.encode_utf16().count() as i32;
+            let spans: Vec<_> = out.span_iter().collect();
+            for s in &spans {
+                assert!(
+                    0 <= s.start && s.start < s.end && s.end <= len,
+                    "{answer:?}"
+                );
+            }
+            for w in spans.windows(2) {
+                let key = |s: &crate::tests::blob_read::Span| (s.start, -s.end, s.typ);
+                assert!(key(w[0]) <= key(w[1]), "{answer:?}");
+            }
+        }
+    }
+}
+
+/// Why: a translation moves the text, never the url data: every picture, link and table reads the
+/// same payload after as before.
+#[test]
+fn pictures_links_and_tables_read_their_payloads_after() {
+    for blob in samples() {
+        let before = read(&blob);
+        let text = mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap();
+        let after = translated(&blob, &doubled(&text));
+        let payloads = |b: &Blob, typ: i32| -> Vec<(Option<String>, i32)> {
+            b.span_iter()
+                .filter(|s| s.typ == typ)
+                .map(|s| (s.url.clone(), if typ == TABLE { s.data } else { 0 }))
+                .collect()
+        };
+        for typ in [IMAGE, LINK, TABLE] {
+            assert_eq!(payloads(&after, typ), payloads(&before, typ), "type {typ}");
+        }
+        let pictures = |b: &Blob| {
+            b.span_iter()
+                .filter_map(|s| s.picture.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pictures(&after), pictures(&before));
+        assert_eq!(after.url_data, before.url_data);
+    }
+}
