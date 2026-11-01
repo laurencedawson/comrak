@@ -110,6 +110,54 @@ fn the_text_given_back_unchanged_is_the_same_blob() {
     }
 }
 
+/// Why: a text beyond ASCII, accents and characters two UTF-16 units wide among its records, given
+/// back unchanged, must be the same blob: the records' ends are moved to bytes and back.
+#[test]
+fn a_text_beyond_ascii_given_back_unchanged_is_the_same_blob() {
+    for blob in [
+        md(
+            "Café 🎉 then **bold** and [a link](https://example.com/x), 𝔉𝔦𝔫.\n\n> quoted naïveté 🎉 `code` end",
+            PLAIN,
+        ),
+        article(
+            "<p>Some café words, long enough 🎉 to stand as the article itself here.</p><h2>Later 𝔉</h2><p>More <a href=\"/x\">words</a> of the article.</p>",
+        ),
+    ] {
+        let text = mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap();
+        assert_eq!(
+            build_translated_blob(&blob, all(&blob), all_bytes(&blob), &text).unwrap(),
+            blob,
+            "{text:?}"
+        );
+    }
+}
+
+/// Why: characters two UTF-16 units wide before a link and inside the answer move every record after
+/// them; each must still stand over its own words.
+#[test]
+fn records_after_wide_characters_land_on_their_words() {
+    let blob = md(
+        "🎉 See [the docs](https://example.com/a) 🎉 and `code` here.",
+        PLAIN,
+    );
+    assert_eq!(
+        mark_for_translation(&blob, all(&blob), all_bytes(&blob)).unwrap(),
+        "🎉 See [1]the docs[/1] 🎉 and {2} here."
+    );
+    let out = read(
+        &build_translated_blob(
+            &blob,
+            all(&blob),
+            all_bytes(&blob),
+            "🎉🎉 Siehe [1]die Dokumente 𝔇[/1] und {2} hier.",
+        )
+        .unwrap(),
+    );
+    assert_eq!(out.text, "🎉🎉 Siehe die Dokumente 𝔇 und code hier.");
+    assert_eq!(words(&out, LINK), ["die Dokumente 𝔇"]);
+    assert_eq!(words(&out, CODE), ["code"]);
+}
+
 /// Why: what the translator sees is the words alone, a link's between its markers, everything to
 /// keep as a number, and none of the writer's own domain after a link.
 #[test]
