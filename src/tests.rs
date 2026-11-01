@@ -15,6 +15,7 @@ mod blob;
 mod blob_article;
 mod blob_html;
 mod blob_read;
+mod blob_translate;
 mod block_directive;
 mod cjk_friendly_emphasis;
 mod code;

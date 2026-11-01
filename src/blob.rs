@@ -38,6 +38,9 @@ pub use html::render_html_blob;
 pub(crate) mod article;
 pub use article::render_article_blob;
 
+/// A blob's text handed out to translate as one string, and the translation written back over it.
+pub mod translate;
+
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
 // can reference span type ids without reaching into `span_types` directly.
 pub(crate) use span_types::*;
