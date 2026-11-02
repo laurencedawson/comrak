@@ -247,8 +247,14 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
                 None
             }
             "hr" => {
-                // Two rules with nothing left between them, a share bar taken out say, are one
-                if self.out.len == self.rule {
+                // Two rules with nothing left between them, a share bar taken out say, are one; and one just before a
+                // heading outside any list or quote stands at a section's edge, where the list draws one between its
+                // rows, so written too it would stand a second
+                if self.out.len == self.rule
+                    || self.out.list_depth == 0
+                        && self.out.quote_depth == 0
+                        && self.before_heading(n)
+                {
                     return None;
                 }
                 self.end(true);
@@ -410,6 +416,15 @@ impl<'t, 'a, 'o> Walk<'t, 'a, 'o> {
         }
         self.block_start = true;
         self.space = false;
+    }
+
+    /// Whether the next thing after `n`, past blank text, is a heading.
+    fn before_heading(&self, n: Id) -> bool {
+        let t = self.tree;
+        std::iter::successors(t.next_sibling(n), |&c| t.next_sibling(c))
+            .find(|&c| t.text_of(c).is_none_or(|text| !text.trim().is_empty()))
+            .and_then(|c| t.name(c))
+            .is_some_and(|name| matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6"))
     }
 
     /// A `<pre>`'s words as written, its `<br>`s newlines, as one code block.

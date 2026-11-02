@@ -840,6 +840,17 @@ fn enter<'a>(node: &'a AstNode<'a>, out: &mut BlobWriter, open: &mut Vec<Open>) 
         }
 
         ThematicBreak => {
+            // In the reader a rule just before a top-level heading stands at a section's edge, where the list draws
+            // one between its rows: written too, it would stand a second
+            let top_level = node
+                .parent()
+                .is_some_and(|p| matches!(p.data.borrow().value, Document));
+            let before_heading = node
+                .next_sibling()
+                .is_some_and(|n| matches!(n.data.borrow().value, Heading(_)));
+            if out.tile.is_some() && top_level && before_heading {
+                return;
+            }
             // A line of its own, as a picture is: an item's words before it end on no newline of their own
             if out.len != 0 {
                 out.nl(if out.list_depth > 0 { 1 } else { 2 });

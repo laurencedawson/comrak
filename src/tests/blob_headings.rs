@@ -7,13 +7,14 @@
 //! - `sections` : each free heading after a gap carries its byte, in UTF-8 whatever the text's
 //!   characters, as the view cuts sections; a crossed one carries none
 //! - `article`  : its title the same title, its byline the authors line, its sections as before
+//! - `rules`    : a rule just before a cut is the list's to draw, so the reader writes none there
 
 use crate::benchmarks::production_options;
 use crate::blob::sites::{CHAN, HACKER_NEWS, LEMMY, LOBSTERS, PLAIN, READER};
 use crate::blob::translate::{build_translated_blob, mark_for_translation};
 use crate::blob::{
-    HEADING_BYLINE, HEADING_TITLE, HEADINGS, READER_BLOCK, reader_block, render_article_blob,
-    render_blob,
+    HEADING_BYLINE, HEADING_TITLE, HEADINGS, HRULE, READER_BLOCK, reader_block,
+    render_article_blob, render_blob,
 };
 use crate::parse_document_zerocopy;
 use crate::tests::blob_read::{Blob, Span, read};
@@ -250,4 +251,60 @@ fn a_page_given_back_unchanged_is_the_same_blob() {
         blob,
         "{text:?}"
     );
+}
+
+// ===== Rules =====
+
+/// Why: the reader's list draws a rule between its sections, so a page's own rule just before a cut
+/// would stand a second one there; the reader writes none, and the cut is as it was.
+#[test]
+fn a_rule_just_before_a_cut_is_left_to_the_list() {
+    let b = page("Words first.\n\n---\n\n## Next\n\nMore words.");
+    assert!(of(&b, HRULE).is_empty(), "{:?}", b.text);
+    assert!(!b.text.contains('\u{2}'), "{:?}", b.text);
+    assert_eq!(b.text, "Words first.\n\nNext\n\nMore words.");
+    assert_eq!(cuts(&b), ["Next"]);
+}
+
+/// Why: a rule with words after it, or the page's last block, stands inside a section, where only
+/// the body draws it.
+#[test]
+fn a_rule_inside_a_section_stays() {
+    let b = page("Words first.\n\n---\n\nMore words.\n\n## Next\n\nEnd.\n\n---");
+    assert_eq!(of(&b, HRULE).len(), 2, "{:?}", b.text);
+}
+
+/// Why: a rule in a quote before a heading in it is the quote's, no section's edge.
+#[test]
+fn a_rule_in_a_quote_before_a_heading_stays() {
+    let b = page("Words first.\n\n> ---\n> ## Quoted\n\nMore words.");
+    assert_eq!(of(&b, HRULE).len(), 1, "{:?}", b.text);
+}
+
+/// Why: a comment is never cut, so its rule before a heading is the only one drawn.
+#[test]
+fn a_comments_rule_before_a_heading_stays() {
+    let b = md("Words first.\n\n---\n\n## Next\n\nMore words.", LEMMY);
+    assert_eq!(of(&b, HRULE).len(), 1, "{:?}", b.text);
+}
+
+/// Why: an article's `<hr>` before an `<h2>` is the same rule before the same cut.
+#[test]
+fn an_articles_rule_just_before_a_cut_is_left_to_the_list() {
+    let b = article(
+        "",
+        &format!("<p>{PROSE}</p><hr>\n<h2>Next</h2><p>{PROSE}</p>"),
+    );
+    assert!(of(&b, HRULE).is_empty(), "{:?}", b.text);
+    assert_eq!(cuts(&b), ["Next"]);
+}
+
+/// Why: words between an article's rule and its heading keep the rule, inside the section above.
+#[test]
+fn an_articles_rule_before_words_stays() {
+    let b = article(
+        "",
+        &format!("<p>{PROSE}</p><hr>Some words.<h2>Next</h2><p>{PROSE}</p>"),
+    );
+    assert_eq!(of(&b, HRULE).len(), 1, "{:?}", b.text);
 }
