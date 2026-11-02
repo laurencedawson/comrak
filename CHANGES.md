@@ -566,7 +566,7 @@ line. On an M1 Max, an answer accented, Japanese and emoji as a translator's, ag
 Building a page's sections one by one still allocates 4.3 MB: each section's blob carries the
 page's whole url data, which its records' offsets point into.
 
-### A reader body's title and sections, worked out by the writer
+### A reader body's title and sections, worked out by the writer ([7ea5ccc], [7fc4940])
 
 `BlobWriter::into_blob` works out a reader body's headings for every walk, in the one pass it
 already made over the sorted records. The first block written, where it is a heading no span
@@ -583,6 +583,11 @@ them moves up one. Another site's blob is untouched: a comment opening on a head
 level and carries no byte. `tests/blob_headings.rs` pins both rules, past accents, CJK and a
 surrogate pair, against the view's own reading of a cut, and a page given back unchanged by a
 translation is the same blob.
+
+A rule just before a cut is left out ([7fc4940]): the reader's list draws one between its rows,
+so the page's own would stand a second there. The markdown walk writes no top-level rule with a
+heading next; the article walk no `<hr>` outside a list or quote whose next sibling past blank text
+is a heading. A rule with words after it, one in a quote, and every rule off the reader stay.
 
 ### Standalone use (without the fork's parse-side changes)
 
@@ -1338,3 +1343,5 @@ Pixel 9 Pro XL).
 [b29ec43]: https://github.com/laurencedawson/comrak/commit/b29ec43
 [e86f8f3]: https://github.com/laurencedawson/comrak/commit/e86f8f3
 [66815e1]: https://github.com/laurencedawson/comrak/commit/66815e1
+[7ea5ccc]: https://github.com/laurencedawson/comrak/commit/7ea5ccc
+[7fc4940]: https://github.com/laurencedawson/comrak/commit/7fc4940
