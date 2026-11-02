@@ -18,7 +18,10 @@
 //! their ends are moved to bytes once as the blob is read and back once as it is written, neither
 //! for ASCII text.
 
-use super::format::{ASCII_BIT, HEADER_SIZE, RECORD};
+use super::format::{
+    ASCII_BIT, HEADER_SIZE, LINK_LENGTH_BITS, PICTURE_ALT_LENGTH, PICTURE_URL, PICTURE_URL_LENGTH,
+    RECORD, TABLE_CELLS, TABLE_DATA_BIAS, TABLE_ROWS_SHIFT,
+};
 use std::ops::Range;
 
 use super::*;
@@ -491,6 +494,8 @@ struct Blob<'a> {
     text: &'a str,
     records: Vec<Record>,
     urls: &'a [u8],
+    /// Whether every record over all the text was read, so the url data is all its records'.
+    whole: bool,
 }
 
 impl<'a> Blob<'a> {
@@ -543,6 +548,7 @@ impl<'a> Blob<'a> {
             text,
             records: read,
             urls: blob.get(records_at + count * RECORD..)?,
+            whole: records == (0..count) && bytes == (0..text_len),
         })
     }
 
@@ -556,8 +562,16 @@ impl<'a> Blob<'a> {
 
     /// A blob of `text` and `records` over its bytes, sorted as the writer sorts them, their ends
     /// in UTF-16 units, the ASCII bit read off the new text, a free heading's section byte its new
-    /// byte, the site and url data as they were.
+    /// byte, the site as it was; the url data as it was for the whole blob, and for a part its own
+    /// records' alone, each payload once and each record pointing at where it now lies, so a page
+    /// built a section at a time holds its url data once rather than once a section.
     fn write(&self, text: &str, mut records: Vec<[i32; 4]>) -> Vec<u8> {
+        let urls = if self.whole {
+            None
+        } else {
+            Some(own_urls(self.urls, &mut records))
+        };
+        let urls = urls.as_deref().unwrap_or(self.urls);
         for r in &mut records {
             if (HEADINGS[0]..=HEADINGS[5]).contains(&r[2]) && r[3] != 0 {
                 r[3] = r[0];
@@ -577,9 +591,8 @@ impl<'a> Blob<'a> {
         records.sort_by_key(sort_key);
 
         let flags = (self.flags & !(1 << ASCII_BIT)) | ((ascii as u32) << ASCII_BIT);
-        let mut out = Vec::with_capacity(
-            HEADER_SIZE + text.len() + 3 + records.len() * RECORD + self.urls.len(),
-        );
+        let mut out =
+            Vec::with_capacity(HEADER_SIZE + text.len() + 3 + records.len() * RECORD + urls.len());
         out.extend_from_slice(&header(text.len(), records.len(), flags));
         out.extend_from_slice(text.as_bytes());
         out.resize(records_at(text.len()), 0);
@@ -588,9 +601,70 @@ impl<'a> Blob<'a> {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
-        out.extend_from_slice(self.urls);
+        out.extend_from_slice(urls);
         out
     }
+}
+
+/// The url data `records` point into, out of `urls`, each payload once in the order first pointed
+/// at: a link's url, a picture's payload, a table's cells. Each record's data is rewritten to where
+/// its payload now lies; a payload the data does not reach whole is left out, its record pointing
+/// at nothing.
+fn own_urls(urls: &[u8], records: &mut [[i32; 4]]) -> Vec<u8> {
+    let mut own = Vec::new();
+    let mut moved: Vec<(usize, usize)> = Vec::new(); // a payload's old offset, its new one
+    for r in records.iter_mut() {
+        let Some(range) = payload(urls, r[2], r[3]) else {
+            continue;
+        };
+        let at = match moved.iter().find(|&&(from, _)| from == range.start) {
+            Some(&(_, to)) => to,
+            None => {
+                let to = own.len();
+                own.extend_from_slice(&urls[range.clone()]);
+                moved.push((range.start, to));
+                to
+            }
+        };
+        r[3] = match r[2] {
+            LINK | APP_LINK => ((at as i32) << LINK_LENGTH_BITS) | range.len() as i32,
+            TABLE => (at + TABLE_DATA_BIAS) as i32,
+            _ => at as i32,
+        };
+    }
+    own
+}
+
+/// Where the payload of a record of `typ` holding `data` lies in `urls`: a link's url, a picture's
+/// head and its url and alt, a table's rows and cols and its cells; none for a record with no
+/// payload, or one past the url data's end.
+fn payload(urls: &[u8], typ: i32, data: i32) -> Option<Range<usize>> {
+    let u16_at = |at: usize| -> Option<usize> {
+        Some(u16::from_le_bytes(urls.get(at..at + 2)?.try_into().ok()?) as usize)
+    };
+    let range = match typ {
+        LINK | APP_LINK => link_range(data),
+        IMAGE => {
+            let at = data as usize;
+            at..at
+                + PICTURE_URL
+                + u16_at(at + PICTURE_URL_LENGTH)?
+                + u16_at(at + PICTURE_ALT_LENGTH)?
+        }
+        TABLE if data as usize >= TABLE_DATA_BIAS => {
+            let at = data as usize - TABLE_DATA_BIAS;
+            let packed = u32::from_le_bytes(urls.get(at..at + 4)?.try_into().ok()?);
+            let cells = (packed >> TABLE_ROWS_SHIFT) as usize
+                * (packed & ((1 << TABLE_ROWS_SHIFT) - 1)) as usize;
+            let mut end = at + TABLE_CELLS;
+            for _ in 0..cells {
+                end += 2 + u16_at(end)?;
+            }
+            at..end
+        }
+        _ => return None,
+    };
+    (range.end <= urls.len()).then_some(range)
 }
 
 /// Moves each of `ends`, offsets into `text`, from UTF-16 units to bytes, or back where `to_units`:

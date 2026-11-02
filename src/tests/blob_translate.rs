@@ -3,7 +3,7 @@
 //! kept part or its link's markers landed.
 
 use crate::benchmarks::production_options;
-use crate::blob::sites::{HACKER_NEWS, LEMMY, PLAIN};
+use crate::blob::sites::{HACKER_NEWS, LEMMY, PLAIN, READER};
 use std::ops::Range;
 
 use crate::blob::translate::{build_translated_blob, mark_for_translation};
@@ -756,4 +756,81 @@ fn pictures_links_and_tables_read_their_payloads_after() {
         assert_eq!(pictures(&after), pictures(&before));
         assert_eq!(after.url_data, before.url_data);
     }
+}
+
+/// A page of three sections, each with payloads of its own: a link, a picture and a link, a table
+/// and the first link again.
+const PAYLOADS: &str = "# A page\n\nSee [the first](https://a.org/1) here.\n\n# Two\n\n\
+     ![a picture](https://e.com/p.png)\n\nThen [the second](https://b.org/2).\n\n# Three\n\n\
+     | a | b |\n|---|---|\n| 1 | 2 |\n\nAnd [the first](https://a.org/1) again.";
+
+/// The payloads `b`'s records point at, as the reader reads them back: each link's url, each
+/// picture's url, alt and size, each table's cells, in the records' order.
+fn payloads(b: &Blob) -> Vec<String> {
+    b.span_iter()
+        .filter_map(|s| match s.typ {
+            LINK | APP_LINK => s.url.clone(),
+            IMAGE => s
+                .picture
+                .as_ref()
+                .map(|p| format!("{:?} {} {}x{}", s.url, p.alt, p.width, p.height)),
+            TABLE => Some(format!("{:?}", b.table(s.data))),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The bytes those payloads take in the url data: a url's own, a picture's head and its url and
+/// alt, a table's rows and cols and each cell's length and markdown.
+fn payload_bytes(b: &Blob) -> usize {
+    b.span_iter()
+        .map(|s| match s.typ {
+            LINK | APP_LINK => s.url.as_ref().map_or(0, |u| u.len()),
+            IMAGE => s.picture.as_ref().map_or(0, |p| {
+                crate::blob::format::PICTURE_URL
+                    + s.url.as_ref().map_or(0, |u| u.len())
+                    + p.alt.len()
+            }),
+            TABLE => {
+                let (_, _, cells) = b.table(s.data);
+                crate::blob::format::TABLE_CELLS + cells.iter().map(|c| 2 + c.len()).sum::<usize>()
+            }
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Why: a page translated a section at a time keeps every section's blob in its row; each must
+/// carry its own links', pictures' and tables' payloads alone, not the page's every one, which is
+/// the page's url data held once a section.
+#[test]
+fn a_sections_blob_holds_its_own_payloads_alone() {
+    let blob = md(PAYLOADS, READER);
+    let whole = read(&blob);
+    let sections = sections(&blob);
+    assert_eq!(sections.len(), 3, "{sections:?}");
+    for (records, bytes) in sections {
+        let text = mark_for_translation(&blob, records.clone(), bytes.clone()).unwrap();
+        let part = read(&build_translated_blob(&blob, records.clone(), bytes, &text).unwrap());
+        assert_eq!(part.url_data.len(), payload_bytes(&part), "{records:?}");
+        assert!(part.url_data.len() < whole.url_data.len(), "{records:?}");
+        let theirs: Vec<String> = payloads(&Blob {
+            spans: whole.spans[records.clone()].to_vec(),
+            ..read(&blob)
+        });
+        assert_eq!(payloads(&part), theirs, "{records:?}");
+    }
+}
+
+/// Why: a whole page given back keeps its url data as it was, byte for byte, nothing rewritten.
+#[test]
+fn a_whole_pages_url_data_is_as_it_was() {
+    let blob = md(PAYLOADS, READER);
+    let b = read(&blob);
+    let (records, bytes) = (0..b.spans.len(), 0..b.text.len());
+    let text = mark_for_translation(&blob, records.clone(), bytes.clone()).unwrap();
+    assert_eq!(
+        build_translated_blob(&blob, records, bytes, &text).unwrap(),
+        blob
+    );
 }
