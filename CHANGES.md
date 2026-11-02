@@ -520,7 +520,7 @@ what is left, as `html.rs` is the walk over a comment.
 - `tests/blob_article.rs` ([ce02d6f]): extraction, the tree, every block and
   inline, links and pictures
 
-### Translating a blob ([497cd49], [3ecf35e], [b29ec43], [e86f8f3])
+### Translating a blob ([497cd49], [3ecf35e], [b29ec43], [e86f8f3], [47d5991])
 
 `blob::translate`, experimental, translates a blob after it is written, so one implementation
 serves markdown, every site's HTML and the reader, and an app that stores only blobs needs no
@@ -563,8 +563,9 @@ line. On an M1 Max, an answer accented, Japanese and emoji as a translator's, ag
 | its 91 sections | 2.13 -> 0.37 ms | 4.04 -> 0.99 ms |
 | a 4 KB comment | 32 -> 5.5 us, 128 -> 20 allocs | 56 -> 10.4 us, 141 -> 40 allocs |
 
-Building a page's sections one by one still allocates 4.3 MB: each section's blob carries the
-page's whole url data, which its records' offsets point into.
+A section's blob carries its own records' url data alone, each payload once and each record
+rebased onto it ([47d5991]): built one by one, a reader page's 92 sections, 10 links and 2 pictures
+each, hold its 56 KB of url data once between them, where each carried all of it, 5.19 MB.
 
 ### A reader body's title and sections, worked out by the writer ([7ea5ccc], [7fc4940])
 
@@ -1345,3 +1346,4 @@ Pixel 9 Pro XL).
 [66815e1]: https://github.com/laurencedawson/comrak/commit/66815e1
 [7ea5ccc]: https://github.com/laurencedawson/comrak/commit/7ea5ccc
 [7fc4940]: https://github.com/laurencedawson/comrak/commit/7fc4940
+[47d5991]: https://github.com/laurencedawson/comrak/commit/47d5991
