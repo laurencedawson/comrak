@@ -27,7 +27,16 @@ pub struct Article<'a> {
     /// The page's title: its metadata's, else its `<title>` with the site's name cut off.
     pub title: String,
     /// The picture the page's metadata leads with, its address as written.
+    // Read as dom_smoothie reads it; the walk shows the article's own pictures, the preview card being
+    // a logo as often as not
+    #[allow(dead_code)]
     pub image: Option<String>,
+    /// The article's title as the page's JSON-LD heads it; none where it gives an article none.
+    pub headline: Option<String>,
+    /// The site's own name, as the page's metadata gives it.
+    pub site: Option<String>,
+    /// Who wrote it, as the page's JSON-LD names its authors, comma separated; none where it names none.
+    pub byline: Option<String>,
     pub tree: Tree<'a>,
     pub root: Id,
 }
@@ -35,11 +44,18 @@ pub struct Article<'a> {
 /// The article on the page `html`, or none where nothing on it reads as one.
 pub fn extract(html: &str) -> Option<Article<'_>> {
     let mut tree = Tree::parse(html);
-    let title = metadata_title(&tree).unwrap_or_else(|| article_title(&tree));
+    let title = plain(&metadata_title(&tree).unwrap_or_else(|| article_title(&tree)));
     let body = tree.select(ROOT, &["body"]).into_iter().next()?;
-    // The byline is the page's chrome, so it goes, whether or not the metadata names the author
+    // The byline element is the page's chrome, so it goes, whether or not the metadata names the
+    // author; the author comes from the page's JSON-LD alone, which names one cleanly where the
+    // element reads "By", a date or an empty list's "No items found." (25 Hacker News pages, 2026-10)
     drop_byline(&mut tree, body);
+    let ld = ld_json(html);
+    let authors = ld_authors(&ld);
+    let byline = (!authors.is_empty()).then(|| authors.join(", "));
     let image = meta(&tree, META_IMAGE_KEYS);
+    let headline = ld_headline(&ld).map(|h| plain(&h));
+    let site = meta(&tree, &["og:site_name"]);
     prepare(&mut tree);
     let (mut tree, root) = grab::grab_article(&tree, body, &title)?;
     if tree.char_count(root) == 0 {
@@ -50,6 +66,9 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     Some(Article {
         title,
         image,
+        headline,
+        site,
+        byline,
         tree,
         root,
     })
@@ -77,8 +96,14 @@ fn meta(t: &Tree, keys: &[&str]) -> Option<String> {
 
 /// Takes the first element under `body` that reads as a byline out of the page.
 fn drop_byline(t: &mut Tree, body: Id) {
+    // A byline stands between the title and the first paragraph of the body, like a dateline:
+    // past that an element named for an author is content, a box about one in a profile piece
+    let first = body_start(t, body);
     let mut next = helpers::next_child_or_sibling(t, body, false);
     while let Some(n) = next {
+        if Some(n) == first {
+            return;
+        }
         let marked = t.attr(n, "rel") == Some("author")
             || t.attr(n, "itemprop").is_some_and(|p| p.contains("author"));
         let byline = (marked || contains_any(&matching_string(t, n), BYLINE_PATTERNS))
@@ -89,6 +114,102 @@ fn drop_byline(t: &mut Tree, body: Id) {
         }
         next = helpers::next_child_or_sibling(t, n, false);
     }
+}
+
+/// The authors the page's JSON-LD names, in order and each once: the `name` of each `author`,
+/// an object, an array of them, or a string, under any object of the document. Parsed with
+/// tinyjson, 19 KB of native library against a reader of our own.
+pub(crate) fn ld_authors(ld: &[tinyjson::JsonValue]) -> Vec<String> {
+    use tinyjson::JsonValue;
+    fn walk(v: &JsonValue, out: &mut Vec<String>) {
+        match v {
+            JsonValue::Object(o) => {
+                if let Some(a) = o.get("author") {
+                    author(a, out);
+                }
+                // An object's fields come back in no order; its keys' order is the same every read
+                let mut fields: smallvec::SmallVec<[_; 16]> = o.iter().collect();
+                fields.sort_unstable_by_key(|(k, _)| *k);
+                fields.into_iter().for_each(|(_, v)| walk(v, out));
+            }
+            JsonValue::Array(a) => a.iter().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    fn author(v: &JsonValue, out: &mut Vec<String>) {
+        match v {
+            JsonValue::String(s) => name(s, out),
+            JsonValue::Object(o) => {
+                if let Some(JsonValue::String(s)) = o.get("name") {
+                    name(s, out);
+                }
+            }
+            JsonValue::Array(a) => a.iter().for_each(|v| author(v, out)),
+            _ => {}
+        }
+    }
+    fn name(s: &str, out: &mut Vec<String>) {
+        if !s.trim().is_empty() && !out.iter().any(|n| n == s) {
+            out.push(s.to_string());
+        }
+    }
+    let mut out = Vec::new();
+    ld.iter().for_each(|v| walk(v, &mut out));
+    out
+}
+
+/// The page's `ld+json` scripts that parse, in order, parsed once for every reader of them.
+fn ld_json(html: &str) -> Vec<tinyjson::JsonValue> {
+    let bytes = html.as_bytes();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = memchr::memmem::find(&bytes[from..], b"ld+json").map(|i| from + i) {
+        let Some(open) = memchr::memchr(b'>', &bytes[at..]).map(|i| at + i + 1) else {
+            break;
+        };
+        let close =
+            memchr::memmem::find(&bytes[open..], b"</script").map_or(bytes.len(), |i| open + i);
+        if let Ok(v) = html[open..close].parse() {
+            out.push(v);
+        }
+        from = close;
+    }
+    out
+}
+
+/// The first `headline` the page's JSON-LD gives an article, a `NewsArticle`, `BlogPosting` and
+/// the like, under any object of the document; a `WebPage`'s `name` is the page's title, site and
+/// all, so it is not read.
+pub(crate) fn ld_headline(ld: &[tinyjson::JsonValue]) -> Option<String> {
+    use tinyjson::JsonValue;
+    fn article(t: Option<&JsonValue>) -> bool {
+        let is = |t: &JsonValue| matches!(t, JsonValue::String(s) if s.ends_with("Article") || s == "BlogPosting" || s == "Report");
+        match t {
+            Some(JsonValue::Array(a)) => a.iter().any(is),
+            Some(t) => is(t),
+            None => false,
+        }
+    }
+    fn find(v: &JsonValue) -> Option<&String> {
+        match v {
+            JsonValue::Object(o) => article(o.get("@type"))
+                .then(|| o.get("headline"))
+                .flatten()
+                .and_then(|h| h.get::<String>())
+                .filter(|h| !h.trim().is_empty())
+                .or_else(|| o.values().find_map(find)),
+            JsonValue::Array(a) => a.iter().find_map(find),
+            _ => None,
+        }
+    }
+    ld.iter().find_map(find).cloned()
+}
+
+/// `s` as the page would show it: tags gone, entities decoded, spaces collapsed. JSON-LD's strings
+/// are HTML as WordPress writes them (`We&#8217;re`), which no parse of the page decodes, and a
+/// title's `<meta>` can escape its tags (`&lt;i&gt;Porco Rosso&lt;/i&gt;`), which one parse leaves.
+fn plain(s: &str) -> String {
+    normalize_spaces(&Tree::parse(s).text(ROOT))
 }
 
 /// The page's `<title>`, its site's name cut off where that can be told apart.
@@ -309,12 +430,17 @@ fn unwrap_stray_cells(t: &mut Tree, root: Id) {
 
 /// Takes the article's date lines out, the header's to show if anyone's: each with the parent it
 /// leaves a word or two in, an eyebrow's category.
+/// Where the body's words begin under `root`: its first paragraph holding a sentence or twenty
+/// words. The title, byline and dateline stand ahead of it.
+fn body_start(t: &Tree, root: Id) -> Option<Id> {
+    t.descendants(root)
+        .find(|&n| t.name(n) == Some("p") && labels(&t.text(n)).is_none_or(|w| w >= 20))
+}
+
 fn drop_dates(t: &mut Tree, root: Id) {
     // A dateline stands between the title and the first paragraph of the body: past that a date is
     // content, a recipe's time, a result in a sentence, a release's row
-    let body = t
-        .descendants(root)
-        .find(|&n| t.name(n) == Some("p") && labels(&t.text(n)).is_none_or(|w| w >= 20));
+    let body = body_start(t, root);
     let dates: Vec<Id> = t
         .descendants(root)
         .take_while(|&n| Some(n) != body)
@@ -395,4 +521,29 @@ fn labels(text: &str) -> Option<usize> {
         count += 1;
     }
     Some(count)
+}
+
+#[cfg(test)]
+mod survey {
+    use super::*;
+
+    /// What the page's JSON-LD names as its authors, on real pages: `HN_PAGES=<dir> cargo test
+    /// --lib survey_bylines -- --ignored --nocapture`, one line a page.
+    #[test]
+    #[ignore]
+    fn survey_bylines() {
+        let Ok(dir) = std::env::var("HN_PAGES") else {
+            return;
+        };
+        let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().collect();
+        files.sort_by_key(|f| f.file_name());
+        for f in files {
+            let html = std::fs::read_to_string(f.path()).unwrap_or_default();
+            println!(
+                "{} | {:?}",
+                f.file_name().to_string_lossy(),
+                ld_authors(&ld_json(&html))
+            );
+        }
+    }
 }
