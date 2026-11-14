@@ -122,13 +122,9 @@ pub fn open_block_directive_fence(s: &str) -> Option<usize> {
                         }
                     };
                     match yych {
-                        0x00..=0x09 | 0x0B..=0x0C | 0x0E..=0x39 | 0x3B..=0xFE => {
+                        0x00..=0x09 | 0x0B..=0x0C | 0x0E..=0xFE => {
                             cursor += 1;
                             yystate = 7;
-                            continue 'yyl;
-                        }
-                        0x3A => {
-                            yystate = 5;
                             continue 'yyl;
                         }
                         _ => {

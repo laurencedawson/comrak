@@ -11,6 +11,170 @@ use crate::nodes::{Node, NodeLink, NodeValue, Sourcepos};
 use crate::parser::Spx;
 use crate::parser::inlines::{Subject, make_inline};
 
+fn is_name_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+fn is_domain_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-' | b':')
+}
+
+fn lemmy_mention_match<'a>(
+    arena: &'a Arena<'a>,
+    contents: &str,
+    i: usize,
+) -> Option<(Node<'a>, usize)> {
+    let bytes = contents.as_bytes();
+    let size = contents.len();
+
+    let trigger = bytes[i];
+    assert!(trigger == b'@' || trigger == b'!');
+
+    // must not be preceded by alphanumeric or [ (already in a markdown link)
+    if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'[') {
+        return None;
+    }
+
+    // for '!', must not be followed by '[' (image syntax)
+    if trigger == b'!' && bytes.get(i + 1) == Some(&b'[') {
+        return None;
+    }
+
+    // scan name: 3-20 alphanumeric/underscore chars after trigger
+    let mut name_end = i + 1;
+    while name_end < size && is_name_char(bytes[name_end]) {
+        name_end += 1;
+    }
+    let name_len = name_end - (i + 1);
+    if !(3..=20).contains(&name_len) || bytes.get(name_end) != Some(&b'@') {
+        return None;
+    }
+
+    // scan domain: must contain a dot or colon (port), must not start/end with dot
+    let domain_start = name_end + 1;
+    let mut has_separator = false;
+    let mut domain_end = domain_start;
+    while domain_end < size && is_domain_char(bytes[domain_end]) {
+        if matches!(bytes[domain_end], b'.' | b':') {
+            has_separator = true;
+        }
+        domain_end += 1;
+    }
+    if domain_end == domain_start
+        || !has_separator
+        || bytes[domain_start] == b'.'
+        || bytes[domain_end - 1] == b'.'
+    {
+        return None;
+    }
+
+    let mention = &contents[i..domain_end];
+    let name = &contents[i + 1..name_end];
+    let domain = &contents[domain_start..domain_end];
+    let path_prefix = if trigger == b'@' { "u" } else { "c" };
+    let url = format!("https://{domain}/{path_prefix}/{name}");
+
+    let inl = make_inline(
+        arena,
+        NodeValue::Link(Box::new(NodeLink {
+            url: url.into(),
+            title: Cow::Borrowed(""),
+        })),
+        (0, 1, 0, 1).into(),
+    );
+
+    inl.append(make_inline(
+        arena,
+        NodeValue::Text(mention.to_string().into()),
+        (0, 1, 0, 1).into(),
+    ));
+
+    Some((inl, domain_end - i))
+}
+
+pub(crate) fn process_lemmy_mentions<'a>(
+    arena: &'a Arena<'a>,
+    node: Node<'a>,
+    contents: &mut Cow<'a, str>,
+    sourcepos: &mut Sourcepos,
+    spx: &Spx,
+    base: usize,
+) {
+    // Fast path: mentions trigger on `@` or `!`. Without one, no match is
+    // possible — skip the per-byte scan entirely.
+    if memchr::memchr2(b'@', b'!', contents.as_bytes()).is_none() {
+        return;
+    }
+    let bytes = contents.as_bytes();
+    let len = contents.len();
+    let mut i = 0;
+
+    while i < len {
+        let mut post_org = None;
+
+        while i < len {
+            if bytes[i] == b'@' || bytes[i] == b'!' {
+                post_org = lemmy_mention_match(arena, contents, i);
+                if post_org.is_some() {
+                    break;
+                }
+            }
+            i += 1;
+        }
+
+        if let Some((post, skip)) = post_org {
+            node.insert_after(post);
+
+            let remain = if i + skip < len {
+                let remain = &contents[i + skip..];
+                assert!(!remain.is_empty());
+                Some(remain.to_string())
+            } else {
+                None
+            };
+            let initial_end_col = sourcepos.end.column;
+
+            sourcepos.end.column = spx.col_at(base + i);
+
+            let nsp_end_col = spx.col_at(base + i + skip);
+
+            contents.to_mut().truncate(i);
+
+            let nsp: Sourcepos = (
+                sourcepos.end.line,
+                sourcepos.end.column + 1,
+                sourcepos.end.line,
+                nsp_end_col,
+            )
+                .into();
+            post.data_mut().sourcepos = nsp;
+            post.first_child().unwrap().data_mut().sourcepos = nsp;
+
+            if let Some(remain) = remain {
+                let asp: Sourcepos = (
+                    sourcepos.end.line,
+                    nsp.end.column + 1,
+                    sourcepos.end.line,
+                    initial_end_col,
+                )
+                    .into();
+                let after = make_inline(arena, NodeValue::Text(remain.into()), asp);
+                post.insert_after(after);
+
+                let after_ast = &mut after.data_mut();
+                let NodeValue::Text(ref mut text) = after_ast.value else {
+                    unreachable!();
+                };
+                let mut after_sp = asp;
+                process_lemmy_mentions(arena, after, text, &mut after_sp, spx, base + i + skip);
+                after_ast.sourcepos = after_sp;
+            }
+
+            return;
+        }
+    }
+}
+
 pub(crate) fn process_email_autolinks<'a>(
     arena: &'a Arena<'a>,
     node: Node<'a>,
@@ -508,6 +672,56 @@ pub fn url_match<'a>(
         (0, 1, 0, 1).into(),
     ));
     Some((inl, rewind, rewind + link_end))
+}
+
+/// A bare `scheme://` address around the `:` at `colon` in `text`, for a caller with no parser
+/// state, the walk over HTML: its start, the scheme rewound, and its end, as `url_match` reads one
+/// without relaxed autolinks.
+pub(crate) fn url_in(text: &str, colon: usize) -> Option<(usize, usize)> {
+    const SCHEMES: [&str; 3] = ["http", "https", "ftp"];
+    let bytes = text.as_bytes();
+    if text.len() - colon < 4 || bytes[colon + 1] != b'/' || bytes[colon + 2] != b'/' {
+        return None;
+    }
+    let mut rewind = 0;
+    while rewind < colon && isalpha(bytes[colon - rewind - 1]) {
+        rewind += 1;
+    }
+    let scheme = &text[colon - rewind..colon];
+    if !SCHEMES.iter().any(|s| scheme.eq_ignore_ascii_case(s)) {
+        return None;
+    }
+    if !text[colon + 3..]
+        .chars()
+        .next()
+        .is_some_and(is_valid_hostchar)
+    {
+        return None;
+    }
+    let mut end = check_domain(&text[colon + 3..], true)? + 3;
+    while end < text.len() - colon && !isspace(bytes[colon + end]) {
+        end += 1;
+    }
+    let end = autolink_delim(&text[colon..], end, false);
+    Some((colon - rewind, colon + end))
+}
+
+/// A bare `www.` address at `at` in `text`, for a caller with no parser state: its end, as
+/// `www_match` reads one without relaxed autolinks. Its link is `http://` and its words.
+pub(crate) fn www_in(text: &str, at: usize) -> Option<usize> {
+    const WWW_DELIMS: [bool; 256] = character_set!(b"*_~([");
+    let bytes = text.as_bytes();
+    if at > 0 && !isspace(bytes[at - 1]) && !WWW_DELIMS[bytes[at - 1] as usize] {
+        return None;
+    }
+    if !text[at..].starts_with("www.") {
+        return None;
+    }
+    let mut end = check_domain(&text[at + 4..], false)? + 4;
+    while at + end < text.len() && !isspace(bytes[at + end]) {
+        end += 1;
+    }
+    Some(at + autolink_delim(&text[at..], end, false))
 }
 
 #[cfg(test)]

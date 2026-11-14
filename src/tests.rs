@@ -29,8 +29,10 @@ mod header_id_prefix;
 mod highlight;
 #[path = "tests/html.rs"]
 mod html_;
+mod image_url;
 mod inline_footnotes;
 mod insert;
+mod lemmy;
 mod math;
 mod multiline_block_quotes;
 mod ofm_comments;
@@ -47,13 +49,17 @@ mod shortcodes;
 mod sourcepos_;
 mod sourcepos_chars;
 mod spoiler;
+mod spx;
 mod strikethrough;
+mod strip_invisible;
+mod strip_leading_breaks;
 mod subscript;
 mod subtext;
 mod supersubscript;
 mod table;
 mod tasklist;
 mod underline;
+mod url;
 mod wikilinks;
 mod xml;
 

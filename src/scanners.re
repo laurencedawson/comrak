@@ -73,7 +73,7 @@ pub fn open_block_directive_fence(s: &str) -> Option<usize> {
     let mut ctxmarker = 0;
     let len = s.len();
 /*!re2c
-    [:]{3,} / [^:\r\n\xff]*[\r\n\xff] { return Some(cursor); }
+    [:]{3,} / [^\r\n\xff]*[\r\n\xff] { return Some(cursor); }
     * { return None; }
 */
 }

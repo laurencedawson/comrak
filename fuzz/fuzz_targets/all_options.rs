@@ -56,6 +56,8 @@ struct FuzzExtensionOptions {
     cjk_friendly_emphasis: bool,
     highlight: bool,
     block_directive: bool,
+    lemmy_mention: bool,
+    lemmy_spoiler: bool,
     phoenix_heex: bool,
     insert: bool,
     header_id_prefix_in_href: bool,
@@ -101,6 +103,8 @@ impl FuzzExtensionOptions {
             cjk_friendly_emphasis: self.cjk_friendly_emphasis,
             highlight: self.highlight,
             block_directive: self.block_directive,
+            lemmy_mention: self.lemmy_mention,
+            lemmy_spoiler: self.lemmy_spoiler,
             phoenix_heex: self.phoenix_heex,
             insert: self.insert,
             header_id_prefix_in_href: self.header_id_prefix_in_href,
@@ -146,6 +150,7 @@ struct FuzzParseOptions {
     broken_link_callback: bool,
     escaped_char_spans: bool,
     sourcepos_chars: bool,
+    sanitize_input: bool,
 }
 
 impl FuzzParseOptions {
@@ -172,6 +177,7 @@ impl FuzzParseOptions {
             },
             escaped_char_spans: self.escaped_char_spans,
             sourcepos_chars: self.sourcepos_chars,
+            sanitize_input: self.sanitize_input,
         }
     }
 }
