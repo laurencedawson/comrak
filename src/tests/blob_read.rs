@@ -1,0 +1,145 @@
+//! A blob read back, for the tests: the header, the text, the spans past the padding with their
+//! addresses, and a table's cells, so no test parses the bytes itself.
+
+use crate::blob::{APP_LINK, IMAGE, LINK, format, link_range, read_header, records_at};
+
+/// A span as the blob holds it. A link's or picture's address is read out as `url` and its
+/// `data` consumed, so its `data` is 0, a picture's payload read into `picture`; any other span's
+/// data is as written.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Span {
+    pub start: i32,
+    pub end: i32,
+    pub typ: i32,
+    pub data: i32,
+    pub url: Option<String>,
+    pub picture: Option<Picture>,
+}
+
+/// A picture's payload past its url: its flags, the size its source states (0 where none) and
+/// its alt text.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Picture {
+    pub flags: u8,
+    pub width: u16,
+    pub height: u16,
+    pub alt: String,
+}
+
+impl Span {
+    /// A list item's indent, from its data.
+    pub fn indent(&self) -> i32 {
+        self.data >> format::LIST_INDENT_SHIFT
+    }
+
+    /// A list item's number, from its data.
+    pub fn number(&self) -> i32 {
+        self.data & ((1 << format::LIST_INDENT_SHIFT) - 1)
+    }
+}
+
+/// The blob read back.
+pub(crate) struct Blob {
+    pub text: String,
+    /// The header's flag byte: bit 0 ASCII text, bits 2-7 the site.
+    pub flags: u8,
+    /// In the blob's order: start ascending, end descending, type ascending.
+    pub spans: Vec<Span>,
+    pub url_data: Vec<u8>,
+}
+
+impl Blob {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn ascii(&self) -> bool {
+        self.flags & 1 != 0
+    }
+
+    pub fn span_iter(&self) -> impl Iterator<Item = &Span> {
+        self.spans.iter()
+    }
+
+    /// A table's rows, columns and cells, row-major, from its span's data: its rows over its cols at
+    /// `data - TABLE_DATA_BIAS`, then from `TABLE_CELLS` each cell's length and its markdown.
+    pub fn table(&self, data: i32) -> (usize, usize, Vec<String>) {
+        let at = data as usize - format::TABLE_DATA_BIAS;
+        let packed = u32::from_le_bytes(self.url_data[at..at + 4].try_into().unwrap());
+        let mut p = at + format::TABLE_CELLS;
+        let (rows, cols) = (
+            (packed >> format::TABLE_ROWS_SHIFT) as usize,
+            (packed & ((1 << format::TABLE_ROWS_SHIFT) - 1)) as usize,
+        );
+        let cells = (0..rows * cols)
+            .map(|_| {
+                let len = u16::from_le_bytes([self.url_data[p], self.url_data[p + 1]]) as usize;
+                p += 2;
+                let cell = String::from_utf8(self.url_data[p..p + len].to_vec()).unwrap();
+                p += len;
+                cell
+            })
+            .collect();
+        (rows, cols, cells)
+    }
+}
+
+/// Reads a blob back: the header, the text, the spans past the padding and their addresses.
+pub(crate) fn read(blob: &[u8]) -> Blob {
+    let int = |at: usize| i32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
+    let (text_len, count, flags) = read_header(blob).unwrap();
+    let spans_at = records_at(text_len);
+    let url_data = blob[spans_at + count * format::RECORD..].to_vec();
+    let spans = (0..count)
+        .map(|i| {
+            let at = spans_at + i * format::RECORD;
+            let (start, end, typ, data) = (int(at), int(at + 4), int(at + 8), int(at + 12));
+            let (url, picture) = if typ == IMAGE {
+                let (url, picture) = picture(&url_data, data as usize);
+                (Some(url), Some(picture))
+            } else {
+                let url = (typ == LINK || typ == APP_LINK)
+                    .then(|| String::from_utf8(url_data[link_range(data)].to_vec()).unwrap());
+                (url, None)
+            };
+            Span {
+                start,
+                end,
+                typ,
+                data: if url.is_some() { 0 } else { data },
+                url,
+                picture,
+            }
+        })
+        .collect();
+    Blob {
+        text: std::str::from_utf8(&blob[format::HEADER_SIZE..format::HEADER_SIZE + text_len])
+            .unwrap()
+            .to_string(),
+        flags: flags as u8,
+        spans,
+        url_data,
+    }
+}
+
+/// A picture's url and payload at `at` in `url_data`: flags, width, height, the url's length and
+/// the alt's, then the url and the alt.
+fn picture(url_data: &[u8], at: usize) -> (String, Picture) {
+    let u16_at = |p: usize| u16::from_le_bytes([url_data[at + p], url_data[at + p + 1]]);
+    let (url_len, alt_len) = (
+        u16_at(format::PICTURE_URL_LENGTH) as usize,
+        u16_at(format::PICTURE_ALT_LENGTH) as usize,
+    );
+    let url_at = at + format::PICTURE_URL;
+    let url = &url_data[url_at..url_at + url_len];
+    let alt = &url_data[url_at + url_len..url_at + url_len + alt_len];
+    (
+        String::from_utf8(url.to_vec()).unwrap(),
+        Picture {
+            flags: url_data[at],
+            width: u16_at(format::PICTURE_WIDTH),
+            height: u16_at(format::PICTURE_HEIGHT),
+            alt: String::from_utf8(alt.to_vec()).unwrap(),
+        },
+    )
+}

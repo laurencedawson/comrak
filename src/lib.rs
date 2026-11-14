@@ -68,11 +68,13 @@
 
 pub mod adapters;
 pub mod arena_tree;
+pub mod benchmarks;
 pub mod blob;
 pub mod html;
 pub mod image_url;
 pub mod nodes;
 pub mod plugins;
+pub mod text;
 
 pub mod arena;
 mod character_set;

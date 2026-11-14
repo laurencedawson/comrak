@@ -1,0 +1,242 @@
+//! Allocation tracking benchmark for blob rendering.
+//! Run with: cargo run --release --example alloc_bench
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct TrackingAlloc;
+
+static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
+static TRACKING: AtomicUsize = AtomicUsize::new(0);
+
+// Fine-grained histogram: 16 buckets (powers of 2: 1-2, 3-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129-256, 257-512, 513-1024, 1025-2048, 2049-4096, 4097-8192, 8193-16384, 16385-32768, 32769+)
+#[rustfmt::skip]
+static HISTOGRAM: [AtomicUsize; 16] = [
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0),
+];
+
+fn size_to_bucket(size: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+    let bits = usize::BITS - (size - 1).leading_zeros();
+    (bits as usize).min(15)
+}
+
+static VERBOSE: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for TrackingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if TRACKING.load(Ordering::Relaxed) != 0 {
+            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+            ALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+            if VERBOSE.load(Ordering::Relaxed) != 0 && layout.size() >= 256 {
+                eprintln!(
+                    "  ALLOC {:>6} bytes (align {})",
+                    layout.size(),
+                    layout.align()
+                );
+            }
+            HISTOGRAM[size_to_bucket(layout.size())].fetch_add(1, Ordering::Relaxed);
+        }
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: TrackingAlloc = TrackingAlloc;
+
+fn reset() {
+    ALLOC_COUNT.store(0, Ordering::Relaxed);
+    ALLOC_BYTES.store(0, Ordering::Relaxed);
+    for h in &HISTOGRAM {
+        h.store(0, Ordering::Relaxed);
+    }
+}
+
+fn print_histogram() {
+    let labels = [
+        "1-2", "3-4", "5-8", "9-16", "17-32", "33-64", "65-128", "129-256", "257-512", "513-1K",
+        "1K-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K+",
+    ];
+    print!("  histogram:");
+    for (i, label) in labels.iter().enumerate() {
+        let v = HISTOGRAM[i].load(Ordering::Relaxed);
+        if v > 0 {
+            print!(" {}={}", label, v);
+        }
+    }
+    println!();
+}
+
+fn start_tracking() {
+    reset();
+    TRACKING.store(1, Ordering::Relaxed);
+}
+
+fn stop_tracking() -> (usize, usize) {
+    TRACKING.store(0, Ordering::Relaxed);
+    (
+        ALLOC_COUNT.load(Ordering::Relaxed),
+        ALLOC_BYTES.load(Ordering::Relaxed),
+    )
+}
+
+fn main() {
+    use comrak::nodes::AstNode;
+    use comrak::{blob, parse_document_zerocopy};
+    println!(
+        "AstNode: {} bytes, NodeValue: {} bytes, Ast: {} bytes",
+        std::mem::size_of::<AstNode>(),
+        std::mem::size_of::<comrak::nodes::NodeValue>(),
+        std::mem::size_of::<comrak::nodes::Ast>()
+    );
+
+    let opts = comrak::benchmarks::production_options();
+
+    let inputs: Vec<(&str, String)> = vec![
+        ("plain", comrak::benchmarks::PLAIN.to_string()),
+        ("simple", comrak::benchmarks::SIMPLE.to_string()),
+        ("medium", comrak::benchmarks::MEDIUM.to_string()),
+        ("deep-nesting", comrak::benchmarks::deep_nesting()),
+        ("heavy-inline", comrak::benchmarks::heavy_inline()),
+        ("complex", comrak::benchmarks::complex()),
+        ("long-doc", comrak::benchmarks::long_doc()),
+        ("prose", comrak::benchmarks::prose_doc()),
+    ];
+
+    // Warmup
+    for (_, input) in &inputs {
+        parse_document_zerocopy(input.trim(), &opts, |root| {
+            let _ = blob::render_blob(comrak::blob::sites::PLAIN, root, input.trim());
+        });
+    }
+
+    println!(
+        "{:<20} {:>8} {:>10} {:>12}",
+        "test", "chars", "allocs", "bytes"
+    );
+    println!("{:-<52}", "");
+
+    for (name, input) in &inputs {
+        let trimmed = input.trim();
+
+        start_tracking();
+        let (parse_count, parse_bytes, node_count) =
+            parse_document_zerocopy(trimmed, &opts, |root| {
+                let pc = ALLOC_COUNT.load(Ordering::Relaxed);
+                let pb = ALLOC_BYTES.load(Ordering::Relaxed);
+                let nc = root.descendants().count();
+                let _ = blob::render_blob(comrak::blob::sites::PLAIN, root, trimmed);
+                (pc, pb, nc)
+            });
+        let (total_raw_count, total_raw_bytes) = stop_tracking();
+        VERBOSE.store(0, Ordering::Relaxed);
+        let blob_count = total_raw_count - parse_count;
+        let blob_bytes = total_raw_bytes - parse_bytes;
+
+        let total_count = parse_count + blob_count;
+        let total_bytes = parse_bytes + blob_bytes;
+        let ratio = total_bytes as f64 / trimmed.len() as f64;
+        println!(
+            "{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input) | parse {:>5} blob {:>4} | {:>4} nodes",
+            name,
+            trimmed.len(),
+            total_count,
+            total_bytes / 1024,
+            ratio,
+            parse_count,
+            blob_count,
+            node_count
+        );
+
+        if name == &"long-doc" || name == &"heavy-inline" {
+            print_histogram();
+        }
+    }
+
+    // The same corpora as HTML, through the walk over HTML: one walk, so no parse and blob split
+    use comrak::benchmarks::html;
+    let html_inputs: Vec<(&str, String)> = vec![
+        ("html/plain", html::PLAIN.to_string()),
+        ("html/simple", html::SIMPLE.to_string()),
+        ("html/medium", html::MEDIUM.to_string()),
+        ("html/deep-nesting", html::deep_nesting()),
+        ("html/heavy-inline", html::heavy_inline()),
+        ("html/complex", html::complex()),
+        ("html/long-doc", html::long_doc()),
+        ("html/prose", html::prose_doc()),
+    ];
+    for (_, input) in &html_inputs {
+        let _ = blob::render_html_blob(html::SITE, input.trim(), None);
+    }
+    println!();
+    for (name, input) in &html_inputs {
+        let trimmed = input.trim();
+        start_tracking();
+        let _ = blob::render_html_blob(html::SITE, trimmed, None);
+        let (count, bytes) = stop_tracking();
+        println!(
+            "{:<20} {:>6} chars | {:>5} allocs {:>6} KB ({:.1}x input)",
+            name,
+            trimmed.len(),
+            count,
+            bytes / 1024,
+            bytes as f64 / trimmed.len() as f64
+        );
+    }
+
+    // Ten real Hacker News comments both ways, as the app reads them
+    let html_comments = html::hn_comments();
+    let md_comments = html::hn_comments_markdown();
+    start_tracking();
+    for c in &html_comments {
+        let _ = blob::render_html_blob(html::SITE, c, None);
+    }
+    let (html_count, html_bytes) = stop_tracking();
+    start_tracking();
+    for c in &md_comments {
+        parse_document_zerocopy(c, &opts, |root| {
+            let _ = blob::render_blob(comrak::blob::sites::PLAIN, root, c);
+        });
+    }
+    let (md_count, md_bytes) = stop_tracking();
+    println!(
+        "{:<20} html {:>5} allocs {:>6} KB | markdown {:>5} allocs {:>6} KB",
+        "hn-comments",
+        html_count,
+        html_bytes / 1024,
+        md_count,
+        md_bytes / 1024
+    );
+
+    // Each site's own pages and their lookalikes, read as borrowed slices
+    use comrak::blob::site::{Page, page};
+    let links = comrak::benchmarks::SITE_LINKS;
+    start_tracking();
+    let own = links
+        .iter()
+        .filter(|(site, url)| page(*site, url) == Page::Own)
+        .count();
+    let internal = links
+        .iter()
+        .filter(|(site, url)| page(*site, url) != Page::Elsewhere)
+        .count();
+    let (count, bytes) = stop_tracking();
+    println!(
+        "{:<20} {:>2} links, {:>2} own, {:>2} on site | {:>5} allocs {:>6} bytes",
+        "site/is-own",
+        links.len(),
+        own,
+        internal,
+        count,
+        bytes
+    );
+}

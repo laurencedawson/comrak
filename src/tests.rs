@@ -11,6 +11,9 @@ use crate::*;
 mod alerts;
 mod attributes;
 mod autolink;
+mod blob;
+mod blob_html;
+mod blob_read;
 mod block_directive;
 mod cjk_friendly_emphasis;
 mod code;
@@ -45,6 +48,8 @@ mod raw;
 mod regressions;
 mod rewriter;
 mod shortcodes;
+mod site;
+mod smart_parity;
 #[path = "tests/sourcepos.rs"]
 mod sourcepos_;
 mod sourcepos_chars;
