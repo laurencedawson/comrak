@@ -13,6 +13,7 @@ mod attributes;
 mod autolink;
 mod blob;
 mod blob_article;
+mod blob_headings;
 mod blob_html;
 mod blob_read;
 mod blob_translate;
