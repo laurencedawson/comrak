@@ -42,6 +42,16 @@ const CODE_INDENT: usize = 4;
 // be nested this deeply.
 const MAX_LIST_DEPTH: usize = 100;
 
+/// Parse markdown and hand the root to `f`; the arena lives only for the call, so `f` returns owned
+/// data. On this base it is plain [`parse_document`]: the entry point the blob and its host call.
+pub fn parse_document_zerocopy<F, R>(md: &str, options: &Options, f: F) -> R
+where
+    F: for<'a> FnOnce(Node<'a>) -> R,
+{
+    let arena = Arena::new();
+    f(parse_document(&arena, md, options))
+}
+
 /// Parse a Markdown document to an AST.
 ///
 /// See the documentation of the crate root for an example.
