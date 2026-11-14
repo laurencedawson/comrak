@@ -5,7 +5,7 @@
 //! One pass, no tree: each tag is written as the blob writer writes the markdown it stands for, so a
 //! comment reads the same from either.
 
-mod mdream;
+pub(super) mod mdream;
 
 use super::*;
 use crate::image_url::is_image_url;
@@ -174,7 +174,7 @@ fn next_address(text: &str, from: usize) -> Option<(usize, usize, Cow<'_, str>)>
 }
 
 /// HTML's whitespace: what a run of it between words collapses from.
-fn is_space(c: char) -> bool {
+pub(super) fn is_space(c: char) -> bool {
     c.is_ascii() && is_whitespace(c as u8)
 }
 
@@ -606,7 +606,7 @@ impl<'a, 'o> Walk<'a, 'o> {
 
 /// `href` resolved against `base` where it is relative, as a browser resolves it; none where it
 /// already names its scheme.
-fn relative(href: &str, base: &str) -> Option<String> {
+pub(super) fn relative(href: &str, base: &str) -> Option<String> {
     let scheme_end = |s: &str| {
         let colon = s.find(':')?;
         let scheme = &s[..colon];
