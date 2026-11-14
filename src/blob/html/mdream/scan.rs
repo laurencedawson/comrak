@@ -2,7 +2,7 @@
 //!
 //! From mdream 2.0.3's `scan.rs` (MIT, see `LICENSE` beside this file), cut to a whole string read at
 //! once: the chunk carries, discarded-byte scans and attribute budgets are left behind, and only
-//! the attributes asked for are kept.
+//! the attributes asked for are kept, or all of them.
 
 /// Whitespace check optimized for the hot character loop.
 /// Uses a 33-bit bitmap: space(32), CR(13), LF(10), TAB(9).
@@ -122,25 +122,43 @@ enum State {
     UnquotedValue,
 }
 
-/// Walk a start tag's attributes from `position` to its `>`, handing each one `wanted` names to
+/// Which of a tag's attributes a scan hands over.
+#[derive(Clone, Copy)]
+pub(crate) enum Attrs<'w> {
+    /// These names only, at most eight, the first of a name given twice.
+    Only(&'w [&'w str]),
+    /// Every attribute, as written, a name given twice handed over twice.
+    All,
+}
+
+/// Walk a start tag's attributes from `position` to its `>`, handing each one `attrs` names to
 /// `take` as its raw name and its value, entities still in it. A `>` inside a quoted value does
-/// not end the tag; the first of a name given twice is the one kept.
+/// not end the tag.
 pub(crate) fn scan_tag<'a>(
     html: &'a str,
     position: usize,
-    wanted: &[&str],
+    attrs: Attrs,
     mut take: impl FnMut(&'a str, &'a str),
 ) -> TagScan {
-    let bytes = html.as_bytes();
-    let mut taken = 0u8;
-    let mut push = |name: &'a str, value: &'a str| {
-        if let Some(i) = wanted.iter().position(|w| w.eq_ignore_ascii_case(name))
-            && taken & (1 << i) == 0
-        {
-            taken |= 1 << i;
-            take(name, value);
+    // Chosen once, so each mode's loop is its own, with no choice inside it
+    match attrs {
+        Attrs::All => scan(html, position, take),
+        Attrs::Only(wanted) => {
+            let mut taken = 0u8;
+            scan(html, position, |name, value| {
+                if let Some(i) = wanted.iter().position(|w| w.eq_ignore_ascii_case(name))
+                    && taken & (1 << i) == 0
+                {
+                    taken |= 1 << i;
+                    take(name, value);
+                }
+            })
         }
-    };
+    }
+}
+
+fn scan<'a>(html: &'a str, position: usize, mut push: impl FnMut(&'a str, &'a str)) -> TagScan {
+    let bytes = html.as_bytes();
     let mut state = State::Gap;
     let (mut name_start, mut name_end, mut value_start) = (0, 0, 0);
     let mut i = position;
