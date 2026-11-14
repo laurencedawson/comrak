@@ -37,7 +37,9 @@ pub fn extract(html: &str) -> Option<Article<'_>> {
     let mut tree = Tree::parse(html);
     let title = metadata_title(&tree).unwrap_or_else(|| article_title(&tree));
     let body = tree.select(ROOT, &["body"]).into_iter().next()?;
-    let byline = meta(&tree, META_BYLINE_KEYS).or_else(|| take_byline(&mut tree, body));
+    // Taken out whether or not the metadata names the author, as Readability.js does
+    let taken = take_byline(&mut tree, body);
+    let byline = meta(&tree, META_BYLINE_KEYS).or(taken);
     let image = meta(&tree, META_IMAGE_KEYS);
     prepare(&mut tree);
     let (mut tree, root) = grab::grab_article(&tree, body, &title)?;

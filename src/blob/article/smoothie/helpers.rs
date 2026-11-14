@@ -232,9 +232,11 @@ pub(crate) fn is_loading_word(text: &str) -> bool {
     LOADING_WORDS.contains(&text.trim_end_matches(['…', '.']))
 }
 
+/// Whether `value` names a share word as Readability.js's `(\b|_)share(\b|_)` does, a hyphen a
+/// boundary too, as in `share-toggle`; dom_smoothie split on spaces and underscores alone.
 pub(crate) fn contains_share_elements(value: &str) -> bool {
     value
-        .split([' ', '_'])
+        .split([' ', '_', '-'])
         .any(|part| SHARE_WORDS.iter().any(|w| part.eq_ignore_ascii_case(w)))
 }
 
