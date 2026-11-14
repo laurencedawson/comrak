@@ -1,3 +1,4 @@
-//! A web page's article, read from the page's [`tree`].
+//! A web page's article: [`smoothie`] picks the article out of the page's [`tree`].
 
+mod smoothie;
 mod tree;
