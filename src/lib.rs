@@ -68,6 +68,7 @@
 
 pub mod adapters;
 pub mod arena_tree;
+pub mod blob;
 pub mod html;
 pub mod image_url;
 pub mod nodes;
